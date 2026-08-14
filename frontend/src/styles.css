@@ -1,0 +1,93 @@
+:root {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: #f7f5ef;
+  background:
+    radial-gradient(circle at top left, rgba(255, 166, 0, 0.22), transparent 30%),
+    linear-gradient(160deg, #0b1020, #111827 45%, #1d3557);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  width: min(1100px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 4rem 0 5rem;
+}
+
+.hero {
+  padding: 2rem 0 3rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.8rem;
+  color: #ffcb77;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2.5rem, 7vw, 4.5rem);
+  line-height: 0.95;
+}
+
+.lead {
+  max-width: 42rem;
+  margin-top: 1rem;
+  color: rgba(247, 245, 239, 0.82);
+  font-size: 1.1rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.status-card {
+  padding: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 1.25rem;
+  background: rgba(10, 14, 24, 0.45);
+  backdrop-filter: blur(16px);
+}
+
+.status-card__title {
+  margin: 0 0 0.5rem;
+  color: rgba(247, 245, 239, 0.6);
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+}
+
+.status-card__value {
+  margin: 0 0 0.75rem;
+  font-size: 1.4rem;
+}
+
+.status-card__detail {
+  margin: 0;
+  color: rgba(247, 245, 239, 0.74);
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    width: min(100% - 1.25rem, 1100px);
+    padding-top: 2rem;
+  }
+}
+

@@ -1,0 +1,25 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - "infra/terraform/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/terraform/**"
+
+jobs:
+  validate:
+    if: ${{ hashFiles('infra/terraform/main.tf') != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform fmt check
+        run: terraform -chdir=infra/terraform fmt -check
+      - name: Terraform init
+        run: terraform -chdir=infra/terraform init -backend=false
+      - name: Terraform validate
+        run: terraform -chdir=infra/terraform validate

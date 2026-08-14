@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONPATH=/app/src
+COPY requirements /app/requirements
+RUN pip install --no-cache-dir -r /app/requirements/api.txt
+COPY src /app/src
+CMD ["uvicorn", "Johnny.main:app", "--host", "0.0.0.0", "--port", "8000"]
