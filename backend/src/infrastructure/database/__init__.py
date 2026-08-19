@@ -1,1 +1,1 @@
-"""Database infrastructure package extension for job system."""
+"""Database infrastructure for persistence models, sessions, and repositories."""

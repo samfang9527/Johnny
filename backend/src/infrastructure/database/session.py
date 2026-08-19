@@ -2,7 +2,24 @@ from __future__ import annotations
 
 import os
 
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
 
 def get_database_url() -> str:
     return os.getenv("DATABASE_URL", "sqlite:///./app.db")
 
+
+def get_test_database_url() -> str:
+    return os.getenv("JOHNNY_TEST_DATABASE_URL", get_database_url())
+
+
+def create_database_engine(database_url: str | None = None) -> Engine:
+    url = database_url or get_database_url()
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    return create_engine(url, connect_args=connect_args)
+
+
+def create_session_factory(database_url: str | None = None) -> sessionmaker[Session]:
+    return sessionmaker(bind=create_database_engine(database_url), expire_on_commit=False)
