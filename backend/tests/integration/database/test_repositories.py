@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from src.domain.athlete_race import AthletePreferences, AthleteProfile, RaceGoal
+from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout
 from src.infrastructure.database.models import (
     ActivityModel,
     AgentContextSourceModel,
@@ -64,6 +65,186 @@ def test_repositories_create_and_load_current_training_plan(sqlite_session_facto
         assert loaded is not None
         assert loaded.name == "Half Marathon Build"
         assert [workout.workout_type for workout in loaded.workouts] == ["easy_run"]
+
+
+def test_training_plan_repository_round_trips_plan_workouts_and_ownership(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="plan-owner@example.com", display_name="Plan Owner")
+        other = UserModel(email="plan-other@example.com", display_name="Plan Other")
+        race = RaceModel(
+            user_id=owner.id,
+            name="Taipei Half",
+            race_date=date(2027, 3, 1),
+            distance_meters=21_097,
+        )
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        race.user_id = owner.id
+        uow.session.add(race)
+        uow.session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        saved = repository.save_plan(
+            owner.id,
+            TrainingPlan.create(
+                user_id=owner.id,
+                race_id=race.id,
+                name="Half Marathon Build",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 3, 1),
+                workouts=(
+                    Workout.create(
+                        scheduled_for=date(2027, 1, 9),
+                        workout_type="long_run",
+                        purpose="Build endurance",
+                        planned_duration_minutes=90,
+                        planned_distance_meters=16_000,
+                    ),
+                    Workout.create(
+                        scheduled_for=date(2027, 1, 3),
+                        workout_type="easy_run",
+                        purpose="Aerobic base",
+                        planned_duration_minutes=45,
+                        planned_distance_meters=8_000,
+                        pace_range_seconds_per_km=(330, 390),
+                        heart_rate_zone="z2",
+                    ),
+                ),
+            ),
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        loaded = repository.get_plan_for_user(owner.id, saved.id)
+        hidden = repository.get_plan_for_user(other.id, saved.id)
+
+        assert loaded is not None
+        assert hidden is None
+        assert loaded.id == saved.id
+        assert loaded.user_id == owner.id
+        assert loaded.race_id == race.id
+        assert loaded.name == "Half Marathon Build"
+        assert [workout.workout_type for workout in loaded.workouts] == ["easy_run", "long_run"]
+        assert loaded.workouts[0].purpose == "Aerobic base"
+        assert loaded.workouts[0].planned_duration_minutes == 45
+        assert loaded.workouts[0].planned_distance_meters == 8_000
+        assert loaded.workouts[0].pace_range_seconds_per_km == (330, 390)
+        assert loaded.workouts[0].heart_rate_zone == "z2"
+
+
+def test_training_plan_repository_persists_workout_statuses(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="plan-status@example.com", display_name="Plan Status")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        saved = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                name="Status Plan",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 1, 31),
+                workouts=(
+                    Workout.create(
+                        scheduled_for=date(2027, 1, 3),
+                        workout_type="easy_run",
+                        purpose="Aerobic base",
+                        planned_duration_minutes=45,
+                    ).transition_to("completed"),
+                ),
+            ),
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded = SqlAlchemyTrainingPlanRepository(uow.session).get_plan_for_user(user.id, saved.id)
+
+        assert loaded is not None
+        assert loaded.workouts[0].status == "completed"
+        assert loaded.workouts[0].purpose == "Aerobic base"
+
+
+def test_training_plan_repository_round_trips_adjustment_proposals_and_ownership(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="proposal-owner@example.com", display_name="Proposal Owner")
+        other = UserModel(email="proposal-other@example.com", display_name="Proposal Other")
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        saved_plan = repository.save_plan(
+            owner.id,
+            TrainingPlan.create(
+                user_id=owner.id,
+                name="Proposal Plan",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 1, 31),
+                workouts=(
+                    Workout.create(
+                        scheduled_for=date(2027, 1, 3),
+                        workout_type="easy_run",
+                        purpose="Aerobic base",
+                        planned_duration_minutes=45,
+                        id="domain-workout-id",
+                    ),
+                ),
+            ),
+        )
+        recommendation = SqlAlchemyRecommendationRepository(uow.session).create_recommendation(
+            user_id=owner.id,
+            title="Shorten the workout",
+            rationale="Reduce load",
+        )
+        workout = saved_plan.workouts[0]
+        before_payload = workout.to_payload()
+        after_payload = {**before_payload, "planned_duration_minutes": 30}
+        proposal = repository.create_adjustment_proposal(
+            owner.id,
+            PlanAdjustmentProposal.create(
+                user_id=owner.id,
+                training_plan_id=saved_plan.id,
+                workout_id=workout.id,
+                before_payload=before_payload,
+                after_payload=after_payload,
+                recommendation_id=recommendation.id,
+            ).transition_to("approved"),
+        )
+        blocked = repository.create_adjustment_proposal(
+            other.id,
+            PlanAdjustmentProposal.create(
+                user_id=other.id,
+                training_plan_id=saved_plan.id,
+                workout_id=workout.id,
+                before_payload=before_payload,
+                after_payload=after_payload,
+            ),
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        proposals = repository.list_adjustment_proposals_for_plan(owner.id, saved_plan.id)
+        hidden = repository.list_adjustment_proposals_for_plan(other.id, saved_plan.id)
+        loaded_plan = repository.get_plan_for_user(owner.id, saved_plan.id)
+
+        assert proposal is not None
+        assert blocked is None
+        assert len(proposals) == 1
+        assert hidden == []
+        assert proposals[0].id == proposal.id
+        assert proposals[0].status == "approved"
+        assert proposals[0].workout_id == workout.id
+        assert proposals[0].recommendation_id == recommendation.id
+        assert proposals[0].before_payload["planned_duration_minutes"] == 45
+        assert proposals[0].after_payload["planned_duration_minutes"] == 30
+        assert loaded_plan is not None
+        assert loaded_plan.workouts[0].planned_duration_minutes == 45
 
 
 def test_repositories_update_recommendation_decision(sqlite_session_factory) -> None:
