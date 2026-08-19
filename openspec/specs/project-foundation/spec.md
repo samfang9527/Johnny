@@ -1,7 +1,10 @@
-# Delta for Project Foundation
+# project-foundation Specification
 
-## ADDED Requirements
+## Purpose
 
+Define the MVP development foundation for Johnny: local backend and frontend commands, Vue/Vite/TypeScript frontend baseline, PostgreSQL persistence direction, environment-variable configuration, and backend health readiness behavior.
+
+## Requirements
 ### Requirement: Local Development Baseline
 
 The system SHALL provide documented commands for installing dependencies, running the backend, running the frontend, and running tests.

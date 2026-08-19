@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from importlib import import_module
 
 
-ScheduledJobModel = import_module("Johnny.infrastructure.database.models").ScheduledJobModel
+ScheduledJobModel = import_module("src.infrastructure.database.models").ScheduledJobModel
 
 
 def test_scheduled_job_model_defaults() -> None:
