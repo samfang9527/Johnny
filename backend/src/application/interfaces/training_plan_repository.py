@@ -34,6 +34,13 @@ class TrainingPlanRepository(Protocol):
     ) -> PlanAdjustmentProposal | None:
         ...
 
+    def save_adjustment_proposal(
+        self,
+        user_id: str,
+        proposal: PlanAdjustmentProposal,
+    ) -> PlanAdjustmentProposal | None:
+        ...
+
     def list_adjustment_proposals_for_plan(
         self,
         user_id: str,
