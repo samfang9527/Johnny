@@ -18,7 +18,7 @@ class TrainingPlanRepository(Protocol):
     ) -> object:
         ...
 
-    def get_current_plan_for_user(self, user_id: str) -> object | None:
+    def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
         ...
 
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
@@ -38,5 +38,8 @@ class TrainingPlanRepository(Protocol):
         self,
         user_id: str,
         training_plan_id: str | None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[PlanAdjustmentProposal]:
         ...

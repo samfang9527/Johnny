@@ -52,7 +52,7 @@ class SqlAlchemyTrainingPlanRepository:
         self._session.flush()
         return workout
 
-    def get_current_plan_for_user(self, user_id: str) -> TrainingPlanModel | None:
+    def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
         statement = (
             select(TrainingPlanModel)
             .options(selectinload(TrainingPlanModel.workouts))
@@ -60,7 +60,10 @@ class SqlAlchemyTrainingPlanRepository:
             .order_by(TrainingPlanModel.starts_on.desc())
             .limit(1)
         )
-        return self._session.scalar(statement)
+        model = self._session.scalar(statement)
+        if model is None:
+            return None
+        return _plan_from_model(model)
 
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
         _ensure_matching_user_id(user_id, plan.user_id)
@@ -118,6 +121,9 @@ class SqlAlchemyTrainingPlanRepository:
         self,
         user_id: str,
         training_plan_id: str | None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[PlanAdjustmentProposal]:
         if training_plan_id is None:
             return []
@@ -134,6 +140,10 @@ class SqlAlchemyTrainingPlanRepository:
             .where(PlanAdjustmentModel.training_plan_id == training_plan_id)
             .order_by(PlanAdjustmentModel.created_at, PlanAdjustmentModel.id)
         )
+        if offset:
+            statement = statement.offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
         return [_adjustment_from_model(model, user_id=user_id) for model in self._session.scalars(statement)]
 
     def _get_plan_model(self, user_id: str, plan: TrainingPlan) -> TrainingPlanModel:

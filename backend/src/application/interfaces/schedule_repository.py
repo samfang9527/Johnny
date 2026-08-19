@@ -14,6 +14,11 @@ class DueSchedule:
 
 
 class ScheduleRepository(Protocol):
-    def list_due(self, now: datetime) -> list[DueSchedule]:
+    def list_due(
+        self,
+        now: datetime,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[DueSchedule]:
         ...
-

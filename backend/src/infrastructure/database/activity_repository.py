@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, datetime, time, timezone
 
 from sqlalchemy import select
@@ -96,8 +97,16 @@ class SqlAlchemyActivityRepository:
         self._session.flush()
         return cursor
 
-    def list_for_user(self, user_id: str) -> list[ActivityModel]:
-        return list(self._session.scalars(select(ActivityModel).where(ActivityModel.user_id == user_id)))
+    def list_for_user(
+        self,
+        user_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[ActivityModel]:
+        statement = select(ActivityModel).where(ActivityModel.user_id == user_id).order_by(ActivityModel.started_at, ActivityModel.id)
+        statement = _apply_paging(statement, limit=limit, offset=offset)
+        return list(self._session.scalars(statement))
 
     def save_activity(self, user_id: str, activity: CompletedActivity) -> CompletedActivity | None:
         _ensure_matching_user_id(user_id, activity.user_id)
@@ -128,8 +137,36 @@ class SqlAlchemyActivityRepository:
             return None
         return _activity_from_model(model)
 
-    def list_activities_for_user(self, user_id: str) -> list[CompletedActivity]:
-        statement = select(ActivityModel).where(ActivityModel.user_id == user_id).order_by(ActivityModel.started_at)
+    def list_activities_for_user(
+        self,
+        user_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[CompletedActivity]:
+        statement = select(ActivityModel).where(ActivityModel.user_id == user_id).order_by(ActivityModel.started_at, ActivityModel.id)
+        statement = _apply_paging(statement, limit=limit, offset=offset)
+        return [_activity_from_model(model) for model in self._session.scalars(statement)]
+
+    def list_activities_for_user_between(
+        self,
+        user_id: str,
+        started_on_or_after: date,
+        started_on_or_before: date,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[CompletedActivity]:
+        statement = (
+            select(ActivityModel)
+            .where(
+                ActivityModel.user_id == user_id,
+                ActivityModel.started_at >= _measured_at(started_on_or_after),
+                ActivityModel.started_at <= _end_of_day(started_on_or_before),
+            )
+            .order_by(ActivityModel.started_at, ActivityModel.id)
+        )
+        statement = _apply_paging(statement, limit=limit, offset=offset)
         return [_activity_from_model(model) for model in self._session.scalars(statement)]
 
     def save_daily_health_metrics(self, user_id: str, metrics: DailyHealthMetrics) -> DailyHealthMetrics:
@@ -190,6 +227,51 @@ class SqlAlchemyActivityRepository:
             stress_score=values.get("stress_score"),
         )
 
+    def list_daily_health_metrics_for_user_between(
+        self,
+        user_id: str,
+        measured_on_or_after: date,
+        measured_on_or_before: date,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[DailyHealthMetrics]:
+        statement = (
+            select(HealthMetricModel)
+            .where(
+                HealthMetricModel.user_id == user_id,
+                HealthMetricModel.measured_at >= _measured_at(measured_on_or_after),
+                HealthMetricModel.measured_at <= _end_of_day(measured_on_or_before),
+                HealthMetricModel.metric_type.in_(HEALTH_METRIC_TYPES),
+            )
+            .order_by(HealthMetricModel.measured_at, HealthMetricModel.metric_type)
+        )
+        grouped: dict[date, list[HealthMetricModel]] = defaultdict(list)
+        for model in self._session.scalars(statement):
+            grouped[model.measured_at.date()].append(model)
+
+        metrics: list[DailyHealthMetrics] = []
+        for metric_date in sorted(grouped):
+            values = {model.metric_type: model.value for model in grouped[metric_date]}
+            source = (
+                next((model.provider_summary or {}).get("source") for model in grouped[metric_date] if model.provider_summary)
+                or "manual"
+            )
+            metrics.append(
+                DailyHealthMetrics.create(
+                    user_id=user_id,
+                    metric_date=metric_date,
+                    source=source,
+                    sleep_duration_minutes=values.get("sleep_duration_minutes"),
+                    sleep_quality=values.get("sleep_quality"),
+                    hrv_ms=values.get("hrv_ms"),
+                    hrv_baseline_ms=values.get("hrv_baseline_ms"),
+                    resting_heart_rate=values.get("resting_heart_rate"),
+                    stress_score=values.get("stress_score"),
+                )
+            )
+        return metrics[offset : offset + limit if limit is not None else None]
+
     def _get_activity_model(self, user_id: str, activity: CompletedActivity) -> ActivityModel | None:
         if activity.id is None:
             model = ActivityModel(
@@ -234,6 +316,18 @@ def _activity_from_model(model: ActivityModel) -> CompletedActivity:
 
 def _measured_at(metric_date: date) -> datetime:
     return datetime.combine(metric_date, time.min, tzinfo=timezone.utc)
+
+
+def _end_of_day(metric_date: date) -> datetime:
+    return datetime.combine(metric_date, time.max, tzinfo=timezone.utc)
+
+
+def _apply_paging(statement, *, limit: int | None, offset: int):  # noqa: ANN001
+    if offset:
+        statement = statement.offset(offset)
+    if limit is not None:
+        statement = statement.limit(limit)
+    return statement
 
 
 def _metric_unit(metric_type: str) -> str | None:

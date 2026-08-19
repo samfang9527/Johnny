@@ -15,6 +15,11 @@ class ScheduledJobRecord:
 
 
 class JobRepository(Protocol):
-    def list_due_jobs(self, now: datetime) -> list[ScheduledJobRecord]:
+    def list_due_jobs(
+        self,
+        now: datetime,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[ScheduledJobRecord]:
         ...
-
