@@ -109,6 +109,7 @@ class RaceModel(TimestampMixin, Base):
     race_date: Mapped[date] = mapped_column(Date, nullable=False)
     distance_meters: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="planned", nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     user: Mapped[UserModel] = relationship(back_populates="races")
     training_plans: Mapped[list[TrainingPlanModel]] = relationship(back_populates="race")

@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from src.domain.athlete_race import AthletePreferences, AthleteProfile, RaceGoal
 from src.infrastructure.database.models import (
     ActivityModel,
     AgentContextSourceModel,
@@ -16,12 +17,11 @@ from src.infrastructure.database.models import (
     RaceModel,
     UserModel,
 )
-from src.infrastructure.database.repositories import (
-    SqlAlchemyActivityRepository,
-    SqlAlchemyRecommendationRepository,
-    SqlAlchemyTrainingPlanRepository,
-    SqlAlchemyUserRepository,
-)
+from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
+from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
+from src.infrastructure.database.recommendation_repository import SqlAlchemyRecommendationRepository
+from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
+from src.infrastructure.database.user_repository import SqlAlchemyUserRepository
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
 
 
@@ -158,6 +158,264 @@ def test_athlete_profile_can_be_linked_to_user(sqlite_session_factory) -> None:
 
         assert loaded is not None
         assert loaded.athlete_profile.timezone == "Asia/Taipei"
+
+
+def test_athlete_profile_repository_round_trips_profile_and_preferences(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="athlete-domain@example.com", display_name="Athlete Domain Runner")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+        saved = repository.save_profile(
+            user.id,
+            AthleteProfile.create(
+                user_id=user.id,
+                timezone="Asia/Taipei",
+                experience_level="intermediate",
+                current_weekly_mileage=42.5,
+                preferred_training_days=("tuesday", "thursday", "sunday"),
+                preferred_long_run_day="sunday",
+                max_runs_per_week=4,
+            )
+        )
+        updated = repository.save_profile(
+            user.id,
+            saved.with_preferences(
+                AthletePreferences(
+                    preferred_training_days=("monday", "wednesday", "saturday"),
+                    preferred_long_run_day="saturday",
+                    max_runs_per_week=3,
+                    unit_preference="imperial",
+                    training_preferences={"surface": "trail"},
+                    injury_notes="Avoid aggressive downhill sessions.",
+                )
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded = SqlAlchemyAthleteRaceRepository(uow.session).get_profile_for_user(user.id)
+
+        assert loaded is not None
+        assert loaded.id == updated.id
+        assert loaded.user_id == user.id
+        assert loaded.timezone == "Asia/Taipei"
+        assert loaded.experience_level == "intermediate"
+        assert loaded.current_weekly_mileage == 42.5
+        assert loaded.preferences.preferred_training_days == ("monday", "wednesday", "saturday")
+        assert loaded.preferences.preferred_long_run_day == "saturday"
+        assert loaded.preferences.max_runs_per_week == 3
+        assert loaded.preferences.unit_preference == "imperial"
+        assert loaded.preferences.training_preferences == {"surface": "trail"}
+        assert loaded.preferences.injury_notes == "Avoid aggressive downhill sessions."
+
+
+def test_race_goal_repository_round_trips_goals_and_enforces_user_ownership(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="race-owner@example.com", display_name="Race Owner")
+        other = UserModel(email="race-other@example.com", display_name="Race Other")
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+        saved = repository.create_race_goal(
+            owner.id,
+            RaceGoal.create(
+                user_id=owner.id,
+                name="Taipei Half Marathon",
+                race_date=date(2027, 3, 1),
+                distance_meters=21_097,
+                target_finish_seconds=7_200,
+                priority="a",
+            )
+        )
+        repository.create_race_goal(
+            other.id,
+            RaceGoal.create(
+                user_id=other.id,
+                name="Other Runner 10K",
+                race_date=date(2027, 4, 1),
+                distance_meters=10_000,
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+        loaded = repository.get_race_goal_for_user(owner.id, saved.id)
+        hidden = repository.get_race_goal_for_user(other.id, saved.id)
+        owner_goals = repository.list_race_goals_for_user(owner.id)
+
+        assert loaded is not None
+        assert loaded.name == "Taipei Half Marathon"
+        assert loaded.race_date == date(2027, 3, 1)
+        assert loaded.distance_meters == 21_097
+        assert loaded.target_finish_seconds == 7_200
+        assert loaded.priority == "a"
+        assert loaded.status == "planned"
+        assert loaded.target_pace_seconds_per_km == pytest.approx(341.28, abs=0.01)
+        assert hidden is None
+        assert [goal.id for goal in owner_goals] == [saved.id]
+
+
+def test_race_goal_repository_updates_only_user_owned_goals(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="race-update-owner@example.com", display_name="Race Owner")
+        other = UserModel(email="race-update-other@example.com", display_name="Race Other")
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+        saved = repository.create_race_goal(
+            owner.id,
+            RaceGoal.create(
+                user_id=owner.id,
+                name="Original 10K",
+                race_date=date(2027, 5, 1),
+                distance_meters=10_000,
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+        blocked = repository.update_race_goal(
+            other.id,
+            RaceGoal.create(
+                id=saved.id,
+                user_id=other.id,
+                name="Blocked Update",
+                race_date=date(2027, 5, 2),
+                distance_meters=5_000,
+            )
+        )
+        allowed = repository.update_race_goal(
+            owner.id,
+            RaceGoal.create(
+                id=saved.id,
+                user_id=owner.id,
+                name="Updated 10K",
+                race_date=date(2027, 5, 2),
+                distance_meters=10_000,
+                target_finish_seconds=3_600,
+                priority="b",
+                status="active",
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded = SqlAlchemyAthleteRaceRepository(uow.session).get_race_goal_for_user(owner.id, saved.id)
+
+        assert blocked is None
+        assert allowed is not None
+        assert loaded is not None
+        assert loaded.name == "Updated 10K"
+        assert loaded.race_date == date(2027, 5, 2)
+        assert loaded.target_finish_seconds == 3_600
+        assert loaded.priority == "b"
+        assert loaded.status == "active"
+
+
+def test_athlete_profile_repository_rejects_mismatched_tenant_payload(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="tenant-profile@example.com", display_name="Tenant Profile")
+        other = UserModel(email="tenant-profile-other@example.com", display_name="Other Tenant")
+        uow.session.add_all([user, other])
+        uow.session.flush()
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+
+        with pytest.raises(ValueError, match="user_id"):
+            repository.save_profile(
+                user.id,
+                AthleteProfile.create(
+                    user_id=other.id,
+                    timezone="Asia/Taipei",
+                    experience_level="beginner",
+                    current_weekly_mileage=10,
+                    preferred_training_days=("sunday",),
+                    preferred_long_run_day="sunday",
+                    max_runs_per_week=1,
+                ),
+            )
+
+
+def test_race_goal_repository_rejects_mismatched_tenant_payload(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="tenant-race@example.com", display_name="Tenant Race")
+        other = UserModel(email="tenant-race-other@example.com", display_name="Other Tenant")
+        uow.session.add_all([user, other])
+        uow.session.flush()
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+
+        with pytest.raises(ValueError, match="user_id"):
+            repository.create_race_goal(
+                user.id,
+                RaceGoal.create(
+                    user_id=other.id,
+                    name="Mismatched Create",
+                    race_date=date(2027, 5, 1),
+                    distance_meters=10_000,
+                ),
+            )
+
+        with pytest.raises(ValueError, match="user_id"):
+            repository.update_race_goal(
+                user.id,
+                RaceGoal.create(
+                    id="race-1",
+                    user_id=other.id,
+                    name="Mismatched Race",
+                    race_date=date(2027, 5, 1),
+                    distance_meters=10_000,
+                ),
+            )
+
+
+def test_race_goal_repository_lists_with_date_range_and_paging(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="race-list@example.com", display_name="Race List")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+        for name, race_date in (
+            ("January 10K", date(2027, 1, 15)),
+            ("March Half", date(2027, 3, 1)),
+            ("May 10K", date(2027, 5, 1)),
+            ("June Marathon", date(2027, 6, 15)),
+        ):
+            repository.create_race_goal(
+                user.id,
+                RaceGoal.create(
+                    user_id=user.id,
+                    name=name,
+                    race_date=race_date,
+                    distance_meters=10_000,
+                )
+            )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyAthleteRaceRepository(uow.session)
+        goals = repository.list_race_goals_for_user(
+            user.id,
+            race_date_from=date(2027, 2, 1),
+            race_date_to=date(2027, 6, 1),
+            limit=1,
+            offset=1,
+        )
+
+        assert [goal.name for goal in goals] == ["May 10K"]
 
 
 def test_google_identity_can_be_linked_without_auth_broker_coupling(sqlite_session_factory) -> None:

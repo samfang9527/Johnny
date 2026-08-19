@@ -36,6 +36,7 @@ def test_core_tables_expose_queryable_columns() -> None:
     expected_columns = {
         "users": {"id", "email", "display_name", "status", "created_at", "updated_at"},
         "auth_identities": {"id", "user_id", "provider", "issuer", "subject", "email", "created_at", "updated_at"},
+        "races": {"id", "user_id", "name", "race_date", "distance_meters", "status", "metadata_json"},
         "training_plans": {"id", "user_id", "race_id", "name", "status", "starts_on", "ends_on"},
         "workouts": {"id", "training_plan_id", "scheduled_for", "workout_type", "status"},
         "activities": {"id", "user_id", "provider_connection_id", "provider_activity_id", "started_at"},
@@ -157,6 +158,7 @@ def test_flexible_payload_fields_are_json_columns() -> None:
         ("integration_resource_cursors", "cursor_value"),
         ("integration_resource_cursors", "metadata_json"),
         ("auth_identities", "provider_claims"),
+        ("races", "metadata_json"),
     }
 
     for table_name, column_name in json_columns:

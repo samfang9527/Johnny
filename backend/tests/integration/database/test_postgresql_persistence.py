@@ -6,9 +6,10 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
 from src.infrastructure.database.models import Base
-from src.infrastructure.database.repositories import SqlAlchemyRecommendationRepository, SqlAlchemyUserRepository
+from src.infrastructure.database.recommendation_repository import SqlAlchemyRecommendationRepository
 from src.infrastructure.database.session import create_session_factory
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
+from src.infrastructure.database.user_repository import SqlAlchemyUserRepository
 
 
 def test_postgresql_migrations_and_repositories_with_configured_database(monkeypatch) -> None:
