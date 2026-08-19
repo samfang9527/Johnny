@@ -1,54 +1,48 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Protocol
 
-from src.application.interfaces.training_analytics_repository import TrainingAnalyticsReadRepository
+from src.application.interfaces.training_analytics_store import TrainingAnalyticsDataProvider
+from src.application.interfaces.training_plan_store import TrainingPlanStore
 from src.domain.training_analytics import (
     RecoveryService,
     TodayContext,
     TrainingLoadService,
 )
-from src.domain.training_plan import TrainingPlan
 
 
-class CurrentTrainingPlanRepository(Protocol):
-    def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
-        ...
-
-
-class TodayContextService:
+class BuildTodayContextHandler:
     def __init__(
         self,
         *,
-        activity_repository: TrainingAnalyticsReadRepository,
-        training_plan_repository: CurrentTrainingPlanRepository,
+        training_data: TrainingAnalyticsDataProvider,
+        training_plans: TrainingPlanStore,
         training_load_service: TrainingLoadService | None = None,
         recovery_service: RecoveryService | None = None,
     ) -> None:
-        self._activity_repository = activity_repository
-        self._training_plan_repository = training_plan_repository
+        self._training_data = training_data
+        self._training_plans = training_plans
         self._training_load_service = training_load_service or TrainingLoadService()
         self._recovery_service = recovery_service or RecoveryService()
 
-    def build(self, *, user_id: str, anchor_date: date) -> TodayContext:
+    def handle(self, *, user_id: str, anchor_date: date) -> TodayContext:
         history_start = anchor_date - timedelta(days=27)
         recent_start = anchor_date - timedelta(days=6)
         activities = tuple(
-            self._activity_repository.list_activities_for_user_between(
+            self._training_data.list_activities_for_user_between(
                 user_id,
                 history_start,
                 anchor_date,
             )
         )
         health_metrics = tuple(
-            self._activity_repository.list_daily_health_metrics_for_user_between(
+            self._training_data.list_daily_health_metrics_for_user_between(
                 user_id,
                 history_start,
                 anchor_date,
             )
         )
-        plan = self._training_plan_repository.get_current_plan_for_user(user_id)
+        plan = self._training_plans.get_current_plan_for_user(user_id)
         if plan is not None and plan.user_id != user_id:
             plan = None
 

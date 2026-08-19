@@ -6,7 +6,7 @@ from typing import Protocol
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 
 
-class ActivityRepository(Protocol):
+class ActivityStore(Protocol):
     def save_activity(self, user_id: str, activity: CompletedActivity) -> CompletedActivity | None:
         ...
 

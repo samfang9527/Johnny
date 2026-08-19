@@ -6,7 +6,7 @@ from typing import Protocol
 from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan
 
 
-class TrainingPlanRepository(Protocol):
+class TrainingPlanStore(Protocol):
     def create_plan(
         self,
         *,
@@ -21,20 +21,13 @@ class TrainingPlanRepository(Protocol):
     def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
         ...
 
-    def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
-        ...
-
     def get_plan_for_user(self, user_id: str, plan_id: str | None) -> TrainingPlan | None:
         ...
 
-    def create_adjustment_proposal(
-        self,
-        user_id: str,
-        proposal: PlanAdjustmentProposal,
-    ) -> PlanAdjustmentProposal | None:
+    def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
         ...
 
-    def save_adjustment_proposal(
+    def create_adjustment_proposal(
         self,
         user_id: str,
         proposal: PlanAdjustmentProposal,

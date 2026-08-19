@@ -1,1 +1,1 @@
-"""Application interface package extension for job system."""
+"""Application-facing boundary protocols."""

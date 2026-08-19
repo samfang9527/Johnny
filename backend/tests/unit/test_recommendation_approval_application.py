@@ -1,12 +1,17 @@
 from datetime import date
 
-from src.application.recommendation_approval import DailyRecommendationService, RecommendationDecisionService
+from src.application.recommendation_approval import (
+    AcceptRecommendationHandler,
+    CreateDailyRecommendationHandler,
+    EditRecommendationHandler,
+    RejectRecommendationHandler,
+)
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
 from src.domain.training_analytics import RecoveryContext, TodayContext, TrainingLoadSummary
 from src.domain.training_plan import TrainingPlan, Workout
 
 
-class FakeRecommendationRepository:
+class FakeRecommendationStore:
     def __init__(self) -> None:
         self.recommendations: dict[str, Recommendation] = {}
         self.next_id = 1
@@ -55,7 +60,7 @@ class FakeRecommendationRepository:
         return recommendations[offset : offset + limit if limit is not None else None]
 
 
-class FakeTrainingPlanRepository:
+class FakeTrainingPlanStore:
     def __init__(self, plan: TrainingPlan | None) -> None:
         self.plan = plan
         self.adjustments = []
@@ -156,9 +161,9 @@ def _today_context(*, readiness: str = "rest", scheduled_workouts: tuple[dict, .
 
 
 def test_pending_recommendation_does_not_mutate_workout_before_acceptance() -> None:
-    recommendations = FakeRecommendationRepository()
+    recommendations = FakeRecommendationStore()
     saved = recommendations.create_recommendation("user-1", _recommendation())
-    plans = FakeTrainingPlanRepository(_plan())
+    plans = FakeTrainingPlanStore(_plan())
 
     loaded_plan = plans.get_plan_for_user("user-1", saved.training_plan_id)
 
@@ -168,15 +173,12 @@ def test_pending_recommendation_does_not_mutate_workout_before_acceptance() -> N
 
 
 def test_accepting_recommendation_applies_matching_workout_adjustment() -> None:
-    recommendations = FakeRecommendationRepository()
+    recommendations = FakeRecommendationStore()
     saved = recommendations.create_recommendation("user-1", _recommendation(duration=30))
-    plans = FakeTrainingPlanRepository(_plan())
-    service = RecommendationDecisionService(
-        recommendation_repository=recommendations,
-        training_plan_repository=plans,
-    )
+    plans = FakeTrainingPlanStore(_plan())
+    handler = AcceptRecommendationHandler(recommendations=recommendations, training_plans=plans)
 
-    decided = service.accept(user_id="user-1", recommendation_id=saved.id)
+    decided = handler.handle(user_id="user-1", recommendation_id=saved.id)
 
     assert decided is not None
     assert decided.status == "decided"
@@ -187,17 +189,14 @@ def test_accepting_recommendation_applies_matching_workout_adjustment() -> None:
 
 
 def test_accepting_stale_or_cross_user_recommendation_does_not_mutate_plan() -> None:
-    recommendations = FakeRecommendationRepository()
+    recommendations = FakeRecommendationStore()
     saved = recommendations.create_recommendation("user-1", _recommendation(duration=30))
     stale_plan = _plan(_workout(duration=40))
-    plans = FakeTrainingPlanRepository(stale_plan)
-    service = RecommendationDecisionService(
-        recommendation_repository=recommendations,
-        training_plan_repository=plans,
-    )
+    plans = FakeTrainingPlanStore(stale_plan)
+    handler = AcceptRecommendationHandler(recommendations=recommendations, training_plans=plans)
 
-    stale_result = service.accept(user_id="user-1", recommendation_id=saved.id)
-    cross_user_result = service.accept(user_id="user-2", recommendation_id=saved.id)
+    stale_result = handler.handle(user_id="user-1", recommendation_id=saved.id)
+    cross_user_result = handler.handle(user_id="user-2", recommendation_id=saved.id)
 
     assert stale_result is None
     assert cross_user_result is None
@@ -207,17 +206,15 @@ def test_accepting_stale_or_cross_user_recommendation_does_not_mutate_plan() -> 
 
 
 def test_reject_and_edit_preserve_plan_and_recommendation_history() -> None:
-    recommendations = FakeRecommendationRepository()
+    recommendations = FakeRecommendationStore()
     rejected = recommendations.create_recommendation("user-1", _recommendation(duration=30))
     edited = recommendations.create_recommendation("user-1", _recommendation(duration=30))
-    plans = FakeTrainingPlanRepository(_plan())
-    service = RecommendationDecisionService(
-        recommendation_repository=recommendations,
-        training_plan_repository=plans,
-    )
+    plans = FakeTrainingPlanStore(_plan())
+    reject_handler = RejectRecommendationHandler(recommendations=recommendations)
+    edit_handler = EditRecommendationHandler(recommendations=recommendations)
 
-    reject_result = service.reject(user_id="user-1", recommendation_id=rejected.id)
-    revised = service.edit(
+    reject_result = reject_handler.handle(user_id="user-1", recommendation_id=rejected.id)
+    revised = edit_handler.handle(
         user_id="user-1",
         recommendation_id=edited.id,
         revised_action=_recommendation(duration=20).proposed_action,
@@ -234,11 +231,11 @@ def test_reject_and_edit_preserve_plan_and_recommendation_history() -> None:
     assert revised.proposed_action.payload["supersedes_recommendation_id"] == edited.id
 
 
-def test_daily_recommendation_service_creates_recovery_warning_without_llm_text() -> None:
-    recommendations = FakeRecommendationRepository()
-    service = DailyRecommendationService(recommendation_repository=recommendations)
+def test_create_daily_recommendation_handler_creates_recovery_warning_without_llm_text() -> None:
+    recommendations = FakeRecommendationStore()
+    handler = CreateDailyRecommendationHandler(recommendations=recommendations)
 
-    created = service.create_from_today_context(user_id="user-1", today_context=_today_context())
+    created = handler.handle(user_id="user-1", today_context=_today_context())
 
     assert created is not None
     assert created.status == "pending"
@@ -248,15 +245,15 @@ def test_daily_recommendation_service_creates_recovery_warning_without_llm_text(
     assert "LLM" not in created.rationale
 
 
-def test_daily_recommendation_service_skips_insufficient_context() -> None:
-    recommendations = FakeRecommendationRepository()
-    service = DailyRecommendationService(recommendation_repository=recommendations)
+def test_create_daily_recommendation_handler_skips_insufficient_context() -> None:
+    recommendations = FakeRecommendationStore()
+    handler = CreateDailyRecommendationHandler(recommendations=recommendations)
 
-    no_workout = service.create_from_today_context(
+    no_workout = handler.handle(
         user_id="user-1",
         today_context=_today_context(scheduled_workouts=()),
     )
-    ready = service.create_from_today_context(
+    ready = handler.handle(
         user_id="user-1",
         today_context=_today_context(readiness="ready"),
     )

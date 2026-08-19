@@ -6,20 +6,19 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
-class ScheduledJobRecord:
-    job_id: str
+class DueSchedule:
+    schedule_id: str
     task_type: str
-    cron_expression: str
-    next_run_at: datetime
     payload: dict
+    next_run_at: datetime
 
 
-class JobRepository(Protocol):
-    def list_due_jobs(
+class ScheduleProvider(Protocol):
+    def list_due(
         self,
         now: datetime,
         *,
         limit: int | None = None,
         offset: int = 0,
-    ) -> list[ScheduledJobRecord]:
+    ) -> list[DueSchedule]:
         ...

@@ -1,67 +1,52 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Protocol
 
+from src.application.interfaces.recommendation_store import RecommendationStore
+from src.application.interfaces.training_plan_store import TrainingPlanStore
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
 from src.domain.training_analytics import TodayContext
 from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout
 
 
-class RecommendationRepository(Protocol):
-    def create_recommendation(self, user_id: str, recommendation: Recommendation) -> Recommendation:
-        ...
-
-    def save_recommendation(self, user_id: str, recommendation: Recommendation) -> Recommendation | None:
-        ...
-
-    def get_recommendation_for_user(self, user_id: str, recommendation_id: str | None) -> Recommendation | None:
-        ...
-
-
-class TrainingPlanApprovalRepository(Protocol):
-    def get_plan_for_user(self, user_id: str, plan_id: str | None) -> TrainingPlan | None:
-        ...
-
-    def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
-        ...
-
-    def create_adjustment_proposal(
-        self,
-        user_id: str,
-        proposal: PlanAdjustmentProposal,
-    ) -> PlanAdjustmentProposal | None:
-        ...
-
-
-class RecommendationDecisionService:
+class AcceptRecommendationHandler:
     def __init__(
         self,
         *,
-        recommendation_repository: RecommendationRepository,
-        training_plan_repository: TrainingPlanApprovalRepository,
+        recommendations: RecommendationStore,
+        training_plans: TrainingPlanStore,
     ) -> None:
-        self._recommendations = recommendation_repository
-        self._plans = training_plan_repository
+        self._recommendations = recommendations
+        self._training_plans = training_plans
 
-    def accept(self, *, user_id: str, recommendation_id: str | None) -> Recommendation | None:
+    def handle(self, *, user_id: str, recommendation_id: str | None) -> Recommendation | None:
         recommendation = self._recommendations.get_recommendation_for_user(user_id, recommendation_id)
         if recommendation is None:
             return None
         accepted = recommendation.accept()
         if recommendation.proposed_action.action_type == "no_plan_change":
             return self._recommendations.save_recommendation(user_id, accepted)
-        if not self._apply_workout_adjustment(user_id, accepted):
+        if not _apply_workout_adjustment(user_id, accepted, self._training_plans):
             return None
         return self._recommendations.save_recommendation(user_id, accepted)
 
-    def reject(self, *, user_id: str, recommendation_id: str | None) -> Recommendation | None:
+
+class RejectRecommendationHandler:
+    def __init__(self, *, recommendations: RecommendationStore) -> None:
+        self._recommendations = recommendations
+
+    def handle(self, *, user_id: str, recommendation_id: str | None) -> Recommendation | None:
         recommendation = self._recommendations.get_recommendation_for_user(user_id, recommendation_id)
         if recommendation is None:
             return None
         return self._recommendations.save_recommendation(user_id, recommendation.reject())
 
-    def edit(
+
+class EditRecommendationHandler:
+    def __init__(self, *, recommendations: RecommendationStore) -> None:
+        self._recommendations = recommendations
+
+    def handle(
         self,
         *,
         user_id: str,
@@ -77,39 +62,12 @@ class RecommendationDecisionService:
             return None
         return self._recommendations.create_recommendation(user_id, revised)
 
-    def _apply_workout_adjustment(self, user_id: str, recommendation: Recommendation) -> bool:
-        action = recommendation.proposed_action
-        plan = self._plans.get_plan_for_user(user_id, action.payload.get("training_plan_id"))
-        if plan is None:
-            return False
-        workout_id = action.payload.get("workout_id")
-        current = next((workout for workout in plan.workouts if workout.id == workout_id), None)
-        if current is None:
-            return False
-        if current.to_payload() != action.payload.get("before_payload"):
-            return False
 
-        updated_workout = _workout_from_payload(action.payload["after_payload"])
-        updated_plan = _replace_workout(plan, updated_workout)
-        adjustment = PlanAdjustmentProposal.create(
-            user_id=user_id,
-            training_plan_id=plan.id or action.payload["training_plan_id"],
-            workout_id=workout_id,
-            recommendation_id=recommendation.id,
-            before_payload=action.payload["before_payload"],
-            after_payload=action.payload["after_payload"],
-        ).transition_to("approved").transition_to("applied")
-        if self._plans.create_adjustment_proposal(user_id, adjustment) is None:
-            return False
-        self._plans.save_plan(user_id, updated_plan)
-        return True
+class CreateDailyRecommendationHandler:
+    def __init__(self, *, recommendations: RecommendationStore) -> None:
+        self._recommendations = recommendations
 
-
-class DailyRecommendationService:
-    def __init__(self, *, recommendation_repository: RecommendationRepository) -> None:
-        self._recommendations = recommendation_repository
-
-    def create_from_today_context(self, *, user_id: str, today_context: TodayContext) -> Recommendation | None:
+    def handle(self, *, user_id: str, today_context: TodayContext) -> Recommendation | None:
         if today_context.user_id != user_id:
             return None
         if today_context.recovery.readiness_label != "rest":
@@ -147,6 +105,38 @@ class DailyRecommendationService:
             workout_id=action.payload["workout_id"],
         )
         return self._recommendations.create_recommendation(user_id, recommendation)
+
+
+def _apply_workout_adjustment(
+    user_id: str,
+    recommendation: Recommendation,
+    training_plans: TrainingPlanStore,
+) -> bool:
+    action = recommendation.proposed_action
+    plan = training_plans.get_plan_for_user(user_id, action.payload.get("training_plan_id"))
+    if plan is None:
+        return False
+    workout_id = action.payload.get("workout_id")
+    current = next((workout for workout in plan.workouts if workout.id == workout_id), None)
+    if current is None:
+        return False
+    if current.to_payload() != action.payload.get("before_payload"):
+        return False
+
+    updated_workout = _workout_from_payload(action.payload["after_payload"])
+    updated_plan = _replace_workout(plan, updated_workout)
+    adjustment = PlanAdjustmentProposal.create(
+        user_id=user_id,
+        training_plan_id=plan.id or action.payload["training_plan_id"],
+        workout_id=workout_id,
+        recommendation_id=recommendation.id,
+        before_payload=action.payload["before_payload"],
+        after_payload=action.payload["after_payload"],
+    ).transition_to("approved").transition_to("applied")
+    if training_plans.create_adjustment_proposal(user_id, adjustment) is None:
+        return False
+    training_plans.save_plan(user_id, updated_plan)
+    return True
 
 
 def _replace_workout(plan: TrainingPlan, updated_workout: Workout) -> TrainingPlan:

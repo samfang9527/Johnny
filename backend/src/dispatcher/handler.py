@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from ..application.interfaces.schedule_repository import DueSchedule
+from ..application.interfaces.schedule_provider import DueSchedule
 from ..application.interfaces.task_queue import TaskEnvelope
 from ..infrastructure.queue.publisher import InMemoryTaskQueue
 

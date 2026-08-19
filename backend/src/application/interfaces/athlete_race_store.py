@@ -6,7 +6,7 @@ from typing import Protocol
 from src.domain.athlete_race import AthleteProfile, RaceGoal
 
 
-class AthleteProfileRepository(Protocol):
+class AthleteProfileStore(Protocol):
     def save_profile(self, user_id: str, profile: AthleteProfile) -> AthleteProfile:
         ...
 
@@ -14,7 +14,7 @@ class AthleteProfileRepository(Protocol):
         ...
 
 
-class RaceGoalRepository(Protocol):
+class RaceGoalStore(Protocol):
     def create_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal:
         ...
 

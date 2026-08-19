@@ -5,7 +5,7 @@ from typing import Protocol
 from src.domain.recommendation_approval import Recommendation
 
 
-class RecommendationRepository(Protocol):
+class RecommendationStore(Protocol):
     def create_recommendation(self, user_id: str, recommendation: Recommendation) -> Recommendation:
         ...
 

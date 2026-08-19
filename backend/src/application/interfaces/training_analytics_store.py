@@ -7,7 +7,7 @@ from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.training_analytics import TrainingMetricSnapshot
 
 
-class TrainingAnalyticsReadRepository(Protocol):
+class TrainingAnalyticsDataProvider(Protocol):
     def list_activities_for_user_between(
         self,
         user_id: str,
@@ -31,7 +31,7 @@ class TrainingAnalyticsReadRepository(Protocol):
         ...
 
 
-class TrainingMetricSnapshotRepository(Protocol):
+class TrainingMetricSnapshotStore(Protocol):
     def save_snapshot(self, user_id: str, snapshot: TrainingMetricSnapshot) -> TrainingMetricSnapshot:
         ...
 

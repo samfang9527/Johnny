@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from src.application.training_analytics import TodayContextService
+from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.training_plan import TrainingPlan, Workout
 
@@ -8,7 +8,7 @@ from src.domain.training_plan import TrainingPlan, Workout
 ANCHOR = date(2027, 1, 28)
 
 
-class FakeActivityRepository:
+class FakeTrainingAnalyticsDataProvider:
     def __init__(
         self,
         *,
@@ -51,7 +51,7 @@ class FakeActivityRepository:
         return results[offset : offset + limit if limit is not None else None]
 
 
-class FakeTrainingPlanRepository:
+class FakeCurrentTrainingPlanProvider:
     def __init__(self, plan: TrainingPlan | None) -> None:
         self.plan = plan
 
@@ -124,21 +124,21 @@ def _plan(user_id: str = "user-1") -> TrainingPlan:
 
 
 def test_today_context_aggregates_plan_activity_health_and_metrics_without_prose() -> None:
-    service = TodayContextService(
-        activity_repository=FakeActivityRepository(
+    handler = BuildTodayContextHandler(
+        training_data=FakeTrainingAnalyticsDataProvider(
             activities=(
                 _activity(activity_date=ANCHOR, distance_meters=8_000, duration_seconds=2_400),
-                    _activity(activity_date=date(2027, 1, 22), distance_meters=4_000, duration_seconds=1_200),
+                _activity(activity_date=date(2027, 1, 22), distance_meters=4_000, duration_seconds=1_200),
             ),
             health_metrics=(
                 _health(metric_date=date(2027, 1, 25), resting_heart_rate=47),
                 _health(metric_date=ANCHOR),
             ),
         ),
-        training_plan_repository=FakeTrainingPlanRepository(_plan()),
+        training_plans=FakeCurrentTrainingPlanProvider(_plan()),
     )
 
-    context = service.build(user_id="user-1", anchor_date=ANCHOR)
+    context = handler.handle(user_id="user-1", anchor_date=ANCHOR)
     payload = context.to_payload()
 
     assert [workout["id"] for workout in context.scheduled_workouts] == ["workout-today"]
@@ -151,8 +151,8 @@ def test_today_context_aggregates_plan_activity_health_and_metrics_without_prose
 
 
 def test_today_context_excludes_cross_user_data_even_when_repository_leaks_it() -> None:
-    service = TodayContextService(
-        activity_repository=FakeActivityRepository(
+    handler = BuildTodayContextHandler(
+        training_data=FakeTrainingAnalyticsDataProvider(
             activities=(
                 _activity(user_id="user-1", activity_date=ANCHOR, distance_meters=5_000),
                 _activity(user_id="user-2", activity_date=ANCHOR, distance_meters=50_000),
@@ -163,10 +163,10 @@ def test_today_context_excludes_cross_user_data_even_when_repository_leaks_it() 
                 _health(user_id="user-2", metric_date=ANCHOR, sleep_duration_minutes=240, stress_score=99),
             ),
         ),
-        training_plan_repository=FakeTrainingPlanRepository(_plan(user_id="user-2")),
+        training_plans=FakeCurrentTrainingPlanProvider(_plan(user_id="user-2")),
     )
 
-    context = service.build(user_id="user-1", anchor_date=ANCHOR)
+    context = handler.handle(user_id="user-1", anchor_date=ANCHOR)
 
     assert context.scheduled_workouts == ()
     assert [activity["user_id"] for activity in context.recent_activities] == ["user-1"]
