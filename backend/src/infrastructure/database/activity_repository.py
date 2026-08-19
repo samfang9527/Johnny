@@ -1,11 +1,23 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import ActivityModel, IntegrationConnectionModel, IntegrationResourceCursorModel, utc_now
+from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
+
+from .models import ActivityModel, HealthMetricModel, IntegrationConnectionModel, IntegrationResourceCursorModel, utc_now
+
+
+HEALTH_METRIC_TYPES = {
+    "sleep_duration_minutes",
+    "sleep_quality",
+    "hrv_ms",
+    "hrv_baseline_ms",
+    "resting_heart_rate",
+    "stress_score",
+}
 
 
 class SqlAlchemyActivityRepository:
@@ -86,3 +98,150 @@ class SqlAlchemyActivityRepository:
 
     def list_for_user(self, user_id: str) -> list[ActivityModel]:
         return list(self._session.scalars(select(ActivityModel).where(ActivityModel.user_id == user_id)))
+
+    def save_activity(self, user_id: str, activity: CompletedActivity) -> CompletedActivity | None:
+        _ensure_matching_user_id(user_id, activity.user_id)
+        model = self._get_activity_model(user_id, activity)
+        if model is None:
+            return None
+        model.user_id = user_id
+        model.provider_connection_id = activity.provider_connection_id
+        model.provider_activity_id = activity.source_activity_id
+        model.started_at = activity.started_at
+        model.activity_type = activity.sport_type
+        model.distance_meters = activity.distance_meters
+        model.duration_seconds = activity.duration_seconds
+        model.provider_summary = activity.to_summary()
+        self._session.flush()
+        return _activity_from_model(model)
+
+    def get_activity_for_user(self, user_id: str, activity_id: str | None) -> CompletedActivity | None:
+        if activity_id is None:
+            return None
+        model = self._session.scalar(
+            select(ActivityModel).where(
+                ActivityModel.id == activity_id,
+                ActivityModel.user_id == user_id,
+            )
+        )
+        if model is None:
+            return None
+        return _activity_from_model(model)
+
+    def list_activities_for_user(self, user_id: str) -> list[CompletedActivity]:
+        statement = select(ActivityModel).where(ActivityModel.user_id == user_id).order_by(ActivityModel.started_at)
+        return [_activity_from_model(model) for model in self._session.scalars(statement)]
+
+    def save_daily_health_metrics(self, user_id: str, metrics: DailyHealthMetrics) -> DailyHealthMetrics:
+        _ensure_matching_user_id(user_id, metrics.user_id)
+        measured_at = _measured_at(metrics.metric_date)
+        existing = list(
+            self._session.scalars(
+                select(HealthMetricModel).where(
+                    HealthMetricModel.user_id == user_id,
+                    HealthMetricModel.measured_at == measured_at,
+                    HealthMetricModel.metric_type.in_(HEALTH_METRIC_TYPES),
+                )
+            )
+        )
+        for model in existing:
+            self._session.delete(model)
+        self._session.flush()
+
+        for metric_type, value in metrics.values_by_metric_type().items():
+            self._session.add(
+                HealthMetricModel(
+                    user_id=user_id,
+                    measured_at=measured_at,
+                    metric_type=metric_type,
+                    value=value,
+                    unit=_metric_unit(metric_type),
+                    provider_summary={"source": metrics.source, "metric_date": metrics.metric_date.isoformat()},
+                )
+            )
+        self._session.flush()
+        return metrics
+
+    def get_daily_health_metrics_for_user(self, user_id: str, metric_date: date) -> DailyHealthMetrics | None:
+        measured_at = _measured_at(metric_date)
+        models = list(
+            self._session.scalars(
+                select(HealthMetricModel).where(
+                    HealthMetricModel.user_id == user_id,
+                    HealthMetricModel.measured_at == measured_at,
+                    HealthMetricModel.metric_type.in_(HEALTH_METRIC_TYPES),
+                )
+            )
+        )
+        if not models:
+            return None
+
+        values = {model.metric_type: model.value for model in models}
+        source = next((model.provider_summary or {}).get("source") for model in models if model.provider_summary) or "manual"
+        return DailyHealthMetrics.create(
+            user_id=user_id,
+            metric_date=metric_date,
+            source=source,
+            sleep_duration_minutes=values.get("sleep_duration_minutes"),
+            sleep_quality=values.get("sleep_quality"),
+            hrv_ms=values.get("hrv_ms"),
+            hrv_baseline_ms=values.get("hrv_baseline_ms"),
+            resting_heart_rate=values.get("resting_heart_rate"),
+            stress_score=values.get("stress_score"),
+        )
+
+    def _get_activity_model(self, user_id: str, activity: CompletedActivity) -> ActivityModel | None:
+        if activity.id is None:
+            model = ActivityModel(
+                user_id=user_id,
+                started_at=activity.started_at,
+                activity_type=activity.sport_type,
+            )
+            self._session.add(model)
+            return model
+
+        return self._session.scalar(
+            select(ActivityModel).where(
+                ActivityModel.id == activity.id,
+                ActivityModel.user_id == user_id,
+            )
+        )
+
+
+def _ensure_matching_user_id(trusted_user_id: str, payload_user_id: str) -> None:
+    if trusted_user_id != payload_user_id:
+        raise ValueError("payload user_id does not match repository user_id")
+
+
+def _activity_from_model(model: ActivityModel) -> CompletedActivity:
+    summary = model.provider_summary or {}
+    return CompletedActivity.create(
+        id=model.id,
+        user_id=model.user_id,
+        source=summary.get("source", "manual"),
+        source_activity_id=model.provider_activity_id,
+        provider_connection_id=model.provider_connection_id,
+        started_at=model.started_at,
+        sport_type=model.activity_type,
+        distance_meters=model.distance_meters or 0,
+        duration_seconds=model.duration_seconds or 0,
+        average_pace_seconds_per_km=summary.get("average_pace_seconds_per_km"),
+        average_heart_rate=summary.get("average_heart_rate"),
+        elevation_gain_meters=summary.get("elevation_gain_meters"),
+        matched_workout_id=summary.get("matched_workout_id"),
+    )
+
+
+def _measured_at(metric_date: date) -> datetime:
+    return datetime.combine(metric_date, time.min, tzinfo=timezone.utc)
+
+
+def _metric_unit(metric_type: str) -> str | None:
+    return {
+        "sleep_duration_minutes": "minutes",
+        "sleep_quality": "score",
+        "hrv_ms": "ms",
+        "hrv_baseline_ms": "ms",
+        "resting_heart_rate": "bpm",
+        "stress_score": "score",
+    }.get(metric_type)

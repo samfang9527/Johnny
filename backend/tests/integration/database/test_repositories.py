@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from src.domain.activity_health import CompletedActivity, DailyHealthMetrics, match_activity_to_workout
 from src.domain.athlete_race import AthletePreferences, AthleteProfile, RaceGoal
 from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout
 from src.infrastructure.database.models import (
@@ -303,6 +304,214 @@ def test_duplicate_provider_activity_is_rejected(sqlite_session_factory) -> None
 
         with pytest.raises(IntegrityError):
             uow.session.flush()
+
+
+def test_activity_repository_round_trips_manual_and_provider_activities(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="activity-owner@example.com", display_name="Activity Owner")
+        other = UserModel(email="activity-other@example.com", display_name="Activity Other")
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        repository = SqlAlchemyActivityRepository(uow.session)
+        connection = repository.create_connection(
+            user_id=owner.id,
+            provider="garmin_connect",
+            provider_account_id="garmin-account-1",
+        )
+        manual = repository.save_activity(
+            owner.id,
+            CompletedActivity.create(
+                user_id=owner.id,
+                source="manual",
+                started_at=datetime(2027, 1, 3, 7, 30, tzinfo=timezone.utc),
+                sport_type="run",
+                distance_meters=10_000,
+                duration_seconds=3_600,
+                average_heart_rate=145,
+                elevation_gain_meters=120,
+            ),
+        )
+        provider = repository.save_activity(
+            owner.id,
+            CompletedActivity.create(
+                user_id=owner.id,
+                source="garmin_connect",
+                source_activity_id="garmin-activity-1",
+                provider_connection_id=connection.id,
+                started_at=datetime(2027, 1, 4, 7, 30, tzinfo=timezone.utc),
+                sport_type="run",
+                distance_meters=5_000,
+                duration_seconds=1_500,
+                average_pace_seconds_per_km=295,
+            ),
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyActivityRepository(uow.session)
+        loaded_manual = repository.get_activity_for_user(owner.id, manual.id)
+        loaded_provider = repository.get_activity_for_user(owner.id, provider.id)
+        hidden = repository.get_activity_for_user(other.id, manual.id)
+        activities = repository.list_activities_for_user(owner.id)
+
+        assert loaded_manual is not None
+        assert loaded_manual.source == "manual"
+        assert loaded_manual.average_pace_seconds_per_km == pytest.approx(360)
+        assert loaded_manual.average_heart_rate == 145
+        assert loaded_manual.elevation_gain_meters == 120
+        assert loaded_provider is not None
+        assert loaded_provider.source == "garmin_connect"
+        assert loaded_provider.source_activity_id == "garmin-activity-1"
+        assert loaded_provider.provider_connection_id == connection.id
+        assert loaded_provider.average_pace_seconds_per_km == 295
+        assert hidden is None
+        assert [activity.id for activity in activities] == [manual.id, provider.id]
+
+
+def test_activity_repository_rejects_duplicate_provider_and_allows_manual_duplicates(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="activity-dupe@example.com", display_name="Activity Dupe")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyActivityRepository(uow.session)
+        connection = repository.create_connection(
+            user_id=user.id,
+            provider="garmin_connect",
+            provider_account_id="garmin-account-1",
+        )
+        provider_activity = CompletedActivity.create(
+            user_id=user.id,
+            source="garmin_connect",
+            source_activity_id="garmin-activity-1",
+            provider_connection_id=connection.id,
+            started_at=datetime(2027, 1, 3, 7, 30, tzinfo=timezone.utc),
+            sport_type="run",
+            distance_meters=10_000,
+            duration_seconds=3_600,
+        )
+        repository.save_activity(user.id, provider_activity)
+        with pytest.raises(IntegrityError):
+            repository.save_activity(user.id, provider_activity)
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="activity-manual-dupe@example.com", display_name="Manual Dupe")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyActivityRepository(uow.session)
+        manual = CompletedActivity.create(
+            user_id=user.id,
+            source="manual",
+            started_at=datetime(2027, 1, 3, 7, 30, tzinfo=timezone.utc),
+            sport_type="run",
+            distance_meters=10_000,
+            duration_seconds=3_600,
+        )
+        first = repository.save_activity(user.id, manual)
+        second = repository.save_activity(user.id, manual)
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        activities = SqlAlchemyActivityRepository(uow.session).list_activities_for_user(user.id)
+
+        assert len(activities) == 2
+        assert first.id != second.id
+
+
+def test_activity_repository_round_trips_daily_health_metrics(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="health-owner@example.com", display_name="Health Owner")
+        other = UserModel(email="health-other@example.com", display_name="Health Other")
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        repository = SqlAlchemyActivityRepository(uow.session)
+        repository.save_daily_health_metrics(
+            owner.id,
+            DailyHealthMetrics.create(
+                user_id=owner.id,
+                metric_date=date(2027, 1, 3),
+                source="manual",
+                sleep_duration_minutes=480,
+                sleep_quality=82,
+                hrv_ms=55,
+                hrv_baseline_ms=50,
+                resting_heart_rate=48,
+                stress_score=22,
+            ),
+        )
+        repository.save_daily_health_metrics(
+            owner.id,
+            DailyHealthMetrics.create(
+                user_id=owner.id,
+                metric_date=date(2027, 1, 4),
+                source="manual",
+                resting_heart_rate=49,
+            ),
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyActivityRepository(uow.session)
+        full = repository.get_daily_health_metrics_for_user(owner.id, date(2027, 1, 3))
+        sparse = repository.get_daily_health_metrics_for_user(owner.id, date(2027, 1, 4))
+        hidden = repository.get_daily_health_metrics_for_user(other.id, date(2027, 1, 3))
+
+        assert full is not None
+        assert full.source == "manual"
+        assert full.values_by_metric_type()["sleep_duration_minutes"] == 480
+        assert full.values_by_metric_type()["stress_score"] == 22
+        assert sparse is not None
+        assert sparse.values_by_metric_type() == {"resting_heart_rate": 49}
+        assert hidden is None
+
+
+def test_activity_repository_persists_workout_match(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="activity-match@example.com", display_name="Activity Match")
+        uow.session.add(user)
+        uow.session.flush()
+        training_plans = SqlAlchemyTrainingPlanRepository(uow.session)
+        plan = training_plans.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                name="Match Plan",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 1, 31),
+                workouts=(
+                    Workout.create(
+                        scheduled_for=date(2027, 1, 3),
+                        workout_type="easy_run",
+                        purpose="Aerobic base",
+                        planned_duration_minutes=45,
+                    ),
+                ),
+            ),
+        )
+        activity = CompletedActivity.create(
+            user_id=user.id,
+            source="manual",
+            started_at=datetime(2027, 1, 3, 7, 30, tzinfo=timezone.utc),
+            sport_type="run",
+            distance_meters=8_000,
+            duration_seconds=2_880,
+        )
+        matched = match_activity_to_workout(activity, plan.workouts)
+        saved = SqlAlchemyActivityRepository(uow.session).save_activity(user.id, matched)
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded = SqlAlchemyActivityRepository(uow.session).get_activity_for_user(user.id, saved.id)
+
+        assert loaded is not None
+        assert loaded.matched_workout_id == plan.workouts[0].id
 
 
 def test_orphan_workout_is_rejected(sqlite_session_factory) -> None:
