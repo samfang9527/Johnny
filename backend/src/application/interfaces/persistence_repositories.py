@@ -4,6 +4,7 @@ from .activity_store import ActivityStore
 from .agent_runtime import AgentRunStore
 from .athlete_race_store import AthleteProfileStore, RaceGoalStore
 from .job_provider import DueJobProvider, ScheduledJobRecord
+from .integrations_notifications import IntegrationStore, NotificationStore, OutboxStore, ProviderActivityStore
 from .recommendation_store import RecommendationStore
 from .schedule_provider import DueSchedule, ScheduleProvider
 from .training_analytics_store import TrainingAnalyticsDataProvider, TrainingMetricSnapshotStore
@@ -15,7 +16,11 @@ __all__ = [
     "AgentRunStore",
     "AthleteProfileStore",
     "DueJobProvider",
+    "IntegrationStore",
     "DueSchedule",
+    "NotificationStore",
+    "OutboxStore",
+    "ProviderActivityStore",
     "RaceGoalStore",
     "RecommendationStore",
     "ScheduleProvider",

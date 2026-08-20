@@ -137,6 +137,23 @@ class SqlAlchemyActivityRepository:
             return None
         return _activity_from_model(model)
 
+    def get_activity_by_provider_identifier(
+        self,
+        user_id: str,
+        provider_connection_id: str,
+        source_activity_id: str,
+    ) -> CompletedActivity | None:
+        model = self._session.scalar(
+            select(ActivityModel).where(
+                ActivityModel.user_id == user_id,
+                ActivityModel.provider_connection_id == provider_connection_id,
+                ActivityModel.provider_activity_id == source_activity_id,
+            )
+        )
+        if model is None:
+            return None
+        return _activity_from_model(model)
+
     def list_activities_for_user(
         self,
         user_id: str,
