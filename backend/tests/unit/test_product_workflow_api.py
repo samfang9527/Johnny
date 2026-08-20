@@ -2,14 +2,14 @@ def test_today_route_returns_context_with_sparse_and_complete_data() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 
     client = create_sqlite_test_client()
-    sparse = client.get("/api/today?anchor_date=2027-01-02", headers={"X-Johnny-User-Id": "user-1"})
+    sparse = client.get("/api/v1/today?anchor_date=2027-01-02", headers={"X-Johnny-User-Id": "user-1"})
     client.post(
-        "/api/races",
+        "/api/v1/races",
         headers={"X-Johnny-User-Id": "user-1"},
         json={"name": "Goal Race", "race_date": "2027-03-01", "distance_meters": 21097},
     )
     client.post(
-        "/api/recommendations",
+        "/api/v1/recommendations",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "recommendation_type": "informational",
@@ -21,7 +21,7 @@ def test_today_route_returns_context_with_sparse_and_complete_data() -> None:
         },
     )
     client.post(
-        "/api/training-plans",
+        "/api/v1/training-plans",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "name": "Build",
@@ -37,7 +37,7 @@ def test_today_route_returns_context_with_sparse_and_complete_data() -> None:
             ],
         },
     )
-    complete = client.get("/api/today?anchor_date=2027-01-02", headers={"X-Johnny-User-Id": "user-1"})
+    complete = client.get("/api/v1/today?anchor_date=2027-01-02", headers={"X-Johnny-User-Id": "user-1"})
 
     assert sparse.status_code == 200
     assert sparse.json()["data"]["scheduled_workouts"] == []
@@ -52,7 +52,7 @@ def test_recommendation_routes_list_accept_reject_edit_and_discuss() -> None:
 
     client = create_sqlite_test_client()
     created = client.post(
-        "/api/recommendations",
+        "/api/v1/recommendations",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "recommendation_type": "informational",
@@ -63,11 +63,11 @@ def test_recommendation_routes_list_accept_reject_edit_and_discuss() -> None:
             "proposed_action": {"type": "no_plan_change", "reason": "Informational only"},
         },
     ).json()["data"]
-    listed = client.get("/api/recommendations", headers={"X-Johnny-User-Id": "user-1"})
-    accepted = client.post(f"/api/recommendations/{created['id']}/accept", headers={"X-Johnny-User-Id": "user-1"})
+    listed = client.get("/api/v1/recommendations", headers={"X-Johnny-User-Id": "user-1"})
+    accepted = client.post(f"/api/v1/recommendations/{created['id']}/accept", headers={"X-Johnny-User-Id": "user-1"})
 
     rejected_source = client.post(
-        "/api/recommendations",
+        "/api/v1/recommendations",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "recommendation_type": "informational",
@@ -78,9 +78,9 @@ def test_recommendation_routes_list_accept_reject_edit_and_discuss() -> None:
             "proposed_action": {"type": "no_plan_change", "reason": "Informational only"},
         },
     ).json()["data"]
-    rejected = client.post(f"/api/recommendations/{rejected_source['id']}/reject", headers={"X-Johnny-User-Id": "user-1"})
+    rejected = client.post(f"/api/v1/recommendations/{rejected_source['id']}/reject", headers={"X-Johnny-User-Id": "user-1"})
     edit_source = client.post(
-        "/api/recommendations",
+        "/api/v1/recommendations",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "recommendation_type": "informational",
@@ -92,12 +92,12 @@ def test_recommendation_routes_list_accept_reject_edit_and_discuss() -> None:
         },
     ).json()["data"]
     edited = client.post(
-        f"/api/recommendations/{edit_source['id']}/edit",
+        f"/api/v1/recommendations/{edit_source['id']}/edit",
         headers={"X-Johnny-User-Id": "user-1"},
         json={"type": "no_plan_change", "reason": "User prefers no change"},
     )
     discussed = client.post(
-        f"/api/recommendations/{rejected_source['id']}/discuss",
+        f"/api/v1/recommendations/{rejected_source['id']}/discuss",
         headers={"X-Johnny-User-Id": "user-1"},
         json={"content": "Why this recommendation?"},
     )
@@ -118,8 +118,8 @@ def test_conversation_route_rejects_empty_and_returns_run_reference() -> None:
 
     client = create_sqlite_test_client()
 
-    invalid = client.post("/api/conversations/messages", headers={"X-Johnny-User-Id": "user-1"}, json={"content": "   "})
-    valid = client.post("/api/conversations/messages", headers={"X-Johnny-User-Id": "user-1"}, json={"content": "How am I doing?"})
+    invalid = client.post("/api/v1/conversations/messages", headers={"X-Johnny-User-Id": "user-1"}, json={"content": "   "})
+    valid = client.post("/api/v1/conversations/messages", headers={"X-Johnny-User-Id": "user-1"}, json={"content": "How am I doing?"})
 
     assert invalid.status_code == 422
     assert invalid.json()["error"]["code"] == "validation_error"
@@ -132,7 +132,7 @@ def test_integration_webhook_ingests_provider_payloads_and_counts_duplicates() -
 
     client = create_sqlite_test_client()
     connection = client.post(
-        "/api/integrations/connections",
+        "/api/v1/integrations/connections",
         headers={"X-Johnny-User-Id": "user-1"},
         json={"provider": "garmin_connect", "provider_account_id": "garmin-account-1"},
     ).json()["data"]
@@ -151,17 +151,17 @@ def test_integration_webhook_ingests_provider_payloads_and_counts_duplicates() -
     }
 
     first = client.post(
-        f"/api/integrations/webhooks/garmin_connect/{connection['id']}",
+        f"/api/v1/integrations/webhooks/garmin_connect/{connection['id']}",
         headers={"X-Johnny-User-Id": "user-1"},
         json=payload,
     )
     second = client.post(
-        f"/api/integrations/webhooks/garmin_connect/{connection['id']}",
+        f"/api/v1/integrations/webhooks/garmin_connect/{connection['id']}",
         headers={"X-Johnny-User-Id": "user-1"},
         json=payload,
     )
     missing = client.post(
-        "/api/integrations/webhooks/garmin_connect/missing",
+        "/api/v1/integrations/webhooks/garmin_connect/missing",
         headers={"X-Johnny-User-Id": "user-1"},
         json=payload,
     )
@@ -170,3 +170,48 @@ def test_integration_webhook_ingests_provider_payloads_and_counts_duplicates() -
     assert first.json()["data"]["resources"]["activities"]["stored"] == 1
     assert second.json()["data"]["resources"]["activities"]["duplicates"] == 1
     assert missing.status_code == 404
+
+
+def test_sync_provider_connection_replaces_reactivates_and_rejects_cross_user_accounts() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    garmin = client.post(
+        "/api/v1/integrations/connections",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={"provider": "garmin_connect", "provider_account_id": "garmin-account-1"},
+    )
+    coros = client.post(
+        "/api/v1/integrations/connections",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={"provider": "coros", "provider_account_id": "coros-account-1"},
+    )
+    reactivated = client.post(
+        "/api/v1/integrations/connections",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={"provider": "garmin_connect", "provider_account_id": "garmin-account-1"},
+    )
+    cross_user_conflict = client.post(
+        "/api/v1/integrations/connections",
+        headers={"X-Johnny-User-Id": "user-2"},
+        json={"provider": "garmin_connect", "provider_account_id": "garmin-account-1"},
+    )
+    missing_account = client.post(
+        "/api/v1/integrations/connections",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={"provider": "garmin_connect"},
+    )
+
+    assert garmin.status_code == 200
+    assert garmin.json()["data"]["status"] == "active"
+    assert coros.status_code == 200
+    assert coros.json()["data"]["status"] == "active"
+    assert coros.json()["data"]["id"] != garmin.json()["data"]["id"]
+    assert reactivated.status_code == 200
+    assert reactivated.json()["data"]["id"] == garmin.json()["data"]["id"]
+    assert reactivated.json()["data"]["status"] == "active"
+    assert reactivated.json()["data"]["provider_account_id"] == "garmin-account-1"
+    assert cross_user_conflict.status_code == 409
+    assert cross_user_conflict.json()["error"]["code"] == "conflict"
+    assert missing_account.status_code == 422
+    assert missing_account.json()["error"]["code"] == "validation_error"

@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiNotFoundError
-from src.api.schemas.common import DataEnvelope
+from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
 from src.api.schemas.conversations import ConversationMessageResponse
 from src.api.schemas.recommendations import DiscussRecommendationRequest, RecommendationRequest, RecommendationResponse
 from src.application.conversations import SubmitConversationMessageHandler
@@ -14,7 +14,7 @@ from src.infrastructure.database.recommendation_repository import SqlAlchemyReco
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
 
-router = APIRouter(prefix="/api/recommendations", tags=["recommendations"])
+router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 
 @router.post("", response_model=DataEnvelope[RecommendationResponse])
@@ -39,19 +39,19 @@ def create_recommendation(
     return DataEnvelope(data=_recommendation_response(saved))
 
 
-@router.get("", response_model=DataEnvelope[list[RecommendationResponse]])
+@router.get("", response_model=ListEnvelope[RecommendationResponse])
 def list_recommendations(
     current_user: CurrentUserDependency,
     session: SessionDependency,
-    limit: int | None = None,
-    offset: int = 0,
-) -> DataEnvelope[list[RecommendationResponse]]:
+    limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    offset: PageOffset = 0,
+) -> ListEnvelope[RecommendationResponse]:
     recommendations = SqlAlchemyRecommendationRepository(session).list_recommendations_for_user(
         current_user.id,
-        limit=limit,
+        limit=page_query_limit(limit),
         offset=offset,
     )
-    return DataEnvelope(data=[_recommendation_response(recommendation) for recommendation in recommendations])
+    return list_envelope([_recommendation_response(recommendation) for recommendation in recommendations], limit=limit, offset=offset)
 
 
 @router.post("/{recommendation_id}/accept", response_model=DataEnvelope[RecommendationResponse])

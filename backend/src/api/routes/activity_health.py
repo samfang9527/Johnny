@@ -11,13 +11,13 @@ from src.api.schemas.activity_health import (
     DailyHealthMetricsRequest,
     DailyHealthMetricsResponse,
 )
-from src.api.schemas.common import DataEnvelope
+from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 
 
-activity_router = APIRouter(prefix="/api/activities", tags=["activities"])
-health_router = APIRouter(prefix="/api/health-metrics", tags=["health-metrics"])
+activity_router = APIRouter(prefix="/activities", tags=["activities"])
+health_router = APIRouter(prefix="/health-metrics", tags=["health-metrics"])
 
 
 @activity_router.post("", response_model=DataEnvelope[ActivityResponse])
@@ -32,27 +32,27 @@ def create_activity(
     return DataEnvelope(data=_activity_response(saved or activity))
 
 
-@activity_router.get("", response_model=DataEnvelope[list[ActivityResponse]])
+@activity_router.get("", response_model=ListEnvelope[ActivityResponse])
 def list_activities(
     current_user: CurrentUserDependency,
     session: SessionDependency,
     started_on_or_after: date | None = None,
     started_on_or_before: date | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-) -> DataEnvelope[list[ActivityResponse]]:
+    limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    offset: PageOffset = 0,
+) -> ListEnvelope[ActivityResponse]:
     repository = SqlAlchemyActivityRepository(session)
     if started_on_or_after is not None and started_on_or_before is not None:
         activities = repository.list_activities_for_user_between(
             current_user.id,
             started_on_or_after,
             started_on_or_before,
-            limit=limit,
+            limit=page_query_limit(limit),
             offset=offset,
         )
     else:
-        activities = repository.list_activities_for_user(current_user.id, limit=limit, offset=offset)
-    return DataEnvelope(data=[_activity_response(activity) for activity in activities])
+        activities = repository.list_activities_for_user(current_user.id, limit=page_query_limit(limit), offset=offset)
+    return list_envelope([_activity_response(activity) for activity in activities], limit=limit, offset=offset)
 
 
 @health_router.post("/daily", response_model=DataEnvelope[DailyHealthMetricsResponse])
@@ -67,23 +67,23 @@ def save_daily_health_metrics(
     return DataEnvelope(data=_health_response(saved))
 
 
-@health_router.get("/daily", response_model=DataEnvelope[list[DailyHealthMetricsResponse]])
+@health_router.get("/daily", response_model=ListEnvelope[DailyHealthMetricsResponse])
 def list_daily_health_metrics(
     current_user: CurrentUserDependency,
     session: SessionDependency,
     measured_on_or_after: date,
     measured_on_or_before: date,
-    limit: int | None = None,
-    offset: int = 0,
-) -> DataEnvelope[list[DailyHealthMetricsResponse]]:
+    limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    offset: PageOffset = 0,
+) -> ListEnvelope[DailyHealthMetricsResponse]:
     metrics = SqlAlchemyActivityRepository(session).list_daily_health_metrics_for_user_between(
         current_user.id,
         measured_on_or_after,
         measured_on_or_before,
-        limit=limit,
+        limit=page_query_limit(limit),
         offset=offset,
     )
-    return DataEnvelope(data=[_health_response(metric) for metric in metrics])
+    return list_envelope([_health_response(metric) for metric in metrics], limit=limit, offset=offset)
 
 
 def _activity_response(activity: CompletedActivity) -> ActivityResponse:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Protocol
 
 from src.application.interfaces.integrations_notifications import (
     IntegrationStore,
@@ -10,13 +10,76 @@ from src.application.interfaces.integrations_notifications import (
     ProviderAdapter,
 )
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
-from src.domain.integrations_notifications import OutboxEvent, SyncSummary
+from src.domain.integrations_notifications import IntegrationConnectionRef, OutboxEvent, SyncSummary
+
+
+class ProviderAccountAlreadyConnectedError(ValueError):
+    pass
+
+
+class SyncConnectionLifecycleStore(Protocol):
+    def get_connection_by_provider_account(self, provider: str, provider_account_id: str) -> IntegrationConnectionRef | None: ...
+
+    def replace_active_connections_for_user(self, user_id: str, *, except_connection_id: str | None = None) -> None: ...
+
+    def create_connection(
+        self,
+        *,
+        user_id: str,
+        provider: str,
+        provider_account_id: str | None = None,
+        credential_secret_ref: str | None = None,
+    ) -> IntegrationConnectionRef: ...
+
+    def reactivate_connection(
+        self,
+        connection_id: str,
+        *,
+        credential_secret_ref: str | None = None,
+    ) -> IntegrationConnectionRef: ...
+
+    def reset_resource_cursors(self, integration_connection_id: str) -> None: ...
 
 
 @dataclass(frozen=True)
 class ProviderSyncCommand:
     user_id: str
     connection_id: str
+
+
+@dataclass(frozen=True)
+class ConnectSyncProviderCommand:
+    user_id: str
+    provider: str
+    provider_account_id: str
+    credential_secret_ref: str | None = None
+
+
+class ConnectSyncProviderHandler:
+    def __init__(self, *, integrations: SyncConnectionLifecycleStore) -> None:
+        self._integrations = integrations
+
+    def handle(self, command: ConnectSyncProviderCommand) -> IntegrationConnectionRef:
+        existing = self._integrations.get_connection_by_provider_account(command.provider, command.provider_account_id)
+        if existing is not None and existing.user_id != command.user_id:
+            raise ProviderAccountAlreadyConnectedError("provider account already belongs to another user")
+
+        if existing is not None:
+            self._integrations.replace_active_connections_for_user(command.user_id, except_connection_id=existing.id)
+            reactivated = self._integrations.reactivate_connection(
+                existing.id,
+                credential_secret_ref=command.credential_secret_ref,
+            )
+            self._integrations.reset_resource_cursors(reactivated.id)
+            return reactivated
+
+        self._integrations.replace_active_connections_for_user(command.user_id)
+        return self._integrations.create_connection(
+            user_id=command.user_id,
+            provider=command.provider,
+            provider_account_id=command.provider_account_id,
+            credential_secret_ref=command.credential_secret_ref,
+        )
 
 
 class ProviderSyncHandler:

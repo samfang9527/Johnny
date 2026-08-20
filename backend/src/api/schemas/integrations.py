@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class IntegrationConnectionRequest(BaseModel):
     provider: str = Field(min_length=1)
-    provider_account_id: str | None = None
+    provider_account_id: str = Field(min_length=1)
     credential_secret_ref: str | None = None
 
 
@@ -15,6 +15,8 @@ class IntegrationConnectionResponse(BaseModel):
     id: str
     user_id: str
     provider: str
+    provider_account_id: str
+    status: str
     credential_secret_ref: str | None = None
 
 

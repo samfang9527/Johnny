@@ -7,7 +7,7 @@ from src.api.schemas.common import DataEnvelope
 from src.api.schemas.me import CurrentUserResponse
 
 
-router = APIRouter(prefix="/api", tags=["me"])
+router = APIRouter(tags=["me"])
 
 
 @router.get("/me", response_model=DataEnvelope[CurrentUserResponse])

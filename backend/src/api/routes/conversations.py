@@ -8,7 +8,7 @@ from src.api.schemas.conversations import ConversationMessageRequest, Conversati
 from src.application.conversations import SubmitConversationMessageHandler
 
 
-router = APIRouter(prefix="/api/conversations", tags=["conversations"])
+router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
 @router.post("/messages", response_model=DataEnvelope[ConversationMessageResponse])

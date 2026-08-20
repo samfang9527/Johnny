@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
 
+import pytest
+
+from src.application.integrations import ConnectSyncProviderCommand, ConnectSyncProviderHandler, ProviderAccountAlreadyConnectedError
 from src.domain.integrations_notifications import NotificationDelivery, NotificationIntent, OutboxEvent, SyncSummary
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
-from src.infrastructure.database.models import Base, UserModel
+from src.infrastructure.database.models import ActivityModel, Base, IntegrationConnectionModel, IntegrationResourceCursorModel, UserModel
 from src.infrastructure.database.notification_repository import SqlAlchemyNotificationRepository
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
@@ -66,6 +69,72 @@ def test_integration_repository_failed_sync_records_safe_error(sqlite_session_fa
 
         assert failed.status == "failed"
         assert failed.summary.to_payload()["resources"]["sync"]["errors"] == ["credential or token details redacted"]
+
+
+def test_sync_connection_lifecycle_replaces_reactivates_resets_cursors_and_preserves_history(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="owner@example.com", display_name="Owner")
+        other = UserModel(email="other@example.com", display_name="Other")
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        handler = ConnectSyncProviderHandler(integrations=repository)
+
+        garmin = handler.handle(
+            ConnectSyncProviderCommand(
+                user_id=owner.id,
+                provider="garmin_connect",
+                provider_account_id="garmin-account-1",
+            )
+        )
+        repository.upsert_resource_cursor(garmin.id, "sync", {"after": "garmin-10"})
+        historical_activity = ActivityModel(
+            user_id=owner.id,
+            provider_connection_id=garmin.id,
+            provider_activity_id="garmin-activity-1",
+            started_at=datetime(2027, 1, 1, 7, tzinfo=timezone.utc),
+            activity_type="running",
+            distance_meters=5000,
+            duration_seconds=1500,
+            provider_summary={"source": "garmin_connect"},
+        )
+        uow.session.add(historical_activity)
+        uow.session.flush()
+
+        coros = handler.handle(
+            ConnectSyncProviderCommand(user_id=owner.id, provider="coros", provider_account_id="coros-account-1")
+        )
+        reactivated = handler.handle(
+            ConnectSyncProviderCommand(
+                user_id=owner.id,
+                provider="garmin_connect",
+                provider_account_id="garmin-account-1",
+            )
+        )
+        with pytest.raises(ProviderAccountAlreadyConnectedError):
+            handler.handle(
+                ConnectSyncProviderCommand(
+                    user_id=other.id,
+                    provider="garmin_connect",
+                    provider_account_id="garmin-account-1",
+                )
+            )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        garmin_model = uow.session.get(IntegrationConnectionModel, garmin.id)
+        coros_model = uow.session.get(IntegrationConnectionModel, coros.id)
+        cursor = uow.session.query(IntegrationResourceCursorModel).filter_by(integration_connection_id=garmin.id).one()
+        activity = uow.session.get(ActivityModel, historical_activity.id)
+
+        assert reactivated.id == garmin.id
+        assert garmin_model.status == "active"
+        assert coros_model.status == "replaced"
+        assert cursor.cursor_value == {}
+        assert cursor.status == "stale"
+        assert activity.provider_connection_id == garmin.id
 
 
 def test_outbox_repository_creates_activity_ingested_events_and_pages_pending(sqlite_session_factory) -> None:

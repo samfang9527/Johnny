@@ -14,9 +14,11 @@ class IntegrationConnectionRef:
     id: str
     user_id: str
     provider: str
+    provider_account_id: str | None = None
     credential_secret_ref: str | None = None
     credential_format: str | None = None
     credential_status: str = "active"
+    status: str = "active"
     capabilities: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -26,6 +28,8 @@ class IntegrationConnectionRef:
             raise DomainValidationError("user id is required")
         if not self.provider:
             raise DomainValidationError("provider is required")
+        if self.status not in {"active", "replaced", "disconnected"}:
+            raise DomainValidationError("integration connection status is not supported")
         if self.credential_secret_ref and _looks_like_raw_secret(self.credential_secret_ref):
             raise DomainValidationError("credential_secret_ref must reference a secret, not contain credentials")
         object.__setattr__(self, "capabilities", dict(self.capabilities or {}))
@@ -37,18 +41,22 @@ class IntegrationConnectionRef:
         id: str,
         user_id: str,
         provider: str,
+        provider_account_id: str | None = None,
         credential_secret_ref: str | None = None,
         credential_format: str | None = None,
         credential_status: str = "active",
+        status: str = "active",
         capabilities: dict[str, Any] | None = None,
     ) -> IntegrationConnectionRef:
         return cls(
             id=id,
             user_id=user_id,
             provider=provider,
+            provider_account_id=provider_account_id,
             credential_secret_ref=credential_secret_ref,
             credential_format=credential_format,
             credential_status=credential_status,
+            status=status,
             capabilities=capabilities,
         )
 
@@ -57,8 +65,10 @@ class IntegrationConnectionRef:
             "id": self.id,
             "user_id": self.user_id,
             "provider": self.provider,
+            "provider_account_id": self.provider_account_id,
             "credential_format": self.credential_format,
             "credential_status": self.credential_status,
+            "status": self.status,
             "capabilities": dict(self.capabilities or {}),
         }
 

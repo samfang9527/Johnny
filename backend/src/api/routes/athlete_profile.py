@@ -10,7 +10,7 @@ from src.domain.athlete_race import AthleteProfile
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 
 
-router = APIRouter(prefix="/api/athlete/profile", tags=["athlete-profile"])
+router = APIRouter(prefix="/athlete/profile", tags=["athlete-profile"])
 
 
 @router.get("", response_model=DataEnvelope[AthleteProfileResponse])

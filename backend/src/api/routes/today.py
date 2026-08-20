@@ -14,7 +14,7 @@ from src.infrastructure.database.recommendation_repository import SqlAlchemyReco
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
 
-router = APIRouter(prefix="/api/today", tags=["today"])
+router = APIRouter(prefix="/today", tags=["today"])
 
 
 @router.get("", response_model=DataEnvelope[TodayContextResponse])

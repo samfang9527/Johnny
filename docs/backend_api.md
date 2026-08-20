@@ -1,6 +1,6 @@
 # Backend API
 
-The MVP backend API is served by `src.main:create_app()`. Health checks remain at the root, while product routes use the `/api` prefix.
+The MVP backend API is served by `src.main:create_app()`. Health checks remain at the root, while product routes use the `/api/v1` prefix.
 
 ## Local Current User
 
@@ -26,7 +26,7 @@ Validation, not-found, conflict, and domain validation errors use this envelope:
 }
 ```
 
-Successful responses use:
+Successful singleton and command responses use:
 
 ```json
 {
@@ -34,25 +34,50 @@ Successful responses use:
 }
 ```
 
+List responses use a shared paging envelope:
+
+```json
+{
+  "data": [],
+  "paging": {
+    "limit": 20,
+    "offset": 0,
+    "has_next": false
+  }
+}
+```
+
+MVP paging intentionally exposes only `has_next`; it does not include `page_number`, `total_pages`, or `total_count`.
+
+## Sync Provider Connections
+
+Users can have only one active sync provider connection at a time. `POST /api/v1/integrations/connections` requires `provider_account_id` and applies these rules:
+
+- Connecting the first provider account creates an `active` connection.
+- Connecting a different provider account marks the previous active connection as `replaced` and creates a new `active` connection.
+- Connecting the same `(provider, provider_account_id)` again for the same user reactivates the existing row instead of creating a duplicate.
+- Connecting a provider account that belongs to another user returns a conflict error.
+- Replaced connection rows and imported activity/health records are preserved so historical data keeps provider provenance.
+
 ## Route Groups
 
 - `GET /health`
 - `GET /ready`
-- `GET /api/me`
-- `GET|PUT /api/athlete/profile`
-- `GET|POST /api/races`
-- `GET|PUT /api/races/{race_id}`
-- `GET|POST /api/training-plans`
-- `GET /api/training-plans/{plan_id}`
-- `PATCH /api/training-plans/{plan_id}/workouts/{workout_id}`
-- `GET|POST /api/activities`
-- `GET|POST /api/health-metrics/daily`
-- `GET /api/today`
-- `GET|POST /api/recommendations`
-- `POST /api/recommendations/{recommendation_id}/accept`
-- `POST /api/recommendations/{recommendation_id}/reject`
-- `POST /api/recommendations/{recommendation_id}/edit`
-- `POST /api/recommendations/{recommendation_id}/discuss`
-- `POST /api/conversations/messages`
-- `POST /api/integrations/connections`
-- `POST /api/integrations/webhooks/{provider}/{connection_id}`
+- `GET /api/v1/me`
+- `GET|PUT /api/v1/athlete/profile`
+- `GET|POST /api/v1/races`
+- `GET|PUT /api/v1/races/{race_id}`
+- `GET|POST /api/v1/training-plans`
+- `GET /api/v1/training-plans/{plan_id}`
+- `PATCH /api/v1/training-plans/{plan_id}/workouts/{workout_id}`
+- `GET|POST /api/v1/activities`
+- `GET|POST /api/v1/health-metrics/daily`
+- `GET /api/v1/today`
+- `GET|POST /api/v1/recommendations`
+- `POST /api/v1/recommendations/{recommendation_id}/accept`
+- `POST /api/v1/recommendations/{recommendation_id}/reject`
+- `POST /api/v1/recommendations/{recommendation_id}/edit`
+- `POST /api/v1/recommendations/{recommendation_id}/discuss`
+- `POST /api/v1/conversations/messages`
+- `POST /api/v1/integrations/connections`
+- `POST /api/v1/integrations/webhooks/{provider}/{connection_id}`

@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
-from src.api.errors import ApiNotFoundError
+from src.api.errors import ApiConflictError, ApiNotFoundError
 from src.api.schemas.common import DataEnvelope
 from src.api.schemas.integrations import (
     IntegrationConnectionRequest,
@@ -13,7 +13,13 @@ from src.api.schemas.integrations import (
     ProviderWebhookRequest,
     SyncSummaryResponse,
 )
-from src.application.integrations import ProviderSyncCommand, ProviderSyncHandler
+from src.application.integrations import (
+    ConnectSyncProviderCommand,
+    ConnectSyncProviderHandler,
+    ProviderAccountAlreadyConnectedError,
+    ProviderSyncCommand,
+    ProviderSyncHandler,
+)
 from src.domain.integrations_notifications import IntegrationConnectionRef, ProviderFetchResult
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
@@ -21,7 +27,7 @@ from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxReposi
 from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health
 
 
-router = APIRouter(prefix="/api/integrations", tags=["integrations"])
+router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
 @router.post("/connections", response_model=DataEnvelope[IntegrationConnectionResponse])
@@ -31,12 +37,17 @@ def create_connection(
     session: SessionDependency,
 ) -> DataEnvelope[IntegrationConnectionResponse]:
     ensure_current_user(session, current_user)
-    connection = SqlAlchemyIntegrationRepository(session).create_connection(
-        user_id=current_user.id,
-        provider=payload.provider,
-        provider_account_id=payload.provider_account_id,
-        credential_secret_ref=payload.credential_secret_ref,
-    )
+    try:
+        connection = ConnectSyncProviderHandler(integrations=SqlAlchemyIntegrationRepository(session)).handle(
+            ConnectSyncProviderCommand(
+                user_id=current_user.id,
+                provider=payload.provider,
+                provider_account_id=payload.provider_account_id,
+                credential_secret_ref=payload.credential_secret_ref,
+            )
+        )
+    except ProviderAccountAlreadyConnectedError as exc:
+        raise ApiConflictError(str(exc)) from exc
     return DataEnvelope(data=_connection_response(connection))
 
 
@@ -50,7 +61,7 @@ def receive_webhook(
 ) -> DataEnvelope[SyncSummaryResponse]:
     repository = SqlAlchemyIntegrationRepository(session)
     connection = repository.get_connection_for_user(current_user.id, connection_id)
-    if connection is None or connection.provider != provider:
+    if connection is None or connection.provider != provider or connection.status != "active":
         raise ApiNotFoundError("integration connection not found")
     handler = ProviderSyncHandler(
         integrations=repository,
@@ -88,5 +99,7 @@ def _connection_response(connection: IntegrationConnectionRef) -> IntegrationCon
         id=connection.id,
         user_id=connection.user_id,
         provider=connection.provider,
+        provider_account_id=connection.provider_account_id or "",
+        status=connection.status,
         credential_secret_ref=connection.credential_secret_ref,
     )

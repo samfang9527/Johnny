@@ -4,13 +4,13 @@ from fastapi import APIRouter
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiNotFoundError
-from src.api.schemas.common import DataEnvelope
+from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
 from src.api.schemas.training_plans import TrainingPlanRequest, TrainingPlanResponse, WorkoutResponse, WorkoutStatusRequest
 from src.domain.training_plan import TrainingPlan, Workout
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
 
-router = APIRouter(prefix="/api/training-plans", tags=["training-plans"])
+router = APIRouter(prefix="/training-plans", tags=["training-plans"])
 
 
 @router.post("", response_model=DataEnvelope[TrainingPlanResponse])
@@ -25,19 +25,19 @@ def create_training_plan(
     return DataEnvelope(data=_plan_response(saved))
 
 
-@router.get("", response_model=DataEnvelope[list[TrainingPlanResponse]])
+@router.get("", response_model=ListEnvelope[TrainingPlanResponse])
 def list_training_plans(
     current_user: CurrentUserDependency,
     session: SessionDependency,
-    limit: int | None = None,
-    offset: int = 0,
-) -> DataEnvelope[list[TrainingPlanResponse]]:
+    limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    offset: PageOffset = 0,
+) -> ListEnvelope[TrainingPlanResponse]:
     plans = SqlAlchemyTrainingPlanRepository(session).list_plans_for_user(
         current_user.id,
-        limit=limit,
+        limit=page_query_limit(limit),
         offset=offset,
     )
-    return DataEnvelope(data=[_plan_response(plan) for plan in plans])
+    return list_envelope([_plan_response(plan) for plan in plans], limit=limit, offset=offset)
 
 
 @router.get("/{plan_id}", response_model=DataEnvelope[TrainingPlanResponse])

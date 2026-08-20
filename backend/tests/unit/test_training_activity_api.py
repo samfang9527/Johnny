@@ -4,7 +4,7 @@ from tests.unit.api_test_helpers import create_sqlite_test_client
 def test_training_plan_routes_create_load_and_update_workout_status_with_tenant_scope() -> None:
     client = create_sqlite_test_client()
     created = client.post(
-        "/api/training-plans",
+        "/api/v1/training-plans",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "name": "Half Marathon Build",
@@ -24,11 +24,11 @@ def test_training_plan_routes_create_load_and_update_workout_status_with_tenant_
     assert created.status_code == 200
     plan = created.json()["data"]
     workout_id = plan["workouts"][0]["id"]
-    detail = client.get(f"/api/training-plans/{plan['id']}", headers={"X-Johnny-User-Id": "user-1"})
-    listed = client.get("/api/training-plans?limit=10&offset=0", headers={"X-Johnny-User-Id": "user-1"})
-    hidden = client.get(f"/api/training-plans/{plan['id']}", headers={"X-Johnny-User-Id": "user-2"})
+    detail = client.get(f"/api/v1/training-plans/{plan['id']}", headers={"X-Johnny-User-Id": "user-1"})
+    listed = client.get("/api/v1/training-plans?limit=10&offset=0", headers={"X-Johnny-User-Id": "user-1"})
+    hidden = client.get(f"/api/v1/training-plans/{plan['id']}", headers={"X-Johnny-User-Id": "user-2"})
     updated = client.patch(
-        f"/api/training-plans/{plan['id']}/workouts/{workout_id}",
+        f"/api/v1/training-plans/{plan['id']}/workouts/{workout_id}",
         headers={"X-Johnny-User-Id": "user-1"},
         json={"status": "completed"},
     )
@@ -45,7 +45,7 @@ def test_training_plan_routes_create_load_and_update_workout_status_with_tenant_
 def test_activity_and_health_routes_create_and_list_current_user_data() -> None:
     client = create_sqlite_test_client()
     activity = client.post(
-        "/api/activities",
+        "/api/v1/activities",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "source": "manual",
@@ -57,7 +57,7 @@ def test_activity_and_health_routes_create_and_list_current_user_data() -> None:
         },
     )
     client.post(
-        "/api/health-metrics/daily",
+        "/api/v1/health-metrics/daily",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "metric_date": "2027-01-02",
@@ -70,12 +70,12 @@ def test_activity_and_health_routes_create_and_list_current_user_data() -> None:
     )
 
     activities = client.get(
-        "/api/activities?started_on_or_after=2027-01-01&started_on_or_before=2027-01-03&limit=10&offset=0",
+        "/api/v1/activities?started_on_or_after=2027-01-01&started_on_or_before=2027-01-03&limit=10&offset=0",
         headers={"X-Johnny-User-Id": "user-1"},
     )
-    hidden = client.get("/api/activities", headers={"X-Johnny-User-Id": "user-2"})
+    hidden = client.get("/api/v1/activities", headers={"X-Johnny-User-Id": "user-2"})
     health = client.get(
-        "/api/health-metrics/daily?measured_on_or_after=2027-01-01&measured_on_or_before=2027-01-03",
+        "/api/v1/health-metrics/daily?measured_on_or_after=2027-01-01&measured_on_or_before=2027-01-03",
         headers={"X-Johnny-User-Id": "user-1"},
     )
 

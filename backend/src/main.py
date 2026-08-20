@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 import uvicorn
 
 from .api.errors import register_exception_handlers
@@ -24,16 +24,18 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Johnny API")
     register_exception_handlers(app)
     app.include_router(health_router)
-    app.include_router(athlete_profile_router)
-    app.include_router(activity_router)
-    app.include_router(conversations_router)
-    app.include_router(health_metrics_router)
-    app.include_router(integrations_router)
-    app.include_router(me_router)
-    app.include_router(races_router)
-    app.include_router(recommendations_router)
-    app.include_router(today_router)
-    app.include_router(training_plans_router)
+    api_v1_router = APIRouter(prefix="/api/v1")
+    api_v1_router.include_router(athlete_profile_router)
+    api_v1_router.include_router(activity_router)
+    api_v1_router.include_router(conversations_router)
+    api_v1_router.include_router(health_metrics_router)
+    api_v1_router.include_router(integrations_router)
+    api_v1_router.include_router(me_router)
+    api_v1_router.include_router(races_router)
+    api_v1_router.include_router(recommendations_router)
+    api_v1_router.include_router(today_router)
+    api_v1_router.include_router(training_plans_router)
+    app.include_router(api_v1_router)
     return app
 
 

@@ -6,13 +6,13 @@ from fastapi import APIRouter
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiNotFoundError
-from src.api.schemas.common import DataEnvelope
+from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
 from src.api.schemas.races import RaceGoalCreateRequest, RaceGoalResponse
 from src.domain.athlete_race import RaceGoal
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 
 
-router = APIRouter(prefix="/api/races", tags=["races"])
+router = APIRouter(prefix="/races", tags=["races"])
 
 
 @router.post("")
@@ -33,17 +33,17 @@ def list_race_goals(
     session: SessionDependency,
     race_date_from: date | None = None,
     race_date_to: date | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-) -> DataEnvelope[list[RaceGoalResponse]]:
+    limit: PageLimit = DEFAULT_PAGE_LIMIT,
+    offset: PageOffset = 0,
+) -> ListEnvelope[RaceGoalResponse]:
     races = SqlAlchemyAthleteRaceRepository(session).list_race_goals_for_user(
         current_user.id,
         race_date_from=race_date_from,
         race_date_to=race_date_to,
-        limit=limit,
+        limit=page_query_limit(limit),
         offset=offset,
     )
-    return DataEnvelope(data=[_race_response(race) for race in races])
+    return list_envelope([_race_response(race) for race in races], limit=limit, offset=offset)
 
 
 @router.get("/{race_id}", response_model=DataEnvelope[RaceGoalResponse])

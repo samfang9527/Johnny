@@ -9,7 +9,7 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
     client = _client()
 
     response = client.put(
-        "/api/athlete/profile",
+        "/api/v1/athlete/profile",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "timezone": "Asia/Taipei",
@@ -39,7 +39,7 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
         "injury_notes": "Left calf watch",
     }
 
-    loaded = client.get("/api/athlete/profile", headers={"X-Johnny-User-Id": "user-1"})
+    loaded = client.get("/api/v1/athlete/profile", headers={"X-Johnny-User-Id": "user-1"})
 
     assert loaded.status_code == 200
     assert loaded.json()["data"]["timezone"] == "Asia/Taipei"
@@ -48,7 +48,7 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
 def test_race_routes_create_update_detail_and_list_with_tenant_scope_and_filters() -> None:
     client = _client()
     first = client.post(
-        "/api/races",
+        "/api/v1/races",
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "name": "Spring Half",
@@ -59,31 +59,39 @@ def test_race_routes_create_update_detail_and_list_with_tenant_scope_and_filters
         },
     ).json()["data"]
     client.post(
-        "/api/races",
+        "/api/v1/races",
         headers={"X-Johnny-User-Id": "user-1"},
         json={"name": "Tune Up 10K", "race_date": "2027-03-10", "distance_meters": 10000, "priority": "tune_up"},
     )
     client.post(
-        "/api/races",
+        "/api/v1/races",
         headers={"X-Johnny-User-Id": "user-2"},
         json={"name": "Other Race", "race_date": "2027-03-11", "distance_meters": 5000},
     )
 
     updated = client.put(
-        f"/api/races/{first['id']}",
+        f"/api/v1/races/{first['id']}",
         headers={"X-Johnny-User-Id": "user-1"},
         json={**first, "name": "Spring Half Updated", "status": "active"},
     )
     listed = client.get(
-        "/api/races?race_date_from=2027-03-01&race_date_to=2027-04-01&limit=1&offset=0",
+        "/api/v1/races?race_date_from=2027-03-01&race_date_to=2027-04-01&limit=1&offset=0",
         headers={"X-Johnny-User-Id": "user-1"},
     )
-    hidden = client.get(f"/api/races/{first['id']}", headers={"X-Johnny-User-Id": "user-2"})
+    listed_with_next = client.get("/api/v1/races?limit=1&offset=0", headers={"X-Johnny-User-Id": "user-1"})
+    invalid_page = client.get("/api/v1/races?limit=-1&offset=0", headers={"X-Johnny-User-Id": "user-1"})
+    hidden = client.get(f"/api/v1/races/{first['id']}", headers={"X-Johnny-User-Id": "user-2"})
 
     assert updated.status_code == 200
     assert updated.json()["data"]["name"] == "Spring Half Updated"
     assert listed.status_code == 200
     assert [race["name"] for race in listed.json()["data"]] == ["Tune Up 10K"]
+    assert listed.json()["paging"] == {"limit": 1, "offset": 0, "has_next": False}
+    assert [race["name"] for race in listed_with_next.json()["data"]] == ["Tune Up 10K"]
+    assert listed_with_next.json()["paging"] == {"limit": 1, "offset": 0, "has_next": True}
+    assert "total_pages" not in listed_with_next.json()["paging"]
+    assert invalid_page.status_code == 422
+    assert invalid_page.json()["error"]["code"] == "validation_error"
     assert hidden.status_code == 404
     assert hidden.json()["error"]["code"] == "not_found"
 

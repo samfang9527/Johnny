@@ -10,7 +10,7 @@ def test_me_endpoint_uses_local_user_header_and_exposes_capabilities() -> None:
     client = TestClient(create_app())
 
     response = client.get(
-        "/api/me",
+        "/api/v1/me",
         headers={
             "X-Johnny-User-Id": "user-123",
             "X-Johnny-User-Email": "runner@example.com",
@@ -42,7 +42,7 @@ def test_validation_errors_use_structured_error_envelope() -> None:
     client = TestClient(create_app())
 
     response = client.post(
-        "/api/races",
+        "/api/v1/races",
         headers={"X-Johnny-User-Id": "user-123"},
         json={"name": "Missing date"},
     )
@@ -57,7 +57,7 @@ def test_validation_errors_use_structured_error_envelope() -> None:
 def test_domain_validation_errors_use_structured_error_envelope() -> None:
     router = APIRouter()
 
-    @router.get("/api/test-domain-error")
+    @router.get("/api/v1/test-domain-error")
     def domain_error_route() -> None:
         raise DomainValidationError("distance must be greater than zero")
 
@@ -65,7 +65,7 @@ def test_domain_validation_errors_use_structured_error_envelope() -> None:
     app.include_router(router)
     client = TestClient(app)
 
-    response = client.get("/api/test-domain-error", headers={"X-Johnny-User-Id": "user-123"})
+    response = client.get("/api/v1/test-domain-error", headers={"X-Johnny-User-Id": "user-123"})
 
     assert response.status_code == 400
     assert response.json() == {
@@ -86,7 +86,21 @@ def test_current_user_dependency_can_be_overridden_for_tenant_scope_tests() -> N
     )
     client = TestClient(app)
 
-    response = client.get("/api/me")
+    response = client.get("/api/v1/me")
 
     assert response.status_code == 200
     assert response.json()["data"]["id"] == "override-user"
+
+
+def test_product_api_routes_are_versioned_but_health_routes_are_not() -> None:
+    client = TestClient(create_app())
+
+    versioned = client.get("/api/v1/me", headers={"X-Johnny-User-Id": "user-123"})
+    unversioned_product = client.get("/api/me", headers={"X-Johnny-User-Id": "user-123"})
+    health = client.get("/health")
+    ready = client.get("/ready")
+
+    assert versioned.status_code == 200
+    assert unversioned_product.status_code == 404
+    assert health.status_code == 200
+    assert ready.status_code == 200
