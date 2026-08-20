@@ -93,6 +93,25 @@ class SqlAlchemyTrainingPlanRepository:
             return None
         return _plan_from_model(model)
 
+    def list_plans_for_user(
+        self,
+        user_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[TrainingPlan]:
+        statement = (
+            select(TrainingPlanModel)
+            .options(selectinload(TrainingPlanModel.workouts))
+            .where(TrainingPlanModel.user_id == user_id)
+            .order_by(TrainingPlanModel.starts_on.desc(), TrainingPlanModel.id.desc())
+        )
+        if offset:
+            statement = statement.offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
+        return [_plan_from_model(model) for model in self._session.scalars(statement)]
+
     def create_adjustment_proposal(
         self,
         user_id: str,

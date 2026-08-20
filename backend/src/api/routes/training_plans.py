@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+from fastapi import APIRouter
+
+from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
+from src.api.errors import ApiNotFoundError
+from src.api.schemas.common import DataEnvelope
+from src.api.schemas.training_plans import TrainingPlanRequest, TrainingPlanResponse, WorkoutResponse, WorkoutStatusRequest
+from src.domain.training_plan import TrainingPlan, Workout
+from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
+
+
+router = APIRouter(prefix="/api/training-plans", tags=["training-plans"])
+
+
+@router.post("", response_model=DataEnvelope[TrainingPlanResponse])
+def create_training_plan(
+    payload: TrainingPlanRequest,
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+) -> DataEnvelope[TrainingPlanResponse]:
+    ensure_current_user(session, current_user)
+    plan = _plan_from_request(current_user.id, payload)
+    saved = SqlAlchemyTrainingPlanRepository(session).save_plan(current_user.id, plan)
+    return DataEnvelope(data=_plan_response(saved))
+
+
+@router.get("", response_model=DataEnvelope[list[TrainingPlanResponse]])
+def list_training_plans(
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+    limit: int | None = None,
+    offset: int = 0,
+) -> DataEnvelope[list[TrainingPlanResponse]]:
+    plans = SqlAlchemyTrainingPlanRepository(session).list_plans_for_user(
+        current_user.id,
+        limit=limit,
+        offset=offset,
+    )
+    return DataEnvelope(data=[_plan_response(plan) for plan in plans])
+
+
+@router.get("/{plan_id}", response_model=DataEnvelope[TrainingPlanResponse])
+def get_training_plan(
+    plan_id: str,
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+) -> DataEnvelope[TrainingPlanResponse]:
+    plan = SqlAlchemyTrainingPlanRepository(session).get_plan_for_user(current_user.id, plan_id)
+    if plan is None:
+        raise ApiNotFoundError("training plan not found")
+    return DataEnvelope(data=_plan_response(plan))
+
+
+@router.patch("/{plan_id}/workouts/{workout_id}", response_model=DataEnvelope[TrainingPlanResponse])
+def update_workout_status(
+    plan_id: str,
+    workout_id: str,
+    payload: WorkoutStatusRequest,
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+) -> DataEnvelope[TrainingPlanResponse]:
+    repository = SqlAlchemyTrainingPlanRepository(session)
+    plan = repository.get_plan_for_user(current_user.id, plan_id)
+    if plan is None:
+        raise ApiNotFoundError("training plan not found")
+    workout = next((item for item in plan.workouts if item.id == workout_id), None)
+    if workout is None:
+        raise ApiNotFoundError("workout not found")
+    updated = workout.transition_to(payload.status)
+    saved = repository.save_plan(
+        current_user.id,
+        TrainingPlan.create(
+            id=plan.id,
+            user_id=plan.user_id,
+            race_id=plan.race_id,
+            name=plan.name,
+            status=plan.status,
+            starts_on=plan.starts_on,
+            ends_on=plan.ends_on,
+            workouts=tuple(updated if item.id == workout_id else item for item in plan.workouts),
+        ),
+    )
+    return DataEnvelope(data=_plan_response(saved))
+
+
+def _plan_from_request(user_id: str, payload: TrainingPlanRequest) -> TrainingPlan:
+    return TrainingPlan.create(
+        user_id=user_id,
+        race_id=payload.race_id,
+        name=payload.name,
+        starts_on=payload.starts_on,
+        ends_on=payload.ends_on,
+        status=payload.status,
+        workouts=tuple(
+            Workout.create(
+                scheduled_for=workout.scheduled_for,
+                workout_type=workout.workout_type,
+                purpose=workout.purpose,
+                planned_duration_minutes=workout.planned_duration_minutes,
+                planned_distance_meters=workout.planned_distance_meters,
+                pace_range_seconds_per_km=tuple(workout.pace_range_seconds_per_km)
+                if workout.pace_range_seconds_per_km is not None
+                else None,
+                heart_rate_zone=workout.heart_rate_zone,
+                status=workout.status,
+            )
+            for workout in payload.workouts
+        ),
+    )
+
+
+def _plan_response(plan: TrainingPlan) -> TrainingPlanResponse:
+    return TrainingPlanResponse(
+        id=plan.id,
+        user_id=plan.user_id,
+        race_id=plan.race_id,
+        name=plan.name,
+        status=plan.status,
+        starts_on=plan.starts_on,
+        ends_on=plan.ends_on,
+        workouts=[
+            WorkoutResponse(
+                id=workout.id,
+                scheduled_for=workout.scheduled_for,
+                workout_type=workout.workout_type,
+                purpose=workout.purpose,
+                planned_duration_minutes=workout.planned_duration_minutes,
+                planned_distance_meters=workout.planned_distance_meters,
+                pace_range_seconds_per_km=list(workout.pace_range_seconds_per_km)
+                if workout.pace_range_seconds_per_km is not None
+                else None,
+                heart_rate_zone=workout.heart_rate_zone,
+                status=workout.status,
+            )
+            for workout in plan.workouts
+        ],
+    )
