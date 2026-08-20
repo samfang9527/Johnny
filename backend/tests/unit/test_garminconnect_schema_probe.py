@@ -98,6 +98,26 @@ def test_normalize_daily_health_payloads_maps_garminconnect_daily_values_without
     assert all("session_data" not in metric.provider_summary for metric in metrics)
 
 
+def test_normalize_daily_health_payloads_accepts_steps_list_from_garminconnect() -> None:
+    metrics = normalize_daily_health_payloads(
+        date_text="2027-01-01",
+        source_payloads={
+            "get_steps_data": [
+                {"calendarDate": "2027-01-01", "totalSteps": 12345, "session_data": {"cookie": "secret"}}
+            ],
+        },
+    )
+
+    assert [(metric.metric_type, metric.value, metric.unit) for metric in metrics] == [
+        ("steps", 12345.0, "count"),
+    ]
+    assert metrics[0].provider_summary == {
+        "source_method": "get_steps_data",
+        "calendarDate": "2027-01-01",
+        "totalSteps": 12345,
+    }
+
+
 def test_load_probe_settings_reads_dotenv_without_overriding_environment(monkeypatch, tmp_path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(

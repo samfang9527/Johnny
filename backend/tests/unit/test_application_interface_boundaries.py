@@ -1,8 +1,10 @@
 from src.application.interfaces.activity_store import ActivityStore
+from src.application.interfaces.agent_runtime import AgentRunStore
 from src.application.interfaces.athlete_race_store import AthleteProfileStore, RaceGoalStore
 from src.application.interfaces.job_provider import DueJobProvider, ScheduledJobRecord
 from src.application.interfaces.persistence_repositories import (
     ActivityStore as ExportedActivityStore,
+    AgentRunStore as ExportedAgentRunStore,
     AthleteProfileStore as ExportedAthleteProfileStore,
     DueJobProvider as ExportedDueJobProvider,
     RaceGoalStore as ExportedRaceGoalStore,
@@ -22,6 +24,7 @@ from src.application.interfaces.user_store import UserStore
 
 def test_application_interfaces_use_role_names() -> None:
     assert ExportedActivityStore is ActivityStore
+    assert ExportedAgentRunStore is AgentRunStore
     assert ExportedAthleteProfileStore is AthleteProfileStore
     assert ExportedRaceGoalStore is RaceGoalStore
     assert ExportedRecommendationStore is RecommendationStore
