@@ -113,8 +113,7 @@ def test_normalize_daily_health_payloads_accepts_steps_list_from_garminconnect()
     ]
     assert metrics[0].provider_summary == {
         "source_method": "get_steps_data",
-        "calendarDate": "2027-01-01",
-        "totalSteps": 12345,
+        "payload": [{"calendarDate": "2027-01-01", "totalSteps": 12345}],
     }
 
 

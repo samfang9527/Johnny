@@ -92,7 +92,7 @@ def normalize_activity_payload(payload: dict[str, Any]) -> NormalizedActivity:
 def normalize_daily_health_payloads(
     *,
     date_text: str,
-    source_payloads: dict[str, dict[str, Any]],
+    source_payloads: dict[str, Any],
 ) -> list[NormalizedHealthMetric]:
     measured_at = datetime.combine(date.fromisoformat(date_text), time.min, tzinfo=timezone.utc)
     metrics: list[NormalizedHealthMetric] = []
@@ -118,7 +118,9 @@ def normalize_daily_health_payloads(
         payload=source_payloads.get("get_steps_data", {}),
     )
     sleep_payload = source_payloads.get("get_sleep_data", {})
-    sleep_dto = sleep_payload.get("dailySleepDTO", {}) if isinstance(sleep_payload.get("dailySleepDTO"), dict) else {}
+    sleep_payload_mapping = _as_mapping(sleep_payload)
+    daily_sleep_dto = sleep_payload_mapping.get("dailySleepDTO")
+    sleep_dto = daily_sleep_dto if isinstance(daily_sleep_dto, dict) else {}
     _append_metric(
         metrics,
         date_text=date_text,
@@ -266,7 +268,7 @@ def _append_metric(
     metric_type: str,
     value: Any,
     unit: str,
-    payload: dict[str, Any],
+    payload: Any,
 ) -> None:
     if value is None:
         return
@@ -277,17 +279,36 @@ def _append_metric(
             metric_type=metric_type,
             value=float(value),
             unit=unit,
-            provider_summary={"source_method": source_method, **_redact_secrets(payload)},
+            provider_summary=_provider_summary(source_method=source_method, payload=payload),
         )
     )
 
 
-def _first_value(payload: dict[str, Any], *keys: str) -> Any:
+def _first_value(payload: Any, *keys: str) -> Any:
+    if isinstance(payload, list):
+        for item in payload:
+            value = _first_value(item, *keys)
+            if value is not None:
+                return value
+        return None
+    if not isinstance(payload, dict):
+        return None
     for key in keys:
         value = payload.get(key)
         if value is not None:
             return value
     return None
+
+
+def _as_mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _provider_summary(*, source_method: str, payload: Any) -> dict[str, Any]:
+    redacted_payload = _redact_secrets(payload)
+    if isinstance(redacted_payload, dict):
+        return {"source_method": source_method, **redacted_payload}
+    return {"source_method": source_method, "payload": redacted_payload}
 
 
 def _activity_type(activity_type: Any) -> str:
