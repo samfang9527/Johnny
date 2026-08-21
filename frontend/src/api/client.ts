@@ -1,4 +1,4 @@
-import type { IntegrationConnectionPayload } from '../types'
+import type { ConversationMessageResponse, IntegrationConnectionPayload } from '../types'
 
 export function getApiBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -32,4 +32,8 @@ export function discussRecommendation(recommendationId: string, content: string)
 
 export function connectIntegration(payload: IntegrationConnectionPayload): Promise<unknown> {
   return postJson('/integrations/connections', payload)
+}
+
+export function submitConversationMessage(content: string): Promise<ConversationMessageResponse> {
+  return postJson('/conversations/messages', { content })
 }
