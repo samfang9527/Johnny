@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from .api.errors import register_exception_handlers
@@ -19,9 +20,23 @@ from .api.routes.training_plans import router as training_plans_router
 from .infrastructure.logging.logger_config import setup_logging
 
 
+def _cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ALLOW_ORIGINS") or os.getenv("FRONTEND_ORIGINS")
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
 def create_app() -> FastAPI:
     setup_logging()
     app = FastAPI(title="Johnny API")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     register_exception_handlers(app)
     app.include_router(health_router)
     api_v1_router = APIRouter(prefix="/api/v1")

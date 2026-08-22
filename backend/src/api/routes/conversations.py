@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from src.api.dependencies import CurrentUserDependency
+from src.api.dependencies import CurrentUserDependency, SessionDependency, build_request_companion_agent, ensure_current_user
 from src.api.schemas.common import DataEnvelope
 from src.api.schemas.conversations import ConversationMessageRequest, ConversationMessageResponse
-from src.application.conversations import SubmitConversationMessageHandler
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -15,11 +14,19 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 def submit_message(
     payload: ConversationMessageRequest,
     current_user: CurrentUserDependency,
+    session: SessionDependency,
 ) -> DataEnvelope[ConversationMessageResponse]:
-    message = SubmitConversationMessageHandler().handle(user_id=current_user.id, content=payload.content)
+    ensure_current_user(session, current_user)
+    run = build_request_companion_agent(session).run_conversation(user_id=current_user.id, message=payload.content)
     return DataEnvelope(
         data=ConversationMessageResponse(
-            message={"user_id": message.user_id, "content": message.content, "recommendation_id": message.recommendation_id},
-            run_ref=message.run_ref or "",
+            message={
+                "user_id": current_user.id,
+                "content": payload.content,
+                "agent_status": run.status,
+                "agent_output": run.output_summary or "",
+                "recommendation_id": run.recommendation_id,
+            },
+            run_ref=run.id or "",
         )
     )

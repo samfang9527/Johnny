@@ -141,6 +141,98 @@ def test_running_companion_agent_records_daily_recommendation_run_and_tool_steps
     assert create_tool.calls[0]["arguments"]["agent_run_id"] == "run-1"
 
 
+def test_running_companion_agent_asks_model_again_after_read_tools_before_completing_recommendation() -> None:
+    run_store = FakeRunStore()
+    recovery_tool = StaticTool("getRecoveryState", {"recovery": {"readiness_label": "rest"}})
+    create_tool = StaticTool(
+        "createRecommendation",
+        {"recommendation": {"id": "recommendation-1", "status": "pending"}, "applied": False},
+    )
+    model = FakeModelGateway(
+        ModelResponse(
+            content="",
+            tool_calls=(ToolCallRequest(tool_name="getRecoveryState", arguments={"anchor_date": "2027-01-28"}),),
+            token_usage=TokenUsage(input_tokens=10, output_tokens=5),
+            provider="fake",
+            model="fake-model",
+        ),
+        ModelResponse(
+            content="Create a rest recommendation.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createRecommendation",
+                    arguments={
+                        "title": "Rest today",
+                        "rationale": "Recovery context indicates rest.",
+                        "recommendation_type": "informational",
+                        "priority": "medium",
+                        "evidence": [{"source": "agent", "metric": "readiness_label", "value": "rest"}],
+                        "action": {"type": "no_plan_change", "reason": "No safe change."},
+                    },
+                ),
+            ),
+            token_usage=TokenUsage(input_tokens=20, output_tokens=8),
+            provider="fake",
+            model="fake-model",
+        ),
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((recovery_tool, create_tool)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_daily_recommendation(user_id="user-1", anchor_date=date(2027, 1, 28))
+
+    assert result.status == "completed"
+    assert result.recommendation_id == "recommendation-1"
+    assert result.total_tokens == 43
+    assert len(model.requests) == 2
+    assert model.requests[1].tools == ("createRecommendation",)
+    assert model.requests[1].require_tool_call is True
+    assert model.requests[1].context["tool_results"][0]["tool_name"] == "getRecoveryState"
+    assert [step.tool_name for step in run_store.steps] == ["getRecoveryState", "createRecommendation"]
+
+
+def test_running_companion_agent_uses_recommendation_summary_when_model_returns_tool_only_response() -> None:
+    run_store = FakeRunStore()
+    create_tool = StaticTool(
+        "createRecommendation",
+        {"recommendation": {"id": "recommendation-1", "status": "pending"}, "applied": False},
+    )
+    model = FakeModelGateway(
+        ModelResponse(
+            content="",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createRecommendation",
+                    arguments={
+                        "title": "Rest today",
+                        "rationale": "Recovery context indicates rest.",
+                        "recommendation_type": "informational",
+                        "priority": "medium",
+                        "evidence": [{"source": "agent", "metric": "readiness_label", "value": "rest"}],
+                        "action": {"type": "no_plan_change", "reason": "No safe change."},
+                    },
+                ),
+            ),
+        )
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((create_tool,)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_conversation(user_id="user-1", message="How should I adjust today's training?")
+
+    assert result.status == "completed"
+    assert result.recommendation_id == "recommendation-1"
+    assert result.output_summary == "Created recommendation recommendation-1."
+
+
 def test_running_companion_agent_marks_run_failed_when_tool_errors() -> None:
     run_store = FakeRunStore()
     model = FakeModelGateway(

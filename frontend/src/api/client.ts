@@ -4,18 +4,40 @@ export function getApiBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 }
 
-async function postJson<T>(path: string, payload?: unknown): Promise<T> {
+async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
   const response = await fetch(`${getApiBaseUrl()}/api/v1${path}`, {
-    method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: payload === undefined ? undefined : JSON.stringify(payload),
+    ...init,
   })
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`)
   }
   return response.json() as Promise<T>
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  return requestJson(path, { method: 'GET' })
+}
+
+async function postJson<T>(path: string, payload?: unknown): Promise<T> {
+  return requestJson(path, {
+    method: 'POST',
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  })
+}
+
+export function getTodayContext(anchorDate: string): Promise<{ data: Record<string, unknown> }> {
+  return getJson(`/today?anchor_date=${encodeURIComponent(anchorDate)}`)
+}
+
+export function listRecommendations(): Promise<{ data: Array<Record<string, unknown>> }> {
+  return getJson('/recommendations')
+}
+
+export function listTrainingPlans(): Promise<{ data: Array<Record<string, unknown>> }> {
+  return getJson('/training-plans')
 }
 
 export function acceptRecommendation(recommendationId: string): Promise<unknown> {

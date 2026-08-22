@@ -28,6 +28,8 @@ Prepare local configuration:
 cp backend/.env.example backend/.env
 ```
 
+The API loads `backend/.env` when present, while shell environment variables still take precedence.
+
 OpenAI is the first production LLM provider for the Running Companion Agent. To enable OpenAI-backed agent execution locally, keep `LLM_PROVIDER=openai`, set `LLM_MODEL` to the model you want Johnny to use, and provide either `OPENAI_API_KEY` or `LLM_API_KEY` in your shell or uncommitted `backend/.env`.
 
 LLM inputs and outputs are treated as untrusted. Johnny exposes only workflow-allowed tools, sends dynamic context as data rather than elevated instructions, validates OpenAI function-call arguments against strict schemas, and performs server-side policy checks before executing any model-requested tool.
@@ -37,7 +39,7 @@ Normal backend tests stay network-free by using fake model gateways. Any live Op
 Run the API locally:
 
 ```bash
-PYTHONPATH=backend ./.venv/bin/python -m uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
+make run-api
 ```
 
 Run backend tests:
@@ -87,16 +89,40 @@ The frontend dev server defaults to `http://localhost:5173` and reads `VITE_API_
 
 Local development uses PostgreSQL through `DATABASE_URL`.
 
+Start local PostgreSQL:
+
+```bash
+make db-up
+```
+
 Apply migrations:
 
 ```bash
-DATABASE_URL=postgresql://johnny:johnny@localhost:5432/johnny ./.venv/bin/alembic -c backend/alembic.ini upgrade head
+make migrate
+```
+
+Seed demo data for the local manual runbook:
+
+```bash
+make seed-demo
+```
+
+Run the deterministic local companion smoke:
+
+```bash
+make smoke-local
+```
+
+Run the optional live OpenAI smoke after configuring OpenAI settings:
+
+```bash
+make smoke-openai
 ```
 
 Check the current migration revision:
 
 ```bash
-DATABASE_URL=postgresql://johnny:johnny@localhost:5432/johnny ./.venv/bin/alembic -c backend/alembic.ini current
+DATABASE_URL=postgresql+psycopg://johnny:johnny@localhost:5432/johnny ./.venv/bin/alembic -c backend/alembic.ini current
 ```
 
 View migration history:
@@ -108,7 +134,7 @@ View migration history:
 Downgrade one revision:
 
 ```bash
-DATABASE_URL=postgresql://johnny:johnny@localhost:5432/johnny ./.venv/bin/alembic -c backend/alembic.ini downgrade -1
+DATABASE_URL=postgresql+psycopg://johnny:johnny@localhost:5432/johnny ./.venv/bin/alembic -c backend/alembic.ini downgrade -1
 ```
 
 Persistence integration tests use `JOHNNY_TEST_DATABASE_URL` when a PostgreSQL test database is available. The default local test suite also runs metadata, repository, constraint, and migration workflow checks against isolated SQLite databases so schema regressions are caught without starting the API server.
@@ -122,4 +148,4 @@ PYTHONPATH=backend ./.venv/bin/python -m src.infrastructure.integrations.garminc
 
 The `JOHNNY_GARMINCONNECT_SESSION_FILE` name is retained for compatibility, but the value is now passed to `garminconnect` as its token-store path. If no valid token-store file exists, the probe can log in with `JOHNNY_GARMINCONNECT_EMAIL` and `JOHNNY_GARMINCONNECT_PASSWORD` and let `garminconnect` write refreshed tokens to that local path. The persistence schema stores only credential references such as `credential_secret_ref`, never the raw Garmin password, cookies, token-store JSON, or provider token values.
 
-This persistence change does not add API routes, frontend UI, agent execution, notification delivery, or Terraform-managed database resources.
+Manual end-to-end local testing is documented in `docs/manual_test_runbook.md`.

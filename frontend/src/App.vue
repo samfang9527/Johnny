@@ -1,6 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { acceptRecommendation, connectIntegration, discussRecommendation, rejectRecommendation, submitConversationMessage } from './api/client'
+import { computed, onMounted, ref } from 'vue'
+import {
+  acceptRecommendation,
+  connectIntegration,
+  discussRecommendation,
+  getTodayContext,
+  listRecommendations,
+  listTrainingPlans,
+  rejectRecommendation,
+  submitConversationMessage,
+} from './api/client'
 import AppButton from './components/AppButton.vue'
 import EvidenceList from './components/EvidenceList.vue'
 import ProviderCard from './components/ProviderCard.vue'
@@ -11,11 +20,11 @@ import {
   inboxRecommendations as fixtureInboxRecommendations,
   plannedWorkouts as fixtureWorkouts,
   providers,
-  raceSummary,
-  recommendation,
-  recoveryEvidence,
-  todayWorkout,
-  unavailableSignals,
+  raceSummary as fixtureRaceSummary,
+  recommendation as fixtureRecommendation,
+  recoveryEvidence as fixtureRecoveryEvidence,
+  todayWorkout as fixtureTodayWorkout,
+  unavailableSignals as fixtureUnavailableSignals,
 } from './fixtures'
 import type {
   ConversationThread,
@@ -23,8 +32,11 @@ import type {
   LinkedRecommendationContext,
   ProviderOption,
   RecommendationStatus,
+  RecommendationSummary,
+  RaceSummary,
   ViewKey,
   WorkoutSummary,
+  EvidenceItem,
 } from './types'
 
 const props = withDefaults(
@@ -65,7 +77,14 @@ function viewFromHash(): ViewKey | undefined {
 
 const activeView = ref<ViewKey>(props.initialView ?? viewFromHash() ?? 'today')
 const busyAction = ref('')
-const recommendationStatus = ref(recommendation.status)
+const recommendationStatus = ref(fixtureRecommendation.status)
+const apiRaceSummary = ref<RaceSummary | null>(null)
+const apiTodayWorkout = ref<WorkoutSummary | null>(null)
+const apiWorkouts = ref<WorkoutSummary[]>([])
+const apiRecommendation = ref<RecommendationSummary | null>(null)
+const apiRecoveryEvidence = ref<EvidenceItem[]>([])
+const apiUnavailableSignals = ref<string[]>([])
+const apiInboxItems = ref<InboxRecommendation[]>([])
 const selectedProvider = ref<ProviderOption>(providers[0])
 const providerAccountId = ref('')
 const credentialSecretRef = ref('')
@@ -80,9 +99,14 @@ const linkedRecommendation = ref<LinkedRecommendationContext | null>(null)
 const inboxBusyRecommendationId = ref('')
 
 const activeTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label || '今日')
-const displayWorkouts = computed(() => props.workouts ?? fixtureWorkouts)
+const raceSummary = computed(() => apiRaceSummary.value ?? fixtureRaceSummary)
+const todayWorkout = computed(() => apiTodayWorkout.value ?? fixtureTodayWorkout)
+const recoveryEvidence = computed(() => (apiRecoveryEvidence.value.length ? apiRecoveryEvidence.value : fixtureRecoveryEvidence))
+const unavailableSignals = computed(() => (apiUnavailableSignals.value.length ? apiUnavailableSignals.value : fixtureUnavailableSignals))
+const recommendation = computed(() => apiRecommendation.value ?? fixtureRecommendation)
+const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : fixtureWorkouts))
 const displayThreads = computed(() => props.conversationThreads ?? fixtureConversationThreads)
-const displayInboxItems = computed(() => props.inboxItems ?? fixtureInboxRecommendations)
+const displayInboxItems = computed(() => props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : fixtureInboxRecommendations))
 const activeThreadId = ref(displayThreads.value[0]?.id ?? '')
 const activeThread = computed(() => displayThreads.value.find((thread) => thread.id === activeThreadId.value) ?? displayThreads.value[0])
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
@@ -98,7 +122,7 @@ function showView(view: ViewKey) {
 async function handleAccept() {
   busyAction.value = 'accept'
   try {
-    await acceptRecommendation(recommendation.id)
+    await acceptRecommendation(recommendation.value.id)
     recommendationStatus.value = 'accepted'
   } finally {
     busyAction.value = ''
@@ -108,7 +132,7 @@ async function handleAccept() {
 async function handleKeepOriginal() {
   busyAction.value = 'keep'
   try {
-    await rejectRecommendation(recommendation.id)
+    await rejectRecommendation(recommendation.value.id)
     recommendationStatus.value = 'kept'
   } finally {
     busyAction.value = ''
@@ -118,14 +142,14 @@ async function handleKeepOriginal() {
 async function handleDiscuss() {
   busyAction.value = 'discuss'
   try {
-    await discussRecommendation(recommendation.id, '我想了解這次調整的原因。')
+    await discussRecommendation(recommendation.value.id, '我想了解這次調整的原因。')
     linkedRecommendation.value = {
-      id: recommendation.id,
-      title: recommendation.title,
+      id: recommendation.value.id,
+      title: recommendation.value.title,
       status: 'pending',
       statusLabel: '待決定',
       evidenceSummary: 'HRV -18% · 7 日負荷 +21%',
-      evidence: recoveryEvidence,
+      evidence: recoveryEvidence.value,
     }
     showView('conversation')
   } finally {
@@ -178,6 +202,16 @@ function priorityTone(priority: InboxRecommendation['priority']): 'info' | 'warn
   return 'info'
 }
 
+function recommendationPriorityTone(priority: InboxRecommendation['priority']): RecommendationSummary['priority'] {
+  if (priority === 'high') {
+    return 'danger'
+  }
+  if (priority === 'medium') {
+    return 'warning'
+  }
+  return 'info'
+}
+
 function selectThread(threadId: string) {
   activeThreadId.value = threadId
   conversationError.value = ''
@@ -207,6 +241,7 @@ async function submitConversation() {
     const runRef = response.data.run_ref
     conversationMessage.value = ''
     conversationStatus.value = runRef ? `Johnny 已收到問題 · ${runRef}` : 'Johnny 已收到問題'
+    appendConversationMessages(content, response)
   } catch {
     conversationError.value = '訊息送出失敗，請稍後再試。'
   } finally {
@@ -239,6 +274,236 @@ async function handleInboxDiscuss(item: InboxRecommendation) {
   } finally {
     inboxBusyRecommendationId.value = ''
   }
+}
+
+onMounted(() => {
+  void hydrateFromBackend()
+})
+
+async function hydrateFromBackend() {
+  const anchorDate = new Date().toISOString().slice(0, 10)
+  const [todayResult, recommendationsResult, plansResult] = await Promise.allSettled([
+    getTodayContext(anchorDate),
+    listRecommendations(),
+    listTrainingPlans(),
+  ])
+
+  if (todayResult.status === 'fulfilled') {
+    applyTodayPayload(todayResult.value.data)
+  }
+  if (recommendationsResult.status === 'fulfilled') {
+    applyRecommendationsPayload(Array.isArray(recommendationsResult.value.data) ? recommendationsResult.value.data : [])
+  }
+  if (plansResult.status === 'fulfilled') {
+    applyTrainingPlansPayload(Array.isArray(plansResult.value.data) ? plansResult.value.data : [])
+  }
+}
+
+function applyTodayPayload(payload: Record<string, unknown>) {
+  const nextRace = payload.next_race as Record<string, unknown> | null | undefined
+  if (nextRace?.name && nextRace.race_date) {
+    apiRaceSummary.value = {
+      name: String(nextRace.name),
+      date: String(nextRace.race_date),
+      distance: formatDistance(Number(nextRace.distance_meters || 0)),
+      goal: 'MVP goal',
+      daysRemaining: daysUntil(String(nextRace.race_date)),
+    }
+  }
+
+  const workouts = Array.isArray(payload.scheduled_workouts) ? payload.scheduled_workouts : []
+  const mappedWorkouts = workouts.map(mapWorkout).filter((workout): workout is WorkoutSummary => workout !== null)
+  if (mappedWorkouts.length) {
+    apiTodayWorkout.value = mappedWorkouts[0]
+  }
+
+  const recovery = payload.recovery as Record<string, unknown> | undefined
+  if (recovery && Object.keys(recovery).length) {
+    apiRecoveryEvidence.value = Object.entries(recovery).slice(0, 4).map(([metric, value]) => ({
+      source: 'Johnny Analytics',
+      metric,
+      value: String(value),
+      summary: `${metric}: ${String(value)}`,
+      tone: metric.includes('status') || String(value).includes('low') ? 'warning' : 'info',
+    }))
+  }
+
+  const unavailable = Array.isArray(payload.unavailable_signals) ? payload.unavailable_signals : []
+  apiUnavailableSignals.value = unavailable.map(String)
+}
+
+function applyRecommendationsPayload(items: Array<Record<string, unknown>>) {
+  const mapped = items.map(mapRecommendation).filter((item): item is InboxRecommendation => item !== null)
+  apiInboxItems.value = mapped
+  const firstPending = mapped.find((item) => item.status === 'pending') ?? mapped[0]
+  if (firstPending) {
+    apiRecommendation.value = {
+      id: firstPending.id,
+      priority: recommendationPriorityTone(firstPending.priority),
+      title: firstPending.title,
+      rationale: firstPending.rationale,
+      proposedAction: firstPending.proposedAction,
+      status: firstPending.status,
+    }
+    recommendationStatus.value = firstPending.status
+  }
+}
+
+function applyTrainingPlansPayload(items: Array<Record<string, unknown>>) {
+  const workouts = items.flatMap((plan) => (Array.isArray(plan.workouts) ? plan.workouts : []))
+  apiWorkouts.value = workouts.map(mapWorkout).filter((workout): workout is WorkoutSummary => workout !== null)
+}
+
+function mapWorkout(raw: unknown): WorkoutSummary | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+  const workout = raw as Record<string, unknown>
+  const scheduledFor = String(workout.scheduled_for || '')
+  return {
+    id: String(workout.id || scheduledFor || crypto.randomUUID()),
+    weekday: formatWeekday(scheduledFor),
+    dateLabel: formatDateLabel(scheduledFor),
+    type: formatWorkoutType(String(workout.workout_type || 'workout')),
+    purpose: String(workout.purpose || workout.workout_type || 'Training session'),
+    distance: workout.planned_distance_meters ? formatDistance(Number(workout.planned_distance_meters)) : undefined,
+    duration: workout.planned_duration_minutes ? `${workout.planned_duration_minutes} 分` : undefined,
+    heartRateZone: workout.heart_rate_zone ? String(workout.heart_rate_zone) : undefined,
+    status: String(workout.status || 'planned'),
+  }
+}
+
+function mapRecommendation(raw: Record<string, unknown>): InboxRecommendation | null {
+  if (!raw.id || !raw.title) {
+    return null
+  }
+  const priority = normalizePriority(raw.priority)
+  const status = normalizeStatus(raw.status, raw.decision)
+  const evidence = Array.isArray(raw.evidence) ? raw.evidence : []
+  const proposedAction = raw.proposed_action as Record<string, unknown> | undefined
+  return {
+    id: String(raw.id),
+    title: String(raw.title),
+    summary: String(raw.rationale || raw.title),
+    proposedAction: String(proposedAction?.reason || proposedAction?.type || 'No plan change'),
+    rationale: String(raw.rationale || ''),
+    priority,
+    priorityLabel: priorityLabel(priority),
+    status,
+    statusLabel: statusLabel(status),
+    evidence: evidence.map(mapEvidence),
+  }
+}
+
+function mapEvidence(raw: unknown): EvidenceItem {
+  const item = (raw || {}) as Record<string, unknown>
+  return {
+    source: String(item.source || 'Johnny'),
+    metric: String(item.metric || 'signal'),
+    value: String(item.value ?? ''),
+    summary: String(item.summary || `${item.metric || 'signal'} ${item.value ?? ''}`),
+    tone: 'info',
+  }
+}
+
+function appendConversationMessages(content: string, response: { data: { run_ref: string; message: { agent_output?: string } } }) {
+  const thread = activeThread.value
+  if (!thread) {
+    return
+  }
+  thread.messages.push(
+    {
+      id: `msg-user-${Date.now()}`,
+      role: 'user',
+      authorLabel: '你',
+      content,
+      timestampLabel: '剛剛',
+    },
+    {
+      id: `msg-johnny-${Date.now()}`,
+      role: 'johnny',
+      authorLabel: 'Johnny 回覆',
+      content: response.data.message.agent_output || 'Johnny 已完成這次回覆。',
+      timestampLabel: '剛剛',
+      runRef: response.data.run_ref,
+    },
+  )
+}
+
+function normalizePriority(value: unknown): InboxRecommendation['priority'] {
+  return value === 'high' || value === 'medium' || value === 'low' ? value : 'medium'
+}
+
+function normalizeStatus(status: unknown, decision: unknown): RecommendationStatus {
+  if (decision === 'accepted') {
+    return 'accepted'
+  }
+  if (decision === 'rejected') {
+    return 'rejected'
+  }
+  if (decision === 'edited') {
+    return 'edited'
+  }
+  return status === 'pending' ? 'pending' : 'applied'
+}
+
+function priorityLabel(priority: InboxRecommendation['priority']): string {
+  return priority === 'high' ? '高優先' : priority === 'medium' ? '中優先' : '低優先'
+}
+
+function statusLabel(status: RecommendationStatus): string {
+  if (status === 'pending') {
+    return '待決定'
+  }
+  if (status === 'accepted') {
+    return '已接受'
+  }
+  if (status === 'rejected') {
+    return '已拒絕'
+  }
+  return '已套用'
+}
+
+function formatWorkoutType(value: string): string {
+  return value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function formatDistance(meters: number): string {
+  if (!Number.isFinite(meters) || meters <= 0) {
+    return 'N/A'
+  }
+  if (meters === 21097) {
+    return 'Half Marathon'
+  }
+  if (meters === 42195) {
+    return 'Marathon'
+  }
+  return `${Number((meters / 1000).toFixed(1)).toString()} km`
+}
+
+function formatWeekday(value: string): string {
+  if (!value) {
+    return '待排'
+  }
+  const day = new Date(`${value}T00:00:00`).getDay()
+  return ['週日', '週一', '週二', '週三', '週四', '週五', '週六'][day]
+}
+
+function formatDateLabel(value: string): string {
+  if (!value) {
+    return ''
+  }
+  const date = new Date(`${value}T00:00:00`)
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
+function daysUntil(value: string): number {
+  const target = new Date(`${value}T00:00:00`).getTime()
+  const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00').getTime()
+  return Math.max(0, Math.ceil((target - today) / 86_400_000))
 }
 </script>
 

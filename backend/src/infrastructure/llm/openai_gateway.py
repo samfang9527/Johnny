@@ -25,7 +25,7 @@ class OpenAIModelGateway:
                 model=self._model,
                 input=_input_messages(request),
                 tools=tools,
-                tool_choice=_tool_choice(request.tools),
+                tool_choice=_tool_choice(request.tools, require_tool_call=request.require_tool_call),
             )
             return ModelResponse(
                 content=str(_get(response, "output_text", "") or ""),
@@ -37,7 +37,7 @@ class OpenAIModelGateway:
         except OpenAIModelGatewayError:
             raise
         except Exception as exc:
-            raise OpenAIModelGatewayError(f"OpenAI model invocation failed: {exc.__class__.__name__}") from exc
+            raise OpenAIModelGatewayError(_provider_error_summary(exc, api_key=self._api_key)) from exc
 
 
 def _openai_client(*, api_key: str | None):
@@ -77,12 +77,12 @@ def _function_tools(tool_names: tuple[str, ...]) -> list[dict[str, Any]]:
     ]
 
 
-def _tool_choice(tool_names: tuple[str, ...]):
+def _tool_choice(tool_names: tuple[str, ...], *, require_tool_call: bool = False):
     if not tool_names:
         return "none"
     return {
         "type": "allowed_tools",
-        "mode": "auto",
+        "mode": "required" if require_tool_call else "auto",
         "tools": [{"type": "function", "name": tool_name} for tool_name in sorted(tool_names)],
     }
 
@@ -151,7 +151,7 @@ def _tool_description(tool_name: str) -> str:
 def _tool_schema(tool_name: str) -> dict[str, Any]:
     schemas: dict[str, dict[str, Any]] = {
         "getAthleteContext": _object_schema(
-            properties={"limit": {"type": "integer"}, "offset": {"type": "integer"}},
+            properties={},
             required=[],
         ),
         "getTrainingPlan": _object_schema(
@@ -166,7 +166,7 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
                 "limit": {"type": "integer"},
                 "offset": {"type": "integer"},
             },
-            required=["start_date", "end_date"],
+            required=["start_date", "end_date", "limit", "offset"],
         ),
         "getRecoveryState": _date_schema(),
         "getTrainingMetrics": _date_schema(),
@@ -174,19 +174,12 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
             properties={
                 "title": {"type": "string"},
                 "rationale": {"type": "string"},
-                "recommendation_type": {"type": "string"},
-                "priority": {"type": "string", "enum": ["low", "medium", "high"]},
-                "evidence": {
-                    "type": "array",
-                    "items": _object_schema(
-                        properties={
-                            "source": {"type": "string"},
-                            "metric": {"type": "string"},
-                            "value": {},
-                        },
-                        required=["source", "metric", "value"],
-                    ),
+                "recommendation_type": {
+                    "type": "string",
+                    "enum": ["informational", "recovery_warning", "workout_adjustment"],
                 },
+                "priority": {"type": "string", "enum": ["low", "medium", "high"]},
+                "evidence": _evidence_array_schema(),
                 "action": _object_schema(
                     properties={
                         "type": {"type": "string", "enum": ["no_plan_change"]},
@@ -195,7 +188,7 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
                     required=["type", "reason"],
                 ),
             },
-            required=["title", "rationale", "action"],
+            required=["title", "rationale", "recommendation_type", "priority", "evidence", "action"],
         ),
         "proposeWorkoutAdjustment": _object_schema(
             properties={
@@ -203,11 +196,11 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
                 "rationale": {"type": "string"},
                 "training_plan_id": {"type": "string"},
                 "workout_id": {"type": "string"},
-                "before_payload": {"type": "object"},
-                "after_payload": {"type": "object"},
+                "before_payload": _workout_payload_schema(),
+                "after_payload": _workout_payload_schema(),
                 "reason": {"type": "string"},
                 "priority": {"type": "string", "enum": ["low", "medium", "high"]},
-                "evidence": {"type": "array", "items": {"type": "object"}},
+                "evidence": _evidence_array_schema(),
             },
             required=[
                 "title",
@@ -217,15 +210,17 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
                 "before_payload",
                 "after_payload",
                 "reason",
+                "priority",
+                "evidence",
             ],
         ),
         "storeMemoryCandidate": _object_schema(
             properties={
                 "memory_type": {"type": "string"},
                 "summary": {"type": "string"},
-                "evidence": {"type": "object"},
+                "evidence": _memory_evidence_schema(),
             },
-            required=["memory_type", "summary"],
+            required=["memory_type", "summary", "evidence"],
         ),
     }
     try:
@@ -245,6 +240,74 @@ def _object_schema(*, properties: dict[str, Any], required: list[str]) -> dict[s
 
 def _date_schema() -> dict[str, Any]:
     return _object_schema(properties={"anchor_date": {"type": "string"}}, required=["anchor_date"])
+
+
+def _evidence_array_schema() -> dict[str, Any]:
+    return {"type": "array", "items": _evidence_item_schema()}
+
+
+def _evidence_item_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "source": {"type": "string"},
+            "metric": {"type": "string"},
+            "value": {"type": ["string", "number", "boolean"]},
+        },
+        required=["source", "metric", "value"],
+    )
+
+
+def _workout_payload_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "id": {"type": ["string", "null"]},
+            "scheduled_for": {"type": "string"},
+            "workout_type": {
+                "type": "string",
+                "enum": [
+                    "easy_run",
+                    "long_run",
+                    "tempo",
+                    "interval",
+                    "recovery",
+                    "rest",
+                    "strength",
+                    "cross_training",
+                ],
+            },
+            "purpose": {"type": "string"},
+            "planned_duration_minutes": {"type": ["integer", "null"]},
+            "planned_distance_meters": {"type": ["integer", "null"]},
+            "pace_range_seconds_per_km": {
+                "type": ["array", "null"],
+                "items": {"type": "integer"},
+            },
+            "heart_rate_zone": {"type": ["string", "null"]},
+            "status": {"type": "string", "enum": ["planned", "adjusted", "completed", "skipped"]},
+        },
+        required=[
+            "id",
+            "scheduled_for",
+            "workout_type",
+            "purpose",
+            "planned_duration_minutes",
+            "planned_distance_meters",
+            "pace_range_seconds_per_km",
+            "heart_rate_zone",
+            "status",
+        ],
+    )
+
+
+def _memory_evidence_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "source": {"type": "string"},
+            "metric": {"type": "string"},
+            "value": {"type": ["string", "number", "boolean"]},
+        },
+        required=["source", "metric", "value"],
+    )
 
 
 def _validate_arguments(tool_name: str, arguments: dict[str, Any]) -> None:
@@ -267,6 +330,13 @@ def _validate_object(*, schema: dict[str, Any], value: dict[str, Any], path: str
 
 def _validate_value(*, schema: dict[str, Any], value: Any, path: str) -> None:
     expected = schema.get("type")
+    if isinstance(expected, list):
+        matched_type = next((expected_type for expected_type in expected if _matches_type(expected_type, value)), None)
+        if matched_type is None:
+            raise OpenAIModelGatewayError(f"Invalid argument type for {path}")
+        if matched_type != "null":
+            _validate_value(schema={**schema, "type": matched_type}, value=value, path=path)
+        return
     if expected == "object":
         if not isinstance(value, dict):
             raise OpenAIModelGatewayError(f"Invalid argument type for {path}")
@@ -285,3 +355,45 @@ def _validate_value(*, schema: dict[str, Any], value: Any, path: str) -> None:
         raise OpenAIModelGatewayError(f"Invalid argument type for {path}")
     if "enum" in schema and value not in schema["enum"]:
         raise OpenAIModelGatewayError(f"Unsupported argument value for {path}")
+
+
+def _matches_type(expected: str, value: Any) -> bool:
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "number":
+        return isinstance(value, int | float) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    return False
+
+
+def _provider_error_summary(exc: Exception, *, api_key: str | None) -> str:
+    parts = [f"OpenAI model invocation failed: {exc.__class__.__name__}"]
+    for name in ("status_code", "code", "param"):
+        value = getattr(exc, name, None)
+        if value is not None:
+            parts.append(f"{name}={value}")
+    body = getattr(exc, "body", None)
+    detail = None
+    if isinstance(body, dict):
+        detail = body.get("message")
+    elif hasattr(exc, "message"):
+        detail = getattr(exc, "message")
+    if detail:
+        parts.append(f"detail={detail}")
+    return _redact_secrets("; ".join(parts), api_key=api_key)
+
+
+def _redact_secrets(value: str, *, api_key: str | None) -> str:
+    redacted = value
+    if api_key:
+        redacted = redacted.replace(api_key, "[redacted]")
+    return redacted

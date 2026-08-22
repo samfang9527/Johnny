@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: johnny-postgres
+    environment:
+      POSTGRES_USER: johnny
+      POSTGRES_PASSWORD: johnny
+      POSTGRES_DB: johnny
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U johnny -d johnny"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - johnny-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  johnny-postgres-data:

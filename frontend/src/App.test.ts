@@ -130,7 +130,7 @@ describe('Johnny product shell', () => {
     await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
 
     expect(wrapper.text()).toContain('請輸入 Provider account ID')
-    expect(fetch).not.toHaveBeenCalled()
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
   })
 
   it('renders Conversation as a support surface with threads, evidence, and proposed actions', () => {
@@ -168,7 +168,7 @@ describe('Johnny product shell', () => {
     await wrapper.get('[data-testid="conversation-form"]').trigger('submit')
 
     expect(wrapper.text()).toContain('請輸入想問 Johnny 的問題')
-    expect(fetch).not.toHaveBeenCalled()
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
   })
 
   it('does not submit Conversation text while Traditional Chinese IME composition is active', async () => {
@@ -179,7 +179,7 @@ describe('Johnny product shell', () => {
     await textarea.trigger('compositionstart')
     await textarea.trigger('keydown', { key: 'Enter' })
 
-    expect(fetch).not.toHaveBeenCalled()
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
     expect((textarea.element as HTMLTextAreaElement).value).toBe('今天要不要改課表')
   })
 
@@ -202,6 +202,104 @@ describe('Johnny product shell', () => {
       }),
     )
     expect(wrapper.text()).toContain('conversation-run-test')
+  })
+
+  it('hydrates Today, Calendar, and Agent Inbox from backend GET responses when available', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/v1/today')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                next_race: {
+                  name: 'Backend Half Marathon',
+                  race_date: '2026-10-18',
+                  distance_meters: 21097,
+                },
+                scheduled_workouts: [
+                  {
+                    id: 'backend-workout-today',
+                    scheduled_for: '2026-08-22',
+                    workout_type: 'easy_run',
+                    purpose: 'Backend aerobic check-in',
+                    planned_distance_meters: 10000,
+                    planned_duration_minutes: 55,
+                    heart_rate_zone: 'Z2',
+                    status: 'planned',
+                  },
+                ],
+                recovery: {
+                  readiness_label: 'caution',
+                  hrv_status: 'low',
+                },
+                unavailable_signals: ['missing resting heart rate'],
+              },
+            }),
+        } as Response)
+      }
+      if (url.includes('/api/v1/recommendations') && init?.method !== 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: [
+                {
+                  id: 'backend-rec-1',
+                  priority: 'high',
+                  title: 'Backend says keep it easy',
+                  rationale: 'Backend recommendation rationale.',
+                  status: 'pending',
+                  evidence: [{ source: 'backend', metric: 'hrv', value: 'low', summary: 'Backend HRV low' }],
+                  proposed_action: { type: 'no_plan_change', reason: 'No change in backend smoke.' },
+                },
+              ],
+            }),
+        } as Response)
+      }
+      if (url.includes('/api/v1/training-plans')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: [
+                {
+                  id: 'backend-plan-1',
+                  workouts: [
+                    {
+                      id: 'backend-workout-calendar',
+                      scheduled_for: '2026-08-24',
+                      workout_type: 'tempo',
+                      purpose: 'Backend tempo',
+                      planned_duration_minutes: 45,
+                      status: 'planned',
+                    },
+                  ],
+                },
+              ],
+            }),
+        } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: {} }),
+      } as Response)
+    })
+    const wrapper = mount(App, { props: { initialView: 'today' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Backend Half Marathon')
+    expect(wrapper.text()).toContain('Backend says keep it easy')
+    expect(wrapper.text()).toContain('10 km')
+
+    await wrapper.get('[data-testid="recommendation-actions"] button').trigger('click')
+    await flushPromises()
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/recommendations/backend-rec-1/accept',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 
   it('renders Agent Inbox as a pending decision queue with quieter history', () => {

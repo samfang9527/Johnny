@@ -114,6 +114,8 @@ export interface ConversationMessageResponse {
     message: {
       content: string
       recommendation_id?: string | null
+      agent_status?: string
+      agent_output?: string
     }
     run_ref: string
   }

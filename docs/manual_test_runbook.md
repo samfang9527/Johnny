@@ -1,0 +1,171 @@
+# Johnny Manual Test Runbook
+
+This runbook verifies the local MVP companion loop:
+
+```text
+Seed training data -> API analytics context -> companion conversation -> pending recommendation -> user decision -> local smoke evidence
+```
+
+## Prerequisites
+
+- Python environment installed at `./.venv`
+- Frontend dependencies installed under `frontend/node_modules`
+- Docker Desktop or compatible `docker compose`
+- Optional for live model smoke: `OPENAI_API_KEY` or `LLM_API_KEY`
+
+## 1. Start Local PostgreSQL
+
+```bash
+make db-up
+```
+
+Expected:
+
+- `johnny-postgres` container is healthy.
+- PostgreSQL is reachable at `postgresql+psycopg://johnny:johnny@localhost:5432/johnny`.
+
+## 2. Apply Migrations And Seed Demo Data
+
+```bash
+make migrate
+make seed-demo
+```
+
+Expected:
+
+- Alembic upgrades to the latest revision.
+- Seed command prints `Seeded Johnny demo data for user local-user`.
+
+## 3. Start Backend
+
+```bash
+make run-api
+```
+
+Expected:
+
+- FastAPI runs at `http://127.0.0.1:8000`.
+- `curl http://127.0.0.1:8000/health` returns `{"status":"ok","service":"Johnny-api"}`.
+- `curl http://127.0.0.1:8000/ready` returns `{"status":"ready"}`.
+
+## 4. Start Frontend
+
+In a second terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Expected:
+
+- Vite runs at `http://localhost:5173`.
+- The app loads without browser CORS errors.
+
+## 5. Verify Backend-Backed UI Hydration
+
+Open `http://localhost:5173`.
+
+Expected:
+
+- Today page shows seeded backend data such as `Local Half Marathon`, `Demo Build Block` workout context, and `Review today's training context`.
+- Calendar shows seeded workouts from `/api/v1/training-plans`.
+- Agent Inbox shows backend recommendations from `/api/v1/recommendations`.
+
+## 6. Verify Conversation Companion Path
+
+Go to `對話`, enter:
+
+```text
+How should I adjust today's training?
+```
+
+Expected:
+
+- The composer shows `Johnny 已收到問題 · <run id>`.
+- A Johnny response appears in the message thread.
+- Backend creates an `agent_runs` row and a pending recommendation through the `RunningCompanionAgent` tool path.
+
+API check:
+
+```bash
+curl -s -H "Content-Type: application/json" \
+  -H "X-Johnny-User-Id: local-user" \
+  -d '{"content":"How should I adjust today'\''s training?"}' \
+  http://127.0.0.1:8000/api/v1/conversations/messages
+```
+
+Expected:
+
+- Response `data.run_ref` is a real agent run id.
+- Response `data.message.agent_status` is `completed`.
+
+## 7. Verify Recommendation Decision
+
+On Today or Agent Inbox, click `接受調整`.
+
+Expected:
+
+- Button enters a busy state briefly.
+- Recommendation status changes to accepted.
+- `GET /api/v1/recommendations` shows the recommendation with `decision: accepted`.
+
+## 8. Run Local Companion Smoke
+
+```bash
+make smoke-local
+```
+
+Expected:
+
+- Prints `status=completed`.
+- Prints `provider=local`.
+- Prints a non-empty `run_id`.
+- Prints a `recommendation_id`.
+
+## 9. Optional Live OpenAI Smoke
+
+Set live model variables in your shell or `backend/.env`:
+
+```bash
+export LLM_PROVIDER=openai
+export LLM_MODEL=gpt-5-nano
+export OPENAI_API_KEY=...
+```
+
+Then run:
+
+```bash
+make smoke-openai
+```
+
+Expected:
+
+- Prints `status=completed`.
+- Prints `provider=openai`.
+- Records token usage on the `agent_runs` row when OpenAI returns usage.
+
+If the command exits with code `2`, required OpenAI settings are missing.
+
+## 10. Cleanup
+
+Stop app processes with `Ctrl+C`.
+
+Stop PostgreSQL without deleting data:
+
+```bash
+make db-down
+```
+
+Delete the Docker volume only when you intentionally want a clean database:
+
+```bash
+docker volume rm johnny_johnny-postgres-data
+```
+
+## Current Manual-Test Limits
+
+- Local mode is deterministic and network-free; it proves runtime wiring, not model quality.
+- Live OpenAI smoke is opt-in and depends on the configured model and API key.
+- Notification delivery still verifies at application/unit-test level only; no production LINE delivery worker is part of this runbook.
+- Conversation history is currently client-local after submit; persisted conversation threads remain future work.

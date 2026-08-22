@@ -161,63 +161,59 @@ class RunningCompanionAgent:
         sequence_number = len(self._run_store.list_steps_for_run(run.id)) + 1
         recommendation_id: str | None = None
         allowed_tools = set(allowed_tools or request.tools)
+        token_usage = None
         try:
             response = self._model_gateway.complete(request)
             run = _merge_model_metadata(run, response)
-            for tool_call in response.tool_calls:
-                if tool_call.tool_name not in allowed_tools:
-                    self._run_store.record_step(
-                        AgentRunStep(
-                            agent_run_id=run.id,
-                            sequence_number=sequence_number,
-                            step_type="safety",
-                            name="blockUnauthorizedTool",
-                            status="completed",
-                            input_summary=tool_call.tool_name,
-                            output_summary="Tool is not allowed for this workflow.",
-                            payload={"blocked_tool": tool_call.tool_name},
-                        )
-                    )
-                    sequence_number += 1
-                    continue
-                if safety is not None and _blocked_by_safety(safety, tool_call.tool_name, tool_call.arguments):
-                    self._run_store.record_step(
-                        AgentRunStep(
-                            agent_run_id=run.id,
-                            sequence_number=sequence_number,
-                            step_type="safety",
-                            name="blockUnsafeAction",
-                            status="completed",
-                            input_summary=tool_call.tool_name,
-                            output_summary=safety.guidance,
-                            payload={"blocked_tool": tool_call.tool_name},
-                        )
-                    )
-                    sequence_number += 1
-                    continue
-
-                tool = self._tools.get(tool_call.tool_name)
-                arguments = dict(tool_call.arguments)
-                arguments.setdefault("agent_run_id", run.id)
-                payload = tool.run(user_id=user_id, arguments=arguments)
-                recommendation_id = _recommendation_id_from_payload(payload) or recommendation_id
-                self._run_store.record_step(
-                    AgentRunStep.complete_tool_call(
-                        agent_run_id=run.id,
-                        sequence_number=sequence_number,
-                        tool_name=tool_call.tool_name,
-                        input_summary=_summary_arguments(arguments),
-                        output_summary=_summary_payload(payload),
-                        payload=payload,
-                    )
+            token_usage = response.token_usage
+            tool_results = []
+            recommendation_id, sequence_number, tool_results = self._run_tool_calls(
+                run=run,
+                user_id=user_id,
+                response=response,
+                safety=safety,
+                allowed_tools=allowed_tools,
+                sequence_number=sequence_number,
+                recommendation_id=recommendation_id,
+            )
+            follow_up_tools = _follow_up_write_tools(request.workflow_name, allowed_tools)
+            if recommendation_id is None and tool_results and follow_up_tools:
+                follow_up = ModelRequest(
+                    user_id=request.user_id,
+                    workflow_name=request.workflow_name,
+                    prompt_version=request.prompt_version,
+                    messages=request.messages
+                    + (
+                        {
+                            "role": "user",
+                            "content": (
+                                "Use the Johnny tool results in the structured context to create a pending "
+                                "recommendation now. Call one of the available write tools."
+                            ),
+                        },
+                    ),
+                    tools=follow_up_tools,
+                    context={**(request.context or {}), "tool_results": tool_results},
+                    require_tool_call=True,
                 )
-                sequence_number += 1
+                response = self._model_gateway.complete(follow_up)
+                run = _merge_model_metadata(run, response)
+                token_usage = _sum_token_usage(token_usage, response.token_usage)
+                recommendation_id, sequence_number, _ = self._run_tool_calls(
+                    run=run,
+                    user_id=user_id,
+                    response=response,
+                    safety=safety,
+                    allowed_tools=set(follow_up_tools),
+                    sequence_number=sequence_number,
+                    recommendation_id=recommendation_id,
+                )
 
-            output_summary = safety.guidance if safety and safety.requires_conservative_response else response.content
+            output_summary = _run_output_summary(response.content, safety=safety, recommendation_id=recommendation_id)
             return self._run_store.complete_run(
                 run.complete(
                     output_summary=output_summary,
-                    token_usage=response.token_usage,
+                    token_usage=token_usage,
                     recommendation_id=recommendation_id,
                 )
             )
@@ -238,6 +234,75 @@ class RunningCompanionAgent:
                     error_message=str(exc),
                 )
             )
+
+    def _run_tool_calls(
+        self,
+        *,
+        run: AgentRun,
+        user_id: str,
+        response: ModelResponse,
+        safety: SafetyDecision | None,
+        allowed_tools: set[str],
+        sequence_number: int,
+        recommendation_id: str | None,
+    ) -> tuple[str | None, int, list[dict]]:
+        tool_results = []
+        for tool_call in response.tool_calls:
+            if tool_call.tool_name not in allowed_tools:
+                self._run_store.record_step(
+                    AgentRunStep(
+                        agent_run_id=run.id,
+                        sequence_number=sequence_number,
+                        step_type="safety",
+                        name="blockUnauthorizedTool",
+                        status="completed",
+                        input_summary=tool_call.tool_name,
+                        output_summary="Tool is not allowed for this workflow.",
+                        payload={"blocked_tool": tool_call.tool_name},
+                    )
+                )
+                sequence_number += 1
+                continue
+            if safety is not None and _blocked_by_safety(safety, tool_call.tool_name, tool_call.arguments):
+                self._run_store.record_step(
+                    AgentRunStep(
+                        agent_run_id=run.id,
+                        sequence_number=sequence_number,
+                        step_type="safety",
+                        name="blockUnsafeAction",
+                        status="completed",
+                        input_summary=tool_call.tool_name,
+                        output_summary=safety.guidance,
+                        payload={"blocked_tool": tool_call.tool_name},
+                    )
+                )
+                sequence_number += 1
+                continue
+
+            tool = self._tools.get(tool_call.tool_name)
+            arguments = dict(tool_call.arguments)
+            arguments.setdefault("agent_run_id", run.id)
+            payload = tool.run(user_id=user_id, arguments=arguments)
+            tool_results.append(
+                {
+                    "tool_name": tool_call.tool_name,
+                    "arguments": arguments,
+                    "output": payload,
+                }
+            )
+            recommendation_id = _recommendation_id_from_payload(payload) or recommendation_id
+            self._run_store.record_step(
+                AgentRunStep.complete_tool_call(
+                    agent_run_id=run.id,
+                    sequence_number=sequence_number,
+                    tool_name=tool_call.tool_name,
+                    input_summary=_summary_arguments(arguments),
+                    output_summary=_summary_payload(payload),
+                    payload=payload,
+                )
+            )
+            sequence_number += 1
+        return recommendation_id, sequence_number, tool_results
 
 
 def _merge_model_metadata(run: AgentRun, response: ModelResponse) -> AgentRun:
@@ -296,6 +361,44 @@ def _summary_payload(payload: dict) -> str:
     if recommendation_id:
         return f"recommendation_id={recommendation_id}"
     return ", ".join(sorted(payload.keys()))
+
+
+def _run_output_summary(content: str, *, safety: SafetyDecision | None, recommendation_id: str | None) -> str:
+    if safety and safety.requires_conservative_response:
+        return safety.guidance
+    if content:
+        return content
+    if recommendation_id:
+        return f"Created recommendation {recommendation_id}."
+    return ""
+
+
+def _sum_token_usage(left, right):
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return type(left)(
+        input_tokens=_sum_optional_int(left.input_tokens, right.input_tokens),
+        output_tokens=_sum_optional_int(left.output_tokens, right.output_tokens),
+        total_tokens=_sum_optional_int(left.total_tokens, right.total_tokens),
+    )
+
+
+def _sum_optional_int(left: int | None, right: int | None) -> int | None:
+    if left is None and right is None:
+        return None
+    return (left or 0) + (right or 0)
+
+
+def _follow_up_write_tools(workflow_name: str, allowed_tools: set[str]) -> tuple[str, ...]:
+    if workflow_name == "daily_recommendation":
+        candidates = DAILY_WRITE_TOOL_NAMES
+    elif workflow_name == "coach_conversation":
+        candidates = {"createRecommendation"}
+    else:
+        candidates = frozenset()
+    return tuple(sorted(allowed_tools & candidates))
 
 
 def _allowed_registered_tools(tool_names: tuple[str, ...], workflow_name: str) -> tuple[str, ...]:

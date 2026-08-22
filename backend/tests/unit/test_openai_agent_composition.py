@@ -91,7 +91,13 @@ def test_build_running_companion_agent_uses_openai_gateway_and_persists_metadata
                     SimpleNamespace(
                         type="function_call",
                         name="createRecommendation",
-                        arguments='{"title": "Rest", "rationale": "Recovery", "action": {"type": "no_plan_change", "reason": "Rest"}}',
+                        arguments=(
+                            '{"title": "Rest", "rationale": "Recovery", '
+                            '"recommendation_type": "informational", '
+                            '"priority": "medium", '
+                            '"evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}], '
+                            '"action": {"type": "no_plan_change", "reason": "Rest"}}'
+                        ),
                     )
                 ],
                 usage=SimpleNamespace(input_tokens=10, output_tokens=6, total_tokens=16),

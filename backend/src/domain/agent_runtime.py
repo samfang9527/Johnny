@@ -318,6 +318,7 @@ class ModelRequest:
     messages: tuple[dict[str, str], ...]
     tools: tuple[str, ...] = ()
     context: dict[str, Any] | None = None
+    require_tool_call: bool = False
 
     def __post_init__(self) -> None:
         if not self.user_id:
@@ -338,6 +339,7 @@ class ModelRequest:
             "messages": list(self.messages),
             "tools": list(self.tools),
             "context": dict(self.context or {}),
+            "require_tool_call": self.require_tool_call,
         }
 
 

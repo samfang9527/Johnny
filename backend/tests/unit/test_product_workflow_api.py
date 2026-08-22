@@ -120,11 +120,33 @@ def test_conversation_route_rejects_empty_and_returns_run_reference() -> None:
 
     invalid = client.post("/api/v1/conversations/messages", headers={"X-Johnny-User-Id": "user-1"}, json={"content": "   "})
     valid = client.post("/api/v1/conversations/messages", headers={"X-Johnny-User-Id": "user-1"}, json={"content": "How am I doing?"})
+    recommendations = client.get("/api/v1/recommendations", headers={"X-Johnny-User-Id": "user-1"})
 
     assert invalid.status_code == 422
     assert invalid.json()["error"]["code"] == "validation_error"
     assert valid.status_code == 200
-    assert valid.json()["data"]["run_ref"].startswith("conversation-run-")
+    assert valid.json()["data"]["run_ref"]
+    assert valid.json()["data"]["message"]["agent_status"] == "completed"
+    assert valid.json()["data"]["message"]["agent_output"]
+    assert recommendations.status_code == 200
+    assert recommendations.json()["data"][0]["title"] == "Review today's training context"
+
+
+def test_api_allows_local_vite_origin_for_browser_requests() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+
+    response = client.options(
+        "/api/v1/conversations/messages",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
 def test_integration_webhook_ingests_provider_payloads_and_counts_duplicates() -> None:

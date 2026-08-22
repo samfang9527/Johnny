@@ -60,6 +60,16 @@ def test_openai_gateway_maps_request_tools_and_context() -> None:
     assert created["tools"][0]["strict"] is True
     assert create_schema["additionalProperties"] is False
     assert "title" in create_schema["required"]
+    assert create_schema["properties"]["recommendation_type"]["enum"] == [
+        "informational",
+        "recovery_warning",
+        "workout_adjustment",
+    ]
+    assert create_schema["properties"]["evidence"]["items"]["properties"]["value"]["type"] == [
+        "string",
+        "number",
+        "boolean",
+    ]
     assert created["tools"][1]["strict"] is True
     assert recovery_schema == {
         "type": "object",
@@ -67,6 +77,8 @@ def test_openai_gateway_maps_request_tools_and_context() -> None:
         "required": ["anchor_date"],
         "additionalProperties": False,
     }
+    for tool in created["tools"]:
+        _assert_strict_schema(tool["parameters"])
     assert created["tools"] == [
         {
             "type": "function",
@@ -85,6 +97,50 @@ def test_openai_gateway_maps_request_tools_and_context() -> None:
     ]
 
 
+def test_openai_gateway_can_require_one_of_the_allowed_tools() -> None:
+    client = FakeOpenAIClient(response=_response())
+    gateway = OpenAIModelGateway(client=client, model="gpt-5")
+
+    gateway.complete(
+        ModelRequest(
+            user_id="user-1",
+            workflow_name="daily_recommendation",
+            prompt_version="running-companion-v1",
+            messages=({"role": "user", "content": "Create a recommendation."},),
+            tools=("createRecommendation",),
+            require_tool_call=True,
+        )
+    )
+
+    assert client.responses.calls[0]["tool_choice"] == {
+        "type": "allowed_tools",
+        "mode": "required",
+        "tools": [{"type": "function", "name": "createRecommendation"}],
+    }
+
+
+def test_openai_gateway_all_tool_schemas_are_strict_for_openai() -> None:
+    all_tool_names = (
+        "getAthleteContext",
+        "getTrainingPlan",
+        "getTodayWorkout",
+        "getRecentActivities",
+        "getRecoveryState",
+        "getTrainingMetrics",
+        "createRecommendation",
+        "proposeWorkoutAdjustment",
+        "storeMemoryCandidate",
+    )
+    client = FakeOpenAIClient(response=_response())
+    gateway = OpenAIModelGateway(client=client, model="gpt-5")
+
+    gateway.complete(_request_with_tools(all_tool_names))
+
+    created = client.responses.calls[0]
+    for tool in created["tools"]:
+        _assert_strict_schema(tool["parameters"])
+
+
 def test_openai_gateway_parses_content_tool_calls_and_token_usage() -> None:
     response = _response(
         output_text="Create a rest recommendation.",
@@ -94,7 +150,9 @@ def test_openai_gateway_parses_content_tool_calls_and_token_usage() -> None:
                 name="createRecommendation",
                 arguments=(
                     '{"title": "Rest today", "rationale": "Recovery indicates rest.", '
+                    '"recommendation_type": "informational", '
                     '"priority": "medium", '
+                    '"evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}], '
                     '"action": {"type": "no_plan_change", "reason": "Rest today."}}'
                 ),
             )
@@ -116,7 +174,9 @@ def test_openai_gateway_parses_content_tool_calls_and_token_usage() -> None:
     assert result.tool_calls[0].arguments == {
         "title": "Rest today",
         "rationale": "Recovery indicates rest.",
+        "recommendation_type": "informational",
         "priority": "medium",
+        "evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}],
         "action": {"type": "no_plan_change", "reason": "Rest today."},
     }
 
@@ -133,6 +193,34 @@ def test_openai_gateway_wraps_provider_errors_without_secret_values() -> None:
 
     message = str(exc_info.value)
     assert "OpenAI model invocation failed" in message
+    assert "sk-secret-key" not in message
+
+
+def test_openai_gateway_includes_safe_provider_error_details() -> None:
+    provider_error = RuntimeError("bad request")
+    provider_error.status_code = 400
+    provider_error.code = "invalid_function_parameters"
+    provider_error.param = "tools[0].parameters"
+    provider_error.body = {
+        "message": "Invalid schema for function. Secret sk-secret-key must not be stored.",
+        "code": "invalid_function_parameters",
+        "param": "tools[0].parameters",
+    }
+    gateway = OpenAIModelGateway(
+        client=FakeOpenAIClient(error=provider_error),
+        model="gpt-5",
+        api_key="sk-secret-key",
+    )
+
+    with pytest.raises(OpenAIModelGatewayError) as exc_info:
+        gateway.complete(_minimal_request())
+
+    message = str(exc_info.value)
+    assert "Bad request" not in message
+    assert "status_code=400" in message
+    assert "code=invalid_function_parameters" in message
+    assert "param=tools[0].parameters" in message
+    assert "Invalid schema for function" in message
     assert "sk-secret-key" not in message
 
 
@@ -172,6 +260,9 @@ def test_openai_gateway_rejects_extra_tool_arguments() -> None:
                 name="createRecommendation",
                 arguments=(
                     '{"title": "Rest", "rationale": "Recovery", '
+                    '"recommendation_type": "informational", '
+                    '"priority": "medium", '
+                    '"evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}], '
                     '"action": {"type": "no_plan_change", "reason": "Rest"}, '
                     '"agent_run_id": "model-controlled"}'
                 ),
@@ -212,3 +303,16 @@ def _response(**overrides):
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def _assert_strict_schema(schema: dict) -> None:
+    if schema.get("type") != "object":
+        return
+    assert schema.get("additionalProperties") is False
+    properties = schema.get("properties", {})
+    assert sorted(schema.get("required", [])) == sorted(properties)
+    for child in properties.values():
+        if child.get("type") == "object":
+            _assert_strict_schema(child)
+        if child.get("type") == "array" and child.get("items", {}).get("type") == "object":
+            _assert_strict_schema(child["items"])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 def get_database_url() -> str:
+    load_local_env()
     return os.getenv("DATABASE_URL", "sqlite:///./app.db")
 
 
@@ -23,3 +25,16 @@ def create_database_engine(database_url: str | None = None) -> Engine:
 
 def create_session_factory(database_url: str | None = None) -> sessionmaker[Session]:
     return sessionmaker(bind=create_database_engine(database_url), expire_on_commit=False)
+
+
+def load_local_env() -> None:
+    if os.getenv("ENV") == "test":
+        return
+    env_file = Path(__file__).resolve().parents[3] / ".env"
+    if not env_file.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(env_file, override=False)
