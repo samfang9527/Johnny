@@ -13,6 +13,20 @@ from src.domain.agent_runtime import (
 )
 
 
+READ_TOOL_NAMES = frozenset(
+    {
+        "getAthleteContext",
+        "getTrainingPlan",
+        "getTodayWorkout",
+        "getRecentActivities",
+        "getRecoveryState",
+        "getTrainingMetrics",
+    }
+)
+DAILY_WRITE_TOOL_NAMES = frozenset({"createRecommendation", "proposeWorkoutAdjustment"})
+CONVERSATION_WRITE_TOOL_NAMES = frozenset({"createRecommendation", "storeMemoryCandidate"})
+
+
 class FakeModelGateway:
     def __init__(self, *responses: ModelResponse) -> None:
         self._responses = list(responses)
@@ -58,10 +72,10 @@ class RunningCompanionAgent:
                 {"role": "system", "content": "Use available Johnny tools before creating recommendations."},
                 {"role": "user", "content": f"Create today's running recommendation for {anchor_date.isoformat()}."},
             ),
-            tools=self._tools.names(),
+            tools=_allowed_registered_tools(self._tools.names(), "daily_recommendation"),
             context={"anchor_date": anchor_date.isoformat()},
         )
-        return self._run_model_workflow(run=run, request=request, user_id=user_id)
+        return self._run_model_workflow(run=run, request=request, user_id=user_id, allowed_tools=set(request.tools))
 
     def run_conversation(self, *, user_id: str, message: str) -> AgentRun:
         safety = SafetyDecision.classify(message)
@@ -95,10 +109,16 @@ class RunningCompanionAgent:
                 {"role": "system", "content": "Use conservative safety boundaries for pain or medical topics."},
                 {"role": "user", "content": message},
             ),
-            tools=self._tools.names(),
+            tools=_allowed_registered_tools(self._tools.names(), "coach_conversation"),
             context={"safety": safety.category},
         )
-        return self._run_model_workflow(run=run, request=request, user_id=user_id, safety=safety)
+        return self._run_model_workflow(
+            run=run,
+            request=request,
+            user_id=user_id,
+            safety=safety,
+            allowed_tools=set(request.tools),
+        )
 
     def _start_run(
         self,
@@ -136,13 +156,30 @@ class RunningCompanionAgent:
         request: ModelRequest,
         user_id: str,
         safety: SafetyDecision | None = None,
+        allowed_tools: set[str] | None = None,
     ) -> AgentRun:
         sequence_number = len(self._run_store.list_steps_for_run(run.id)) + 1
         recommendation_id: str | None = None
+        allowed_tools = set(allowed_tools or request.tools)
         try:
             response = self._model_gateway.complete(request)
             run = _merge_model_metadata(run, response)
             for tool_call in response.tool_calls:
+                if tool_call.tool_name not in allowed_tools:
+                    self._run_store.record_step(
+                        AgentRunStep(
+                            agent_run_id=run.id,
+                            sequence_number=sequence_number,
+                            step_type="safety",
+                            name="blockUnauthorizedTool",
+                            status="completed",
+                            input_summary=tool_call.tool_name,
+                            output_summary="Tool is not allowed for this workflow.",
+                            payload={"blocked_tool": tool_call.tool_name},
+                        )
+                    )
+                    sequence_number += 1
+                    continue
                 if safety is not None and _blocked_by_safety(safety, tool_call.tool_name, tool_call.arguments):
                     self._run_store.record_step(
                         AgentRunStep(
@@ -259,3 +296,14 @@ def _summary_payload(payload: dict) -> str:
     if recommendation_id:
         return f"recommendation_id={recommendation_id}"
     return ", ".join(sorted(payload.keys()))
+
+
+def _allowed_registered_tools(tool_names: tuple[str, ...], workflow_name: str) -> tuple[str, ...]:
+    registered = set(tool_names)
+    if workflow_name == "daily_recommendation":
+        allowed = READ_TOOL_NAMES | DAILY_WRITE_TOOL_NAMES
+    elif workflow_name == "coach_conversation":
+        allowed = READ_TOOL_NAMES | CONVERSATION_WRITE_TOOL_NAMES
+    else:
+        allowed = READ_TOOL_NAMES
+    return tuple(sorted(registered & allowed))

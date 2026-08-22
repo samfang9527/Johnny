@@ -28,6 +28,12 @@ Prepare local configuration:
 cp backend/.env.example backend/.env
 ```
 
+OpenAI is the first production LLM provider for the Running Companion Agent. To enable OpenAI-backed agent execution locally, keep `LLM_PROVIDER=openai`, set `LLM_MODEL` to the model you want Johnny to use, and provide either `OPENAI_API_KEY` or `LLM_API_KEY` in your shell or uncommitted `backend/.env`.
+
+LLM inputs and outputs are treated as untrusted. Johnny exposes only workflow-allowed tools, sends dynamic context as data rather than elevated instructions, validates OpenAI function-call arguments against strict schemas, and performs server-side policy checks before executing any model-requested tool.
+
+Normal backend tests stay network-free by using fake model gateways. Any live OpenAI smoke check should be opt-in and run only when an API key, model, and explicit smoke command are configured for the local environment.
+
 Run the API locally:
 
 ```bash
