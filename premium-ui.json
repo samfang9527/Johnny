@@ -1,0 +1,15 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["frontend/src"],
+  "locale": "zh-TW",
+  "requiredCapabilities": ["Date", "Form", "Scrollbar"],
+  "ownership": {
+    "Date": "native"
+  },
+  "requiredCommands": ["test", "build", "tokens"],
+  "commands": {
+    "test": "cd frontend && npm run test",
+    "build": "cd frontend && npm run build",
+    "tokens": "cd frontend && npm run verify:tokens"
+  }
+}

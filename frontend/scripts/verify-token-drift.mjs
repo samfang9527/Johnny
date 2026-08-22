@@ -4,15 +4,15 @@ import { join, relative } from 'node:path'
 const srcRoot = new URL('../src/', import.meta.url)
 const allowedFile = 'styles.css'
 const johnnyPalette = [
-  '#5aa7b8',
-  '#101820',
-  '#0b1117',
-  '#2b3138',
-  '#f4f1e7',
-  '#b7c1ba',
-  '#f2b84b',
-  '#b93e35',
-  '#74a66a',
+  '#83b7a5',
+  '#171b1a',
+  '#111514',
+  '#2f3430',
+  '#f6efe4',
+  '#c8c0b3',
+  '#e8b86d',
+  '#b85a50',
+  '#8fb879',
   '#ffffff',
 ]
 

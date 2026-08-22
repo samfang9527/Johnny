@@ -3,8 +3,10 @@ import { computed, onMounted, ref } from 'vue'
 import {
   acceptRecommendation,
   connectIntegration,
+  createRaceGoal,
   discussRecommendation,
   getTodayContext,
+  listRaceGoals,
   listRecommendations,
   listTrainingPlans,
   rejectRecommendation,
@@ -17,6 +19,7 @@ import RecommendationActions from './components/RecommendationActions.vue'
 import StatusBadge from './components/StatusBadge.vue'
 import {
   conversationThreads as fixtureConversationThreads,
+  futureRaces as fixtureFutureRaces,
   inboxRecommendations as fixtureInboxRecommendations,
   plannedWorkouts as fixtureWorkouts,
   providers,
@@ -61,9 +64,8 @@ const props = withDefaults(
 
 const navItems: Array<{ key: ViewKey; label: string }> = [
   { key: 'today', label: '今日' },
-  { key: 'calendar', label: '課表' },
+  { key: 'calendar', label: '訓練安排' },
   { key: 'inbox', label: 'Agent 收件匣' },
-  { key: 'conversation', label: '對話' },
   { key: 'sources', label: '資料來源' },
 ]
 
@@ -97,6 +99,15 @@ const conversationBusy = ref(false)
 const isComposing = ref(false)
 const linkedRecommendation = ref<LinkedRecommendationContext | null>(null)
 const inboxBusyRecommendationId = ref('')
+const inboxBusyAction = ref('')
+const recommendationDecisions = ref<Record<string, RecommendationStatus>>({})
+const raceEntries = ref<RaceSummary[]>(fixtureFutureRaces)
+const raceName = ref('')
+const raceDate = ref('')
+const raceDistance = ref('')
+const raceGoal = ref('')
+const raceFormError = ref('')
+const raceFormMessage = ref('')
 
 const activeTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label || '今日')
 const raceSummary = computed(() => apiRaceSummary.value ?? fixtureRaceSummary)
@@ -106,11 +117,18 @@ const unavailableSignals = computed(() => (apiUnavailableSignals.value.length ? 
 const recommendation = computed(() => apiRecommendation.value ?? fixtureRecommendation)
 const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : fixtureWorkouts))
 const displayThreads = computed(() => props.conversationThreads ?? fixtureConversationThreads)
-const displayInboxItems = computed(() => props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : fixtureInboxRecommendations))
+const displayInboxItems = computed(() => {
+  const source = props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : fixtureInboxRecommendations)
+  return source.map((item) => {
+    const status = recommendationDecisions.value[item.id]
+    return status ? { ...item, status, statusLabel: statusLabel(status) } : item
+  })
+})
 const activeThreadId = ref(displayThreads.value[0]?.id ?? '')
 const activeThread = computed(() => displayThreads.value.find((thread) => thread.id === activeThreadId.value) ?? displayThreads.value[0])
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
 const historicalInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status !== 'pending'))
+const raceCalendarMonths = computed(() => buildRaceCalendarMonths(raceEntries.value))
 
 function showView(view: ViewKey) {
   activeView.value = view
@@ -249,8 +267,69 @@ async function submitConversation() {
   }
 }
 
+async function handleInboxAccept(item: InboxRecommendation) {
+  inboxBusyRecommendationId.value = item.id
+  inboxBusyAction.value = 'accept'
+  try {
+    await acceptRecommendation(item.id)
+    recommendationDecisions.value = { ...recommendationDecisions.value, [item.id]: 'accepted' }
+  } finally {
+    inboxBusyRecommendationId.value = ''
+    inboxBusyAction.value = ''
+  }
+}
+
+async function handleInboxKeep(item: InboxRecommendation) {
+  inboxBusyRecommendationId.value = item.id
+  inboxBusyAction.value = 'keep'
+  try {
+    await rejectRecommendation(item.id)
+    recommendationDecisions.value = { ...recommendationDecisions.value, [item.id]: 'rejected' }
+  } finally {
+    inboxBusyRecommendationId.value = ''
+    inboxBusyAction.value = ''
+  }
+}
+
 function handleActionPlaceholder() {
-  providerMessage.value = '這個決策會在下一階段同步到訓練計畫。'
+  providerMessage.value = '這個決策會在下一階段同步到訓練安排。'
+}
+
+async function submitRaceEntry() {
+  raceFormError.value = ''
+  raceFormMessage.value = ''
+  if (!raceName.value.trim() || !raceDate.value) {
+    raceFormError.value = '請輸入名稱與日期'
+    return
+  }
+
+  const distanceMeters = parseDistanceMeters(raceDistance.value)
+  if (!distanceMeters) {
+    raceFormError.value = '請輸入距離，例如 Half Marathon、Marathon 或 10 km'
+    return
+  }
+
+  try {
+    const response = await createRaceGoal({
+      name: raceName.value.trim(),
+      race_date: raceDate.value,
+      distance_meters: distanceMeters,
+      target_finish_seconds: parseTargetFinishSeconds(raceGoal.value),
+      priority: 'primary',
+      status: 'planned',
+    })
+    const created = mapRaceGoal(response.data)
+    if (created) {
+      raceEntries.value = [...raceEntries.value.filter((race) => `${race.name}-${race.date}` !== `${created.name}-${created.date}`), created]
+    }
+    raceName.value = ''
+    raceDate.value = ''
+    raceDistance.value = ''
+    raceGoal.value = ''
+    raceFormMessage.value = '賽事已加入訓練安排'
+  } catch {
+    raceFormError.value = '訓練安排儲存失敗，請稍後再試。'
+  }
 }
 
 async function handleInboxDiscuss(item: InboxRecommendation) {
@@ -282,10 +361,11 @@ onMounted(() => {
 
 async function hydrateFromBackend() {
   const anchorDate = new Date().toISOString().slice(0, 10)
-  const [todayResult, recommendationsResult, plansResult] = await Promise.allSettled([
+  const [todayResult, recommendationsResult, plansResult, racesResult] = await Promise.allSettled([
     getTodayContext(anchorDate),
     listRecommendations(),
     listTrainingPlans(),
+    listRaceGoals(anchorDate, sixMonthWindowEnd(anchorDate)),
   ])
 
   if (todayResult.status === 'fulfilled') {
@@ -296,6 +376,9 @@ async function hydrateFromBackend() {
   }
   if (plansResult.status === 'fulfilled') {
     applyTrainingPlansPayload(Array.isArray(plansResult.value.data) ? plansResult.value.data : [])
+  }
+  if (racesResult.status === 'fulfilled') {
+    applyRaceGoalsPayload(Array.isArray(racesResult.value.data) ? racesResult.value.data : [])
   }
 }
 
@@ -352,6 +435,33 @@ function applyRecommendationsPayload(items: Array<Record<string, unknown>>) {
 function applyTrainingPlansPayload(items: Array<Record<string, unknown>>) {
   const workouts = items.flatMap((plan) => (Array.isArray(plan.workouts) ? plan.workouts : []))
   apiWorkouts.value = workouts.map(mapWorkout).filter((workout): workout is WorkoutSummary => workout !== null)
+}
+
+function applyRaceGoalsPayload(items: Array<Record<string, unknown>>) {
+  const mapped = items.map(mapRaceGoal).filter((race): race is RaceSummary => race !== null)
+  if (mapped.length) {
+    raceEntries.value = mapped
+  }
+}
+
+function mapRaceGoal(raw: unknown): RaceSummary | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+  const race = raw as Record<string, unknown>
+  const name = String(race.name || '')
+  const raceDateValue = String(race.race_date || '')
+  const distanceMeters = Number(race.distance_meters || 0)
+  if (!name || !raceDateValue || !Number.isFinite(distanceMeters) || distanceMeters <= 0) {
+    return null
+  }
+  return {
+    name,
+    date: raceDateValue,
+    distance: formatDistance(distanceMeters),
+    goal: formatTargetFinish(race.target_finish_seconds) || String(race.priority || race.status || 'planned'),
+    daysRemaining: daysUntil(raceDateValue),
+  }
 }
 
 function mapWorkout(raw: unknown): WorkoutSummary | null {
@@ -459,9 +569,26 @@ function statusLabel(status: RecommendationStatus): string {
     return '已接受'
   }
   if (status === 'rejected') {
-    return '已拒絕'
+    return '已保留課表'
   }
   return '已套用'
+}
+
+function buildRaceCalendarMonths(races: RaceSummary[]) {
+  const anchor = new Date()
+  const firstMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
+  return Array.from({ length: 6 }, (_, offset) => {
+    const monthStart = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + offset, 1)
+    const monthKey = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`
+    return {
+      key: monthKey,
+      label: monthStart.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long' }),
+      races: races
+        .filter((race) => race.date.startsWith(monthKey))
+        .map((race) => ({ ...race, daysRemaining: daysUntil(race.date) }))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    }
+  })
 }
 
 function formatWorkoutType(value: string): string {
@@ -482,6 +609,61 @@ function formatDistance(meters: number): string {
     return 'Marathon'
   }
   return `${Number((meters / 1000).toFixed(1)).toString()} km`
+}
+
+function parseDistanceMeters(value: string): number | null {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) {
+    return null
+  }
+  if (normalized.includes('half') || normalized.includes('半馬')) {
+    return 21097
+  }
+  if (normalized.includes('marathon') || normalized.includes('全馬')) {
+    return 42195
+  }
+  const kmMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(?:k|km|公里)/)
+  if (kmMatch) {
+    return Math.round(Number(kmMatch[1]) * 1000)
+  }
+  const meters = Number(normalized)
+  return Number.isFinite(meters) && meters > 0 ? Math.round(meters) : null
+}
+
+function parseTargetFinishSeconds(value: string): number | undefined {
+  const normalized = value.trim().replace(/^sub\s*/i, '')
+  if (!normalized) {
+    return undefined
+  }
+  const parts = normalized.split(':').map((part) => Number(part))
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) {
+    return undefined
+  }
+  if (parts.length === 2) {
+    const [hoursOrMinutes, minutesOrSeconds] = parts
+    return hoursOrMinutes >= 10 ? hoursOrMinutes * 60 + minutesOrSeconds : hoursOrMinutes * 3600 + minutesOrSeconds * 60
+  }
+  if (parts.length === 3) {
+    const [hours, minutes, seconds] = parts
+    return hours * 3600 + minutes * 60 + seconds
+  }
+  return undefined
+}
+
+function formatTargetFinish(value: unknown): string {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return ''
+  }
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const remainingSeconds = Math.floor(seconds % 60)
+  if (hours > 0) {
+    return remainingSeconds > 0
+      ? `Sub ${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+      : `Sub ${hours}:${String(minutes).padStart(2, '0')}`
+  }
+  return `Sub ${minutes}:${String(remainingSeconds).padStart(2, '0')}`
 }
 
 function formatWeekday(value: string): string {
@@ -505,28 +687,36 @@ function daysUntil(value: string): number {
   const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00').getTime()
   return Math.max(0, Math.ceil((target - today) / 86_400_000))
 }
+
+function sixMonthWindowEnd(anchorDate: string): string {
+  const anchor = new Date(`${anchorDate}T00:00:00`)
+  const end = new Date(anchor.getFullYear(), anchor.getMonth() + 6, 0)
+  return end.toISOString().slice(0, 10)
+}
 </script>
 
 <template>
   <div class="app-shell">
     <header class="top-bar">
-      <div>
-        <p class="section-label">Running Companion</p>
-        <h1>Johnny</h1>
+      <div class="top-bar__inner">
+        <div class="brand-lockup">
+          <p class="section-label">Running Companion</p>
+          <h1>Johnny</h1>
+        </div>
+        <nav class="top-nav" aria-label="主要導覽">
+          <button
+            v-for="item in navItems"
+            :key="item.key"
+            :data-view="item.key === 'sources' ? 'sources' : item.key"
+            :class="{ 'top-nav__item--active': activeView === item.key }"
+            class="top-nav__item"
+            type="button"
+            @click="showView(item.key)"
+          >
+            {{ item.label }}
+          </button>
+        </nav>
       </div>
-      <nav class="top-nav" aria-label="主要導覽">
-        <button
-          v-for="item in navItems"
-          :key="item.key"
-          :data-view="item.key === 'sources' ? 'sources' : item.key"
-          :class="{ 'top-nav__item--active': activeView === item.key }"
-          class="top-nav__item"
-          type="button"
-          @click="showView(item.key)"
-        >
-          {{ item.label }}
-        </button>
-      </nav>
     </header>
 
     <main class="main-surface">
@@ -558,14 +748,14 @@ function daysUntil(value: string): number {
         </article>
 
         <template v-else>
-        <article class="surface-card race-card">
+        <article class="surface-card today-top-card race-card">
           <p class="section-label">下一場比賽</p>
           <h3>{{ raceSummary.name }}</h3>
           <p class="race-card__count">{{ raceSummary.daysRemaining }} 天</p>
           <p>{{ raceSummary.distance }} · {{ raceSummary.goal }} · {{ raceSummary.date }}</p>
         </article>
 
-        <article class="surface-card workout-card">
+        <article class="surface-card today-top-card workout-card">
           <p class="section-label">今日課表</p>
           <h3>{{ todayWorkout.type }}</h3>
           <p>{{ todayWorkout.purpose }}</p>
@@ -576,7 +766,7 @@ function daysUntil(value: string): number {
           </div>
         </article>
 
-        <article class="surface-card evidence-card">
+        <article class="surface-card today-top-card evidence-card" data-testid="today-recovery-card">
           <div class="section-heading">
             <div>
               <p class="section-label">恢復證據</p>
@@ -584,53 +774,99 @@ function daysUntil(value: string): number {
             </div>
             <StatusBadge tone="warning">需要保守</StatusBadge>
           </div>
-          <EvidenceList :items="recoveryEvidence" :unavailable="unavailableSignals" />
-          <AppButton tone="neutral" @click="showView('sources')">前往資料來源</AppButton>
+          <p class="recovery-summary" data-testid="today-recovery-summary">主要訊號偏向保守調整；完整證據留在 Agent 收件匣決策卡。</p>
+          <div class="recovery-signal-grid" aria-label="恢復關鍵訊號">
+            <div v-for="item in recoveryEvidence.slice(0, 3)" :key="`${item.source}-${item.metric}`" class="recovery-signal-chip" data-testid="recovery-signal-chip">
+              <span>{{ item.metric }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
+          <div class="compact-card-footer">
+            <span v-if="unavailableSignals.length">{{ unavailableSignals.length }} 個訊號待補</span>
+            <AppButton tone="neutral" @click="showView('sources')">資料來源</AppButton>
+          </div>
         </article>
 
-        <article class="recommendation-card today-grid__wide">
-          <div class="section-heading">
-            <div>
-              <p class="section-label">Johnny 建議</p>
-              <h3>{{ recommendation.title }}</h3>
-            </div>
-            <StatusBadge tone="warning">{{ recommendationStatus === 'accepted' ? '已接受' : '待決定' }}</StatusBadge>
+        <article class="surface-card today-grid__wide inbox-nudge">
+          <div>
+            <p class="section-label">Agent 收件匣</p>
+            <h3>主動建議會集中在 Agent 收件匣</h3>
+            <p>今日保留訓練、恢復與下一場目標的快速判讀；需要你決定的 Johnny 建議會在收件匣處理。</p>
           </div>
-          <div class="decision-strip">
-            <div>
-              <p class="section-label">訊號</p>
-              <strong>恢復低於基準</strong>
-            </div>
-            <div>
-              <p class="section-label">證據</p>
-              <strong>HRV -18% · 7 日負荷 +21%</strong>
-            </div>
-            <div>
-              <p class="section-label">建議</p>
-              <strong>{{ recommendation.proposedAction }}</strong>
-            </div>
-            <div>
-              <p class="section-label">決定</p>
-              <strong>{{ recommendation.rationale }}</strong>
-            </div>
-          </div>
-          <RecommendationActions
-            :busy-action="busyAction"
-            @accept="handleAccept"
-            @edit="handleEdit"
-            @keep="handleKeepOriginal"
-            @discuss="handleDiscuss"
-          />
-          <p v-if="providerMessage" class="inline-note">{{ providerMessage }}</p>
+          <AppButton tone="primary" @click="showView('inbox')">查看待決定建議</AppButton>
         </article>
         </template>
       </section>
 
       <section v-else-if="activeView === 'calendar'" class="page-stack" aria-labelledby="calendar-title">
         <div class="page-heading">
-          <p class="section-label">課表</p>
-          <h2 id="calendar-title">本週課表</h2>
-          <p>以週列表呈現下一次訓練，不用擠壓成月曆格。</p>
+          <p class="section-label">訓練安排</p>
+          <h2 id="calendar-title">未來六個月</h2>
+          <p>把未來目標、重要活動與接下來的課表放在同一個時間脈絡裡。</p>
+        </div>
+
+        <section class="race-calendar" aria-label="未來六個月訓練安排">
+          <article v-for="month in raceCalendarMonths" :key="month.key" class="race-month" data-testid="race-month">
+            <div class="race-month__header">
+              <p class="section-label">{{ month.key }}</p>
+              <h3>{{ month.label }}</h3>
+            </div>
+            <div v-if="month.races.length" class="race-list">
+              <article v-for="race in month.races" :key="`${race.name}-${race.date}`" class="race-entry">
+                <div>
+                  <strong>{{ race.name }}</strong>
+                  <p>{{ race.distance }} · {{ race.goal }}</p>
+                </div>
+                <div class="race-entry__date">
+                  <span>{{ formatDateLabel(race.date) }}</span>
+                  <small>{{ race.daysRemaining }} 天</small>
+                </div>
+              </article>
+            </div>
+            <p v-else class="race-month__empty">尚未設定目標</p>
+          </article>
+        </section>
+
+        <form class="surface-card race-form" data-testid="race-form" novalidate @submit.prevent="submitRaceEntry">
+          <div class="section-heading">
+            <div>
+              <p class="section-label">新增目標</p>
+              <h3>設定訓練安排</h3>
+            </div>
+            <StatusBadge tone="info">六個月視窗</StatusBadge>
+          </div>
+          <div class="form-grid">
+            <label>
+              名稱
+              <input v-model="raceName" name="raceName" autocomplete="off" :aria-invalid="raceFormError ? 'true' : 'false'" />
+            </label>
+            <label>
+              日期
+              <input v-model="raceDate" name="raceDate" type="date" :aria-invalid="raceFormError ? 'true' : 'false'" />
+            </label>
+            <label>
+              距離
+              <input v-model="raceDistance" name="raceDistance" autocomplete="off" />
+            </label>
+            <label>
+              目標
+              <input v-model="raceGoal" name="raceGoal" autocomplete="off" />
+            </label>
+          </div>
+          <div class="form-footer">
+            <p v-if="raceFormError" class="field-error">{{ raceFormError }}</p>
+            <p v-else-if="raceFormMessage" class="inline-note">{{ raceFormMessage }}</p>
+            <p v-else>名稱與日期必填，其餘可以之後補上。</p>
+            <AppButton tone="primary" type="submit">加入安排</AppButton>
+          </div>
+        </form>
+
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Workout context</p>
+            <h3>接下來的課表</h3>
+          </div>
+          <StatusBadge tone="info">{{ displayWorkouts.length }} 項</StatusBadge>
         </div>
 
         <div v-if="displayWorkouts.length" class="schedule-list">
@@ -698,7 +934,7 @@ function daysUntil(value: string): number {
               <article
                 v-for="item in pendingInboxItems"
                 :key="item.id"
-                class="inbox-card"
+                class="recommendation-card inbox-card"
                 :data-testid="`inbox-card-${item.id}`"
               >
                 <div class="inbox-card__meta">
@@ -720,11 +956,9 @@ function daysUntil(value: string): number {
                 </div>
                 <EvidenceList :items="item.evidence" />
                 <RecommendationActions
-                  :busy-action="inboxBusyRecommendationId === item.id ? 'discuss' : ''"
-                  @accept="handleActionPlaceholder"
-                  @edit="handleActionPlaceholder"
-                  @keep="handleActionPlaceholder"
-                  @discuss="handleInboxDiscuss(item)"
+                  :busy-action="inboxBusyRecommendationId === item.id ? inboxBusyAction : ''"
+                  @accept="handleInboxAccept(item)"
+                  @keep="handleInboxKeep(item)"
                 />
               </article>
             </div>
@@ -850,9 +1084,7 @@ function daysUntil(value: string): number {
                   </div>
                   <RecommendationActions
                     @accept="handleActionPlaceholder"
-                    @edit="handleActionPlaceholder"
                     @keep="handleActionPlaceholder"
-                    @discuss="handleActionPlaceholder"
                   />
                 </article>
               </article>
@@ -865,6 +1097,7 @@ function daysUntil(value: string): number {
                 v-model="conversationMessage"
                 name="conversationMessage"
                 rows="3"
+                style="resize: none"
                 autocomplete="off"
                 :aria-invalid="conversationError ? 'true' : 'false'"
                 aria-describedby="conversation-message-error conversation-message-status"

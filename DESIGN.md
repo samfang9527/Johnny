@@ -3,16 +3,16 @@ version: alpha
 name: "Johnny"
 description: "Chinese-first AI sports companion interface built around daily training decisions, recovery evidence, and human-approved recommendations."
 colors:
-  primary: "#5AA7B8"
-  track-night: "#101820"
-  pit-black: "#0B1117"
-  rubber-gray: "#2B3138"
-  lane-chalk: "#F4F1E7"
-  muted-chalk: "#B7C1BA"
-  recovery-blue: "#5AA7B8"
-  split-amber: "#F2B84B"
-  effort-red: "#B93E35"
-  easy-green: "#74A66A"
+  primary: "#83B7A5"
+  track-night: "#171B1A"
+  pit-black: "#111514"
+  rubber-gray: "#2F3430"
+  lane-chalk: "#F6EFE4"
+  muted-chalk: "#C8C0B3"
+  recovery-blue: "#83B7A5"
+  split-amber: "#E8B86D"
+  effort-red: "#B85A50"
+  easy-green: "#8FB879"
   line-white: "#FFFFFF"
 typography:
   body:
@@ -110,7 +110,7 @@ components:
 
 ### Creative North Star
 
-Johnny 的視覺世界來自「跑者每天訓練前看的狀態板」：操場夜訓的深色底、跑道線的清楚分隔、手錶與訓練日誌上的數字節奏。它不應該像一般 AI 聊天工具，也不應該像健身社群 App。Johnny 的第一印象是：今天要不要照課表跑，證據是什麼，使用者要做哪個決定。
+Johnny 的視覺世界來自「跑者每天訓練前看的狀態板」：夜訓後的暖色低光、跑道線的清楚分隔、手錶與訓練日誌上的數字節奏。它不應該像一般 AI 聊天工具，也不應該像健身社群 App。Johnny 的第一印象是：今天要不要照課表跑，證據是什麼，使用者要做哪個決定。
 
 ### Product context and register
 
@@ -119,14 +119,14 @@ Johnny 的視覺世界來自「跑者每天訓練前看的狀態板」：操場�
 - **Locale(s) and language policy:** UI copy、錯誤、空狀態、按鈕、輔助文字優先使用繁體中文 `zh-TW`。Provider 名稱、活動來源、API 狀態可保留英文專名，例如 Garmin、Strava、Apple Health。數字與日期使用 `zh-TW` 顯示，時間依使用者 profile timezone。
 - **Usage scene:** 手機與筆電都重要。使用者可能在早上、跑前、跑後或臨時調整行程時打開 Johnny。資訊密度應該比行銷頁高，但每個畫面只能服務一個主要決策。
 - **Register:** Product-first。沒有行銷首頁；登入後第一畫面是「今日」。品牌感放在系統節奏、資料呈現與語氣，不放在大型插畫或裝飾 hero。
-- **Memorable signature:** `decision strip`。推薦卡以「訊號 -> 證據 -> 建議 -> 決定」的橫向或縱向節奏呈現，像跑道分道線一樣引導使用者從原因走到行動。
+- **Memorable signature:** `decision strip`。Agent 收件匣的推薦卡以「訊號 -> 證據 -> 建議 -> 決定」的橫向或縱向節奏呈現，像跑道分道線一樣引導使用者從原因走到行動。
 - **Restraint:** 對話頁不能主導整個產品。Johnny 是能聊天的訓練夥伴，不是 ChatGPT clone。Today、Agent 收件匣、資料來源狀態必須比聊天輸入框更重要。
-- **Anti-references:** 不做單色深藍 SaaS 儀表板、不做霓虹 AI chatbot、不做社群健身打卡牆、不做溫暖米色筆記本風。這些方向會削弱訓練決策和證據感。
+- **Anti-references:** 不做單色深藍 SaaS 儀表板、不做霓虹 AI chatbot、不做社群健身打卡牆、不做米色筆記本風。Johnny 可以更柔和溫暖，但仍然要像可判讀的訓練工具。
 - **Token ownership/runtime mapping:** 本檔是 Johnny 前端視覺 source of truth。後續實作應將 frontmatter token 對應到 `frontend/src/styles.css` 的 CSS custom properties，再由 Vue components 透過語意 class 使用；不要在 component 內直接重複 hex 值。
 
 ## Colors
 
-Johnny 採深色 product shell，但不是純黑。`track-night` 是主要背景，`pit-black` 用於較深的側欄、頂部列與沉浸式面板。`rubber-gray` 是卡片、表面和分隔線的基礎色，帶有跑道橡膠感。
+Johnny 採深色 product shell，但不是純黑。`track-night` 是主要背景，帶暖灰而不是冷藍；`pit-black` 用於較深的頂部列與沉浸式面板。`rubber-gray` 是卡片、表面和分隔線的基礎色，帶有跑道橡膠感但不生硬。
 
 文字以 `lane-chalk` 作為主要文字，`muted-chalk` 作為次要標籤、說明與 disabled text。`line-white` 只保留給需要最大對比的圖標、焦點內線和少量高亮，不作為大面積背景。
 
@@ -155,17 +155,18 @@ Copy 原則：
 
 ## Layout
 
-主架構是四個 product surface 加一個 setup surface：
+主架構是三個 product surface 加一個 setup surface，Conversation 暫時不在 production 導覽中：
 
 - `今日`: daily decision cockpit，預設入口。
-- `課表`: calendar-oriented training plan。
+- `訓練安排`: 六個月時間視窗，顯示未來目標與接下來的課表。
 - `Agent 收件匣`: Johnny 主動產生的推薦、警示、週報與待決策項目。
-- `對話`: 使用者主動提問與 linked recommendation discussion。
 - `資料來源`: 連接 Garmin、Apple Health、Strava 等同步來源。
 
-Desktop shell 使用左側或頂部導航皆可，但第一個穩定版本建議用頂部 navigation 搭配狀態列，避免側欄搶走 Today 決策焦點。內容最大寬度使用 `page-max`，核心 Today 區塊採 12 欄 grid：左側比賽與課表，右側恢復證據與推薦；窄螢幕改為單欄，順序固定為 race -> recovery -> workout -> recommendation -> actions。
+Desktop shell 使用頂部 navigation 搭配狀態列，品牌與導覽要在同一個 constrained shell 裡，不要各走各的路徑。內容最大寬度使用 `page-max`，核心 Today 區塊採 12 欄 grid：比賽、今日課表與恢復證據並列；窄螢幕改為單欄，順序固定為 race -> workout -> recovery -> inbox nudge。
 
-`decision strip` 在 desktop 可以橫向呈現，在 mobile 必須垂直堆疊且每一步保留同樣標籤。Calendar 可以使用週列表優先，不急著做滿版月曆；跑者每天需要知道下一次訓練，而不是瀏覽整月格子。
+Today top-row cards must stay visually balanced. Race, workout, and recovery cards should share comparable density and height. Recovery uses a compact summary with three signal chips; full evidence rows and unavailable-signal lists belong in Agent Inbox recommendation cards or other detailed decision contexts.
+
+`decision strip` 在 desktop 可以橫向呈現，在 mobile 必須垂直堆疊且每一步保留同樣標籤。`訓練安排` 使用六個月卡片式時間視窗，顯示使用者設定的未來目標；課表列表作為時間脈絡，而不是主要頁面名稱。
 
 資料來源頁使用 provider cards，但 cards 不應該像 marketplace。每張卡只回答三件事：是否連接、最近一次同步結果、Johnny 目前能使用哪些訊號。
 
@@ -173,7 +174,7 @@ Desktop shell 使用左側或頂部導航皆可，但第一個穩定版本建議
 
 Johnny 的層級主要靠 tonal layers、細邊線和資料分隔，不靠大量陰影。靜態卡片預設不使用 shadow；互動卡片 hover 可以提升邊線亮度或背景 tone。Modal、drawer、toast 可以使用單層陰影與更深 overlay，但不能模糊整個產品成裝飾背景。
 
-`Today` 的推薦卡應該比其他卡片更有層級：可以使用左側或上方 `split-amber` decision rail，搭配較厚邊線。Inbox list item 則較安靜，只有高優先度使用 `effort-red` rail。
+Agent 收件匣的推薦卡應該比其他卡片更有層級：可以使用左側或上方 `split-amber` decision rail，搭配較厚邊線。Today 不顯示推薦卡，只提供前往 Agent 收件匣的安靜入口。
 
 ## Shapes
 
@@ -198,20 +199,18 @@ Button 系統採 emphasis x intent：
 - Ghost: 輕量 navigation 或 inspect action，例如 `查看證據`。
 - Danger: 拒絕、移除連接、清除授權等高風險動作。一般畫面保持低 emphasis，確認 dialog 才使用高 emphasis danger。
 
-Recommendation actions 固定語彙：
+Agent 收件匣 Recommendation actions 固定語彙：
 
 - `接受調整`
-- `編輯調整`
-- `保留原課表`
-- `討論原因`
+- `保留課表`
 
-這些詞在 Today、Agent 收件匣、Conversation action card 中不可隨意替換。
+推薦卡不顯示 `編輯調整` 或 `討論原因`。使用者要快速做「接受 Johnny 調整」或「保留原本課表」兩種決定。
 
 ### Navigation and data display
 
-Top nav label 使用中文：`今日`、`課表`、`Agent 收件匣`、`對話`、`資料來源`。目前頁面以底線或 lane rail 表示，不只靠顏色。
+Top nav label 使用中文：`今日`、`訓練安排`、`Agent 收件匣`、`資料來源`。目前頁面以底線、底色或 lane rail 表示，不只靠顏色。
 
-Evidence list 使用 data typography，包含來源、metric、value、summary。不可只顯示 Johnny 結論；證據應緊貼推薦。Unavailable signals 需要以安靜但可見的方式列出，例如 `缺少睡眠資料`、`尚未連接 HRV 來源`。
+Evidence list 使用 data typography，包含來源、metric、value、summary。不可只顯示 Johnny 結論；證據應緊貼推薦。Unavailable signals 需要以安靜但可見的方式列出，例如 `缺少睡眠資料`、`尚未連接 HRV 來源`。Today recovery card 是例外：它只顯示 compact signal chips 和缺少訊號數量，避免三欄卡片高度失衡。
 
 Calendar 以 workout row 為主，包含日期、workout type、purpose、distance 或 duration、status。窄螢幕使用 list，不使用會擠壓文字的月曆格。
 

@@ -8,6 +8,24 @@ export const raceSummary: RaceSummary = {
   daysRemaining: 16,
 }
 
+export const futureRaces: RaceSummary[] = [
+  raceSummary,
+  {
+    name: 'Taipei Half Tune-up',
+    date: '2026-11-15',
+    distance: 'Half Marathon',
+    goal: '穩定配速',
+    daysRemaining: 85,
+  },
+  {
+    name: 'Tokyo Marathon Prep Race',
+    date: '2027-01-24',
+    distance: '30 km',
+    goal: '檢查補給與節奏',
+    daysRemaining: 155,
+  },
+]
+
 export const recoveryEvidence: EvidenceItem[] = [
   {
     source: 'Garmin',

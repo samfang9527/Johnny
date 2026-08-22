@@ -17,48 +17,40 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App)
 
     expect(wrapper.get('nav').text()).toContain('今日')
-    expect(wrapper.get('nav').text()).toContain('課表')
+    expect(wrapper.get('nav').text()).toContain('訓練安排')
     expect(wrapper.get('nav').text()).toContain('Agent 收件匣')
-    expect(wrapper.get('nav').text()).toContain('對話')
     expect(wrapper.get('nav').text()).toContain('資料來源')
+    expect(wrapper.get('nav').text()).not.toContain('對話')
     expect(wrapper.text()).toContain('今天的訓練決策')
     expect(wrapper.text()).toContain('Sydney Marathon')
   })
 
-  it('renders the recommendation decision strip with stable Chinese action labels', () => {
+  it('keeps recommendation cards out of Today and routes recommendation decisions to Agent Inbox', () => {
     const wrapper = mount(App)
 
-    expect(wrapper.text()).toContain('訊號')
-    expect(wrapper.text()).toContain('證據')
-    expect(wrapper.text()).toContain('建議')
-    expect(wrapper.text()).toContain('決定')
-    expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('接受調整')
-    expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('編輯調整')
-    expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('保留原課表')
-    expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('討論原因')
+    expect(wrapper.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('主動建議會集中在 Agent 收件匣')
   })
 
-  it('keeps stable Chinese recommendation action labels across Today, Conversation, and Agent Inbox', () => {
-    const today = mount(App)
-    const conversation = mount(App, { props: { initialView: 'conversation' } })
+  it('shows only accept and keep buttons on Agent Inbox recommendation cards', () => {
     const inbox = mount(App, { props: { initialView: 'inbox' } })
+    const actions = inbox.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]')
 
-    for (const wrapper of [today, conversation, inbox]) {
-      expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('接受調整')
-      expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('編輯調整')
-      expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('保留原課表')
-      expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('討論原因')
-    }
+    expect(actions.text()).toContain('接受調整')
+    expect(actions.text()).toContain('保留課表')
+    expect(actions.text()).not.toContain('編輯調整')
+    expect(actions.text()).not.toContain('討論原因')
+    expect(actions.findAll('button')).toHaveLength(2)
   })
 
-  it('keeps recommendation action geometry stable while accept is pending', async () => {
+  it('keeps Agent Inbox recommendation action geometry stable while accept is pending', async () => {
     vi.mocked(fetch).mockReturnValue(new Promise(() => undefined) as unknown as Promise<Response>)
-    const wrapper = mount(App)
+    const wrapper = mount(App, { props: { initialView: 'inbox' } })
 
-    await wrapper.get('[data-testid="recommendation-actions"] button').trigger('click')
+    await wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-action="accept"]').trigger('click')
 
-    expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('處理中')
-    expect(wrapper.get('[data-testid="recommendation-actions"]').text()).toContain('編輯調整')
+    expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]').text()).toContain('處理中')
+    expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]').text()).toContain('保留課表')
   })
 
   it('shows Today loading, error, and empty states with Chinese guidance', () => {
@@ -67,18 +59,102 @@ describe('Johnny product shell', () => {
     expect(mount(App, { props: { todayState: 'empty' } }).text()).toContain('連接資料來源後')
   })
 
-  it('opens the schedule as a list-first calendar surface', async () => {
+  it('keeps the Today recovery card compact so it balances the top row', () => {
+    const wrapper = mount(App)
+    const card = wrapper.get('[data-testid="today-recovery-card"]')
+
+    expect(card.find('[data-testid="today-recovery-summary"]').exists()).toBe(true)
+    expect(card.findAll('[data-testid="recovery-signal-chip"]')).toHaveLength(3)
+    expect(card.find('.evidence-list').exists()).toBe(false)
+    expect(card.find('.unavailable-signals').exists()).toBe(false)
+  })
+
+  it('stretches Today top-row cards to equal height regardless of content length', () => {
+    const wrapper = mount(App)
+    const topCards = [
+      wrapper.get('.race-card'),
+      wrapper.get('.workout-card'),
+      wrapper.get('[data-testid="today-recovery-card"]'),
+    ]
+
+    for (const card of topCards) {
+      expect(card.classes()).toContain('today-top-card')
+    }
+  })
+
+  it('opens training arrangements as a six-month race calendar with workout context', async () => {
     const wrapper = mount(App)
 
     await wrapper.get('button[data-view="calendar"]').trigger('click')
 
-    expect(wrapper.text()).toContain('本週課表')
+    expect(wrapper.text()).toContain('訓練安排')
+    expect(wrapper.text()).toContain('未來六個月')
+    expect(wrapper.findAll('[data-testid="race-month"]').length).toBe(6)
+    expect(wrapper.text()).toContain('Sydney Marathon')
     expect(wrapper.text()).toContain('週三')
     expect(wrapper.text()).toContain('Easy Run')
     expect(wrapper.text()).toContain('8 km')
   })
 
-  it('shows an empty schedule state without losing the Calendar surface', () => {
+  it('lets the user add a race entry to the six-month calendar', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/races') && init?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                id: 'backend-created-race',
+                name: 'Taipei Half',
+                race_date: '2026-11-15',
+                distance_meters: 21097,
+                target_finish_seconds: 6300,
+                priority: 'primary',
+                status: 'planned',
+              },
+            }),
+        } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [] }),
+      } as Response)
+    })
+    const wrapper = mount(App, {
+      props: {
+        initialView: 'calendar',
+      },
+    })
+
+    await wrapper.get('input[name="raceName"]').setValue('Taipei Half')
+    await wrapper.get('input[name="raceDate"]').setValue('2026-11-15')
+    await wrapper.get('input[name="raceDistance"]').setValue('Half Marathon')
+    await wrapper.get('input[name="raceGoal"]').setValue('Sub 1:45')
+    await wrapper.get('form[data-testid="race-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Taipei Half')
+    expect(wrapper.text()).toContain('Half Marathon')
+    expect(wrapper.text()).toContain('Sub 1:45')
+    expect(wrapper.text()).toContain('賽事已加入訓練安排')
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/races',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Taipei Half',
+          race_date: '2026-11-15',
+          distance_meters: 21097,
+          target_finish_seconds: 6300,
+          priority: 'primary',
+          status: 'planned',
+        }),
+      }),
+    )
+  })
+
+  it('shows an empty workout state without losing the training arrangements surface', () => {
     const wrapper = mount(App, {
       props: {
         initialView: 'calendar',
@@ -86,7 +162,7 @@ describe('Johnny product shell', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('本週課表')
+    expect(wrapper.text()).toContain('訓練安排')
     expect(wrapper.text()).toContain('目前沒有已排定課表')
   })
 
@@ -281,6 +357,25 @@ describe('Johnny product shell', () => {
             }),
         } as Response)
       }
+      if (url.includes('/api/v1/races') && init?.method !== 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: [
+                {
+                  id: 'backend-race-calendar',
+                  name: 'Backend Calendar 10K',
+                  race_date: '2026-11-08',
+                  distance_meters: 10000,
+                  target_finish_seconds: 3000,
+                  priority: 'tune_up',
+                  status: 'planned',
+                },
+              ],
+            }),
+        } as Response)
+      }
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ data: {} }),
@@ -290,10 +385,14 @@ describe('Johnny product shell', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Backend Half Marathon')
-    expect(wrapper.text()).toContain('Backend says keep it easy')
     expect(wrapper.text()).toContain('10 km')
 
-    await wrapper.get('[data-testid="recommendation-actions"] button').trigger('click')
+    await wrapper.get('button[data-view="calendar"]').trigger('click')
+    expect(wrapper.text()).toContain('Backend Calendar 10K')
+    expect(wrapper.text()).toContain('Sub 50:00')
+
+    await wrapper.get('button[data-view="inbox"]').trigger('click')
+    await wrapper.get('[data-testid="inbox-card-backend-rec-1"] [data-action="accept"]').trigger('click')
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
@@ -311,36 +410,6 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"]').text()).toContain('待決定')
     expect(wrapper.get('[data-testid="inbox-history"]').text()).toContain('已接受')
     expect(wrapper.get('[data-testid="inbox-history"]').text()).toContain('已套用')
-    expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]').text()).toContain('討論原因')
-  })
-
-  it('shows a Chinese-first Agent Inbox empty state', () => {
-    const wrapper = mount(App, { props: { initialView: 'inbox', inboxItems: [] } })
-
-    expect(wrapper.text()).toContain('目前沒有新的主動建議')
-    expect(wrapper.text()).toContain('Johnny 之後會把需要你決定的主動建議放在 Agent 收件匣')
-  })
-
-  it('opens Conversation with linked recommendation context from Agent Inbox discussion', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ data: { run_ref: 'discussion-run-test', message: { recommendation_id: 'rec-race-taper' } } }),
-    } as Response)
-    const wrapper = mount(App, { props: { initialView: 'inbox' } })
-
-    await wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-action="discuss"]').trigger('click')
-    await flushPromises()
-
-    expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/recommendations/rec-race-taper/discuss',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ content: '我想了解這次建議的原因。' }),
-      }),
-    )
-    expect(wrapper.text()).toContain('已連結建議')
-    expect(wrapper.text()).toContain('賽前 9 天降低長跑壓力')
-    expect(wrapper.text()).toContain('HRV -18%')
-    expect(wrapper.text()).toContain('discussion-run-test')
+    expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]').text()).toContain('保留課表')
   })
 })

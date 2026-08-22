@@ -1,4 +1,4 @@
-import type { ConversationMessageResponse, IntegrationConnectionPayload } from '../types'
+import type { ConversationMessageResponse, IntegrationConnectionPayload, RaceGoalCreatePayload } from '../types'
 
 export function getApiBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -38,6 +38,14 @@ export function listRecommendations(): Promise<{ data: Array<Record<string, unkn
 
 export function listTrainingPlans(): Promise<{ data: Array<Record<string, unknown>> }> {
   return getJson('/training-plans')
+}
+
+export function listRaceGoals(raceDateFrom: string, raceDateTo: string): Promise<{ data: Array<Record<string, unknown>> }> {
+  return getJson(`/races?race_date_from=${encodeURIComponent(raceDateFrom)}&race_date_to=${encodeURIComponent(raceDateTo)}&limit=100&offset=0`)
+}
+
+export function createRaceGoal(payload: RaceGoalCreatePayload): Promise<{ data: Record<string, unknown> }> {
+  return postJson('/races', payload)
 }
 
 export function acceptRecommendation(recommendationId: string): Promise<unknown> {

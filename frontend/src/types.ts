@@ -8,6 +8,15 @@ export interface RaceSummary {
   daysRemaining: number
 }
 
+export interface RaceGoalCreatePayload {
+  name: string
+  race_date: string
+  distance_meters: number
+  target_finish_seconds?: number
+  priority: string
+  status: string
+}
+
 export interface EvidenceItem {
   source: string
   metric: string
