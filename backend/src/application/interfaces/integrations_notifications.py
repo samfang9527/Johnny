@@ -51,6 +51,9 @@ class IntegrationStore(Protocol):
     def fail_sync_run(self, sync_run_id: str, error: str) -> SyncRun:
         ...
 
+    def get_running_sync_run_for_connection(self, integration_connection_id: str) -> SyncRun | None:
+        ...
+
     def mark_connection_requires_reauth(self, integration_connection_id: str, error: str) -> IntegrationConnectionRef:
         ...
 

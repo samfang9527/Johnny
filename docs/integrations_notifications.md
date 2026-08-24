@@ -42,6 +42,8 @@ The password is used only during the in-memory exchange. Session/token material 
 
 Garmin sync treats expired, revoked, MFA-blocked, or otherwise credential-blocked sessions as a reauth state: the connection remains connected for historical provenance, but `credential_status` becomes `requires_reauth` and future sync work must wait for a user/admin reconnect action. Garmin rate limits and temporary blocking errors are recorded as failed sync summaries with redacted error text and provider backoff metadata when available; they do not mark credentials as invalid unless the adapter raises a credential-blocked error.
 
+`POST /api/v1/integrations/connections/{connection_id}/sync` triggers a synchronous manual Garmin sync for the active connection. It returns the same connection response shape as Garmin connect, including resource counts, redacted errors, timestamps, partial-failure warnings, and reauth state. If the connection already has a running sync and a started sync run exists, the endpoint returns that running status instead of starting another sync; if the connection is marked running without a matching started run, it returns a conflict.
+
 ## Notification Flow
 
 ```mermaid

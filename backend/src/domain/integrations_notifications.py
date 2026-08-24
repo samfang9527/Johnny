@@ -9,6 +9,12 @@ class DomainValidationError(ValueError):
     """Raised when integration or notification data cannot be persisted safely."""
 
 
+class SyncAlreadyRunningError(RuntimeError):
+    def __init__(self, running_sync_run=None) -> None:  # noqa: ANN001
+        super().__init__("sync is already running")
+        self.running_sync_run = running_sync_run
+
+
 _UNSAFE_METADATA = object()
 _SENSITIVE_TEXT_MARKERS = ("password", "token", "secret", "credential", "cookie", "session", "bearer", "authorization")
 _SENSITIVE_KEY_MARKERS = (*_SENSITIVE_TEXT_MARKERS, "email")

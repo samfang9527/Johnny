@@ -80,4 +80,5 @@ Users can have only one active sync provider connection at a time. `POST /api/v1
 - `POST /api/v1/recommendations/{recommendation_id}/discuss`
 - `POST /api/v1/conversations/messages`
 - `POST /api/v1/integrations/connections`
+- `POST /api/v1/integrations/connections/{connection_id}/sync`
 - `POST /api/v1/integrations/webhooks/{provider}/{connection_id}`

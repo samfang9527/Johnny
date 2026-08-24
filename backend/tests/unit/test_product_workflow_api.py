@@ -462,6 +462,169 @@ def test_garmin_connect_endpoint_reports_partial_failure_after_zero_item_success
     assert "abc-session" not in response.text
 
 
+def test_manual_garmin_sync_endpoint_returns_summary_and_uses_existing_import_path() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    adapter = _ApiFakeGarminResourceAdapter()
+    connected = _connect_api_garmin(
+        client,
+        provider_account_id="garmin-account-manual",
+        resource_adapter=adapter,
+        with_profile=True,
+    )
+
+    response = client.post(
+        f"/api/v1/integrations/connections/{connected['id']}/sync",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["sync_status"] == "idle"
+    assert data["sync_summary"]["resources"]["activities"]["duplicates"] == 1
+    assert data["sync_summary"]["resources"]["sleep"]["stored"] == 1
+    assert data["last_sync_started_at"] is not None
+    assert data["last_sync_completed_at"] is not None
+    assert "garmin-password" not in response.text
+    assert "secret-token" not in response.text
+
+
+def test_manual_garmin_sync_endpoint_reports_partial_failure_without_breaking_connection() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+    from src.api.routes.integrations import get_garmin_resource_adapter
+
+    client = create_sqlite_test_client()
+    connected = _connect_api_garmin(
+        client,
+        provider_account_id="garmin-account-manual-partial",
+        with_profile=True,
+    )
+    client.app.dependency_overrides[get_garmin_resource_adapter] = lambda: _ApiFakeGarminZeroItemPartialFailureResourceAdapter()
+
+    response = client.post(
+        f"/api/v1/integrations/connections/{connected['id']}/sync",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["credential_status"] == "active"
+    assert data["sync_status"] == "idle"
+    assert data["has_partial_failures"] is True
+    assert data["sync_warning"] == "Some Garmin resources failed to sync"
+    assert data["sync_summary"]["resources"]["body_battery"]["errors"] == ["Garmin resource sync failed"]
+
+
+def test_manual_garmin_sync_endpoint_returns_reauth_state_without_fetching() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    blocked_adapter = _ApiFakeGarminCredentialBlockedResourceAdapter()
+    connected = _connect_api_garmin(
+        client,
+        provider_account_id="garmin-account-manual-reauth",
+        resource_adapter=blocked_adapter,
+    )
+    blocked_adapter.calls = 0
+
+    response = client.post(
+        f"/api/v1/integrations/connections/{connected['id']}/sync",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["credential_status"] == "requires_reauth"
+    assert data["sync_warning"] == "Garmin connection requires reauth"
+    assert data["sync_summary"]["resources"]["sync"]["errors"] == ["Garmin connection requires reauth"]
+    assert blocked_adapter.calls == 0
+
+
+def test_manual_garmin_sync_endpoint_returns_existing_running_status_or_conflict(tmp_path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from src.api.dependencies import get_session
+    from src.api.routes.integrations import get_garmin_resource_adapter
+    from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
+    from src.infrastructure.database.models import Base, IntegrationConnectionModel, UserModel
+    from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
+    from src.main import create_app
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'manual-sync.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_session():
+        session = session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_session
+    blocking_adapter = _ApiBlockingGarminResourceAdapter()
+    app.dependency_overrides[get_garmin_resource_adapter] = lambda: blocking_adapter
+    client = TestClient(app)
+    with SqlAlchemyUnitOfWork(session_factory) as uow:
+        user = UserModel(id="user-1", email="running@example.com", display_name="Running")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        running_connection = repository.create_connection(
+            user_id=user.id,
+            provider="garmin_connect",
+            provider_account_id="garmin-running",
+        )
+        live_connection = repository.create_connection(
+            user_id=user.id,
+            provider="garmin_connect",
+            provider_account_id="garmin-live-running",
+        )
+        stale_connection = repository.create_connection(
+            user_id=user.id,
+            provider="garmin_connect",
+            provider_account_id="garmin-stale-running",
+        )
+        repository.start_sync_run(running_connection.id)
+        stale_model = uow.session.get(IntegrationConnectionModel, stale_connection.id)
+        assert stale_model is not None
+        stale_model.sync_status = "running"
+        uow.commit()
+
+    stale = client.post(
+        f"/api/v1/integrations/connections/{stale_connection.id}/sync",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            client.post,
+            f"/api/v1/integrations/connections/{live_connection.id}/sync",
+            headers={"X-Johnny-User-Id": "user-1"},
+        )
+        assert blocking_adapter.entered.wait(timeout=5)
+        running = client.post(
+            f"/api/v1/integrations/connections/{live_connection.id}/sync",
+            headers={"X-Johnny-User-Id": "user-1"},
+        )
+        blocking_adapter.release.set()
+        first = first_future.result(timeout=5)
+
+    assert first.status_code == 200
+    assert running.status_code == 200
+    assert running.json()["data"]["sync_status"] == "running"
+    assert running.json()["data"]["last_sync_started_at"] is not None
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "conflict"
+
+
 def test_garmin_connect_endpoint_rejects_user_entered_provider_account_id(monkeypatch) -> None:
     from cryptography.fernet import Fernet
     from tests.unit.api_test_helpers import create_sqlite_test_client
@@ -547,6 +710,53 @@ class _ApiFakeGarminLoginAdapter:
         return self._profile
 
 
+def _put_api_athlete_profile(client) -> None:  # noqa: ANN001
+    response = client.put(
+        "/api/v1/athlete/profile",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "timezone": "Asia/Taipei",
+            "experience_level": "intermediate",
+            "current_weekly_mileage": 42,
+            "preferred_training_days": ["tuesday", "thursday", "sunday"],
+            "preferred_long_run_day": "sunday",
+            "max_runs_per_week": 4,
+        },
+    )
+    assert response.status_code == 200
+
+
+def _connect_api_garmin(
+    client,  # noqa: ANN001
+    *,
+    provider_account_id: str,
+    resource_adapter=None,  # noqa: ANN001
+    with_profile: bool = False,
+) -> dict:
+    from src.api.routes.integrations import get_garmin_credential_cipher, get_garmin_login_adapter, get_garmin_resource_adapter
+    from src.application.integrations import GarminAccountProfile
+
+    if with_profile:
+        _put_api_athlete_profile(client)
+    adapter = resource_adapter or _ApiFakeGarminResourceAdapter()
+    client.app.dependency_overrides[get_garmin_login_adapter] = lambda: _ApiFakeGarminLoginAdapter(
+        GarminAccountProfile(
+            provider_account_id=provider_account_id,
+            display_name="Garmin Runner",
+            session_payload='{"oauth2_token":"secret-token"}',
+        )
+    )
+    client.app.dependency_overrides[get_garmin_credential_cipher] = lambda: _ApiFakeCipher()
+    client.app.dependency_overrides[get_garmin_resource_adapter] = lambda: adapter
+    response = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={"email": "runner@example.com", "password": "garmin-password", "region": "global"},
+    )
+    assert response.status_code == 200
+    return response.json()["data"]
+
+
 class _ApiFakeCipher:
     key_id = "local-fernet"
 
@@ -597,9 +807,13 @@ class _ApiFakeGarminResourceAdapter:
 
 
 class _ApiFakeGarminCredentialBlockedResourceAdapter:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def fetch_resource(self, *, connection, resource_type, start_date, end_date, timezone_name, cursor):
         from src.application.integrations import GarminCredentialBlockedError
 
+        self.calls += 1
         raise GarminCredentialBlockedError("session cookie=session-secret expired")
 
 
@@ -609,4 +823,20 @@ class _ApiFakeGarminZeroItemPartialFailureResourceAdapter:
 
         if resource_type == "body_battery":
             raise RuntimeError('{"sid":"abc-session"}')
+        return GarminResourceFetchResult(items=[], cursor={"date": end_date.isoformat()})
+
+
+class _ApiBlockingGarminResourceAdapter:
+    def __init__(self) -> None:
+        from threading import Event
+
+        self.entered = Event()
+        self.release = Event()
+
+    def fetch_resource(self, *, connection, resource_type, start_date, end_date, timezone_name, cursor):
+        from src.application.integrations import GarminResourceFetchResult
+
+        if resource_type == "activities":
+            self.entered.set()
+            assert self.release.wait(timeout=5)
         return GarminResourceFetchResult(items=[], cursor={"date": end_date.isoformat()})

@@ -142,6 +142,7 @@ class GarminInitialSyncCommand:
     user_id: str
     connection_id: str
     as_of: datetime | None = None
+    sync_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -297,9 +298,14 @@ class GarminInitialSyncHandler:
         if connection is None:
             raise ValueError("integration connection not found")
         if connection.credential_status == "requires_reauth":
-            return SyncSummary.empty().record_failed("sync", "Garmin connection requires reauth")
+            summary = SyncSummary.empty().record_failed("sync", "Garmin connection requires reauth")
+            if command.sync_run_id is not None:
+                self._integrations.complete_sync_run(command.sync_run_id, summary, status="failed")
+            return summary
 
-        sync_run = self._integrations.start_sync_run(connection.id)
+        sync_run_id = command.sync_run_id
+        if sync_run_id is None:
+            sync_run_id = self._integrations.start_sync_run(connection.id).id
         timezone_name = self._timezone_name(command.user_id, connection)
         end_date = _local_date(command.as_of or datetime.now(timezone.utc), timezone_name)
         start_date = end_date - timedelta(days=29)
@@ -340,6 +346,8 @@ class GarminInitialSyncHandler:
                 summary = summary.record_failed(resource_type, exc.safe_summary, backoff=exc.backoff_metadata())
                 sync_status = "failed"
                 break
+            except GarminIntegrationConfigurationError:
+                raise
             except Exception as exc:  # noqa: BLE001
                 classified = _classify_garmin_sync_exception(exc)
                 if isinstance(classified, GarminCredentialBlockedError):
@@ -356,7 +364,7 @@ class GarminInitialSyncHandler:
                     break
                 summary = summary.record_failed(resource_type, "Garmin resource sync failed")
 
-        self._integrations.complete_sync_run(sync_run.id, summary, status=sync_status)
+        self._integrations.complete_sync_run(sync_run_id, summary, status=sync_status)
         return summary
 
     def _store_resource(

@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from src.domain.integrations_notifications import IntegrationConnectionRef, IntegrationCredential, SyncRun, SyncSummary
+from src.domain.integrations_notifications import (
+    IntegrationConnectionRef,
+    IntegrationCredential,
+    SyncAlreadyRunningError,
+    SyncRun,
+    SyncSummary,
+)
 
 from .models import IntegrationConnectionModel, IntegrationCredentialModel, IntegrationResourceCursorModel, SyncRunModel, utc_now
 
@@ -172,12 +178,22 @@ class SqlAlchemyIntegrationRepository:
 
     def start_sync_run(self, integration_connection_id: str) -> SyncRun:
         now = utc_now()
+        claimed = self._session.execute(
+            update(IntegrationConnectionModel)
+            .where(
+                IntegrationConnectionModel.id == integration_connection_id,
+                IntegrationConnectionModel.sync_status != "running",
+            )
+            .values(sync_status="running", last_sync_started_at=now, last_sync_error=None)
+        )
+        if claimed.rowcount == 0:
+            connection = self._session.get(IntegrationConnectionModel, integration_connection_id)
+            if connection is not None and connection.sync_status == "running":
+                raise SyncAlreadyRunningError(self.get_running_sync_run_for_connection(integration_connection_id))
+            raise ValueError(f"Integration connection not found: {integration_connection_id}")
         connection = self._session.get(IntegrationConnectionModel, integration_connection_id)
         if connection is None:
             raise ValueError(f"Integration connection not found: {integration_connection_id}")
-        connection.sync_status = "running"
-        connection.last_sync_started_at = now
-        connection.last_sync_error = None
         model = SyncRunModel(
             integration_connection_id=integration_connection_id,
             status="started",
@@ -220,6 +236,19 @@ class SqlAlchemyIntegrationRepository:
             connection.last_sync_completed_at = now
             connection.last_sync_error = failed.summary.to_payload()["resources"]["sync"]["errors"][0]
         self._session.flush()
+        return _sync_run_from_model(run)
+
+    def get_running_sync_run_for_connection(self, integration_connection_id: str) -> SyncRun | None:
+        run = self._session.scalar(
+            select(SyncRunModel)
+            .where(
+                SyncRunModel.integration_connection_id == integration_connection_id,
+                SyncRunModel.status == "started",
+            )
+            .order_by(SyncRunModel.started_at.desc())
+        )
+        if run is None:
+            return None
         return _sync_run_from_model(run)
 
     def mark_connection_requires_reauth(self, integration_connection_id: str, error: str) -> IntegrationConnectionRef:

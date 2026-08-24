@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiConflictError, ApiNotFoundError, ApiUnauthorizedError, ApiUnavailableError
@@ -20,6 +21,7 @@ from src.application.integrations import (
     ConnectGarminAccountHandler,
     ConnectSyncProviderCommand,
     ConnectSyncProviderHandler,
+    GARMIN_PROVIDER,
     GarminInitialSyncCommand,
     GarminInitialSyncHandler,
     GarminAuthenticationError,
@@ -30,7 +32,7 @@ from src.application.integrations import (
     ProviderSyncCommand,
     ProviderSyncHandler,
 )
-from src.domain.integrations_notifications import IntegrationConnectionRef, ProviderFetchResult
+from src.domain.integrations_notifications import IntegrationConnectionRef, ProviderFetchResult, SyncAlreadyRunningError, SyncSummary
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
@@ -110,27 +112,12 @@ def connect_garmin(
                 region=payload.region,
             )
         )
-        sync_summary = GarminInitialSyncHandler(
-            integrations=repository,
-            activities=SqlAlchemyActivityRepository(session),
-            outbox=SqlAlchemyOutboxRepository(session),
-            garmin=resource_adapter,
-            athlete_profiles=SqlAlchemyAthleteRaceRepository(session),
-            normalize_activity=lambda user_id, provider_connection_id, activity_payload: normalize_garmin_activity(
-                user_id=user_id,
-                provider_connection_id=provider_connection_id,
-                payload=activity_payload,
-            ),
-            normalize_health=lambda user_id, health_payload: normalize_garmin_daily_health(
-                user_id=user_id,
-                payload=health_payload,
-            ),
-        ).handle(
-            GarminInitialSyncCommand(
-                user_id=current_user.id,
-                connection_id=connection.id,
-                as_of=datetime.now(timezone.utc),
-            )
+        sync_summary = _run_garmin_sync(
+            repository=repository,
+            session=session,
+            user_id=current_user.id,
+            connection_id=connection.id,
+            resource_adapter=resource_adapter,
         )
         connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
     except ProviderAccountAlreadyConnectedError as exc:
@@ -139,6 +126,56 @@ def connect_garmin(
         raise ApiUnavailableError("Garmin integration is not configured") from exc
     except GarminAuthenticationError as exc:
         raise ApiUnauthorizedError("Garmin credentials could not be verified") from exc
+    return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary))
+
+
+@router.post("/connections/{connection_id}/sync", response_model=DataEnvelope[IntegrationConnectionResponse])
+def sync_connection(
+    connection_id: str,
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+    resource_adapter: GarminResourceAdapter = Depends(get_garmin_resource_adapter),
+) -> DataEnvelope[IntegrationConnectionResponse]:
+    ensure_current_user(session, current_user)
+    repository = SqlAlchemyIntegrationRepository(session)
+    connection = repository.get_connection_for_user(current_user.id, connection_id)
+    if connection is None or connection.provider != GARMIN_PROVIDER or connection.status != "active":
+        raise ApiNotFoundError("integration connection not found")
+    if connection.sync_status == "running":
+        running = repository.get_running_sync_run_for_connection(connection.id)
+        if running is None:
+            raise ApiConflictError("Garmin sync is already running")
+        return DataEnvelope(data=_connection_response(connection, sync_summary=running.summary))
+    if connection.credential_status == "requires_reauth":
+        sync_summary = _run_garmin_sync(
+            repository=repository,
+            session=session,
+            user_id=current_user.id,
+            connection_id=connection.id,
+            resource_adapter=resource_adapter,
+        )
+        return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary))
+    try:
+        sync_run = repository.start_sync_run(connection.id)
+        session.commit()
+        sync_summary = _run_garmin_sync(
+            repository=repository,
+            session=session,
+            user_id=current_user.id,
+            connection_id=connection.id,
+            resource_adapter=resource_adapter,
+            sync_run_id=sync_run.id,
+        )
+    except GarminIntegrationConfigurationError as exc:
+        repository.fail_sync_run(sync_run.id, "Garmin integration is not configured")
+        session.commit()
+        raise ApiUnavailableError("Garmin integration is not configured") from exc
+    except SyncAlreadyRunningError as exc:
+        if exc.running_sync_run is None:
+            raise ApiConflictError("Garmin sync is already running") from exc
+        connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
+        return DataEnvelope(data=_connection_response(connection, sync_summary=exc.running_sync_run.summary))
+    connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
     return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary))
 
 
@@ -171,6 +208,40 @@ def receive_webhook(
     )
     summary = handler.handle(ProviderSyncCommand(user_id=current_user.id, connection_id=connection_id))
     return DataEnvelope(data=SyncSummaryResponse(**summary.to_payload()))
+
+
+def _run_garmin_sync(
+    *,
+    repository: SqlAlchemyIntegrationRepository,
+    session: Session,
+    user_id: str,
+    connection_id: str,
+    resource_adapter: GarminResourceAdapter,
+    sync_run_id: str | None = None,
+) -> SyncSummary:
+    return GarminInitialSyncHandler(
+        integrations=repository,
+        activities=SqlAlchemyActivityRepository(session),
+        outbox=SqlAlchemyOutboxRepository(session),
+        garmin=resource_adapter,
+        athlete_profiles=SqlAlchemyAthleteRaceRepository(session),
+        normalize_activity=lambda user_id, provider_connection_id, activity_payload: normalize_garmin_activity(
+            user_id=user_id,
+            provider_connection_id=provider_connection_id,
+            payload=activity_payload,
+        ),
+        normalize_health=lambda user_id, health_payload: normalize_garmin_daily_health(
+            user_id=user_id,
+            payload=health_payload,
+        ),
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id=user_id,
+            connection_id=connection_id,
+            as_of=datetime.now(timezone.utc),
+            sync_run_id=sync_run_id,
+        )
+    )
 
 
 class _WebhookProviderAdapter:

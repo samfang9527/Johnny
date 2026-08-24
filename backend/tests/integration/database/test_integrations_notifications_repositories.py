@@ -3,7 +3,14 @@ from datetime import datetime, timezone
 import pytest
 
 from src.application.integrations import ConnectSyncProviderCommand, ConnectSyncProviderHandler, ProviderAccountAlreadyConnectedError
-from src.domain.integrations_notifications import IntegrationCredential, NotificationDelivery, NotificationIntent, OutboxEvent, SyncSummary
+from src.domain.integrations_notifications import (
+    IntegrationCredential,
+    NotificationDelivery,
+    NotificationIntent,
+    OutboxEvent,
+    SyncAlreadyRunningError,
+    SyncSummary,
+)
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
 from src.infrastructure.database.models import ActivityModel, Base, IntegrationConnectionModel, IntegrationResourceCursorModel, UserModel
 from src.infrastructure.database.notification_repository import SqlAlchemyNotificationRepository
@@ -102,6 +109,38 @@ def test_integration_repository_records_reauth_and_failed_sync_summary(sqlite_se
         assert connection_model.last_sync_started_at is not None
         assert connection_model.last_sync_completed_at is not None
         assert connection_model.last_sync_error == "credential or token details redacted"
+
+
+def test_integration_repository_loads_existing_running_sync_for_connection(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="running-sync@example.com", display_name="Running Sync")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        connection = repository.create_connection(user_id=user.id, provider="garmin_connect", provider_account_id="acct-running")
+        running = repository.start_sync_run(connection.id)
+        missing = repository.get_running_sync_run_for_connection("missing-connection")
+        with pytest.raises(SyncAlreadyRunningError) as exc_info:
+            repository.start_sync_run(connection.id)
+        uow.commit()
+
+        assert missing is None
+        assert exc_info.value.running_sync_run is not None
+        assert exc_info.value.running_sync_run.id == running.id
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        loaded = repository.get_running_sync_run_for_connection(connection.id)
+        completed = repository.complete_sync_run(running.id, SyncSummary.empty().record_fetched("activities", 0))
+        no_longer_running = repository.get_running_sync_run_for_connection(connection.id)
+
+        assert loaded is not None
+        assert loaded.id == running.id
+        assert loaded.status == "started"
+        assert completed.status == "succeeded"
+        assert no_longer_running is None
 
 
 def test_integration_repository_stores_encrypted_credentials_separately_from_connection_metadata(sqlite_session_factory) -> None:
