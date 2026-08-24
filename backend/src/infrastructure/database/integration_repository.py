@@ -176,6 +176,30 @@ class SqlAlchemyIntegrationRepository:
             self._session.delete(credential)
             self._session.flush()
 
+    def disconnect_connection(self, integration_connection_id: str) -> IntegrationConnectionRef:
+        self.delete_credential_for_connection(integration_connection_id)
+        connection = self._require_connection(integration_connection_id)
+        connection.status = "disconnected"
+        connection.credential_status = "deleted"
+        connection.credential_secret_ref = None
+        connection.sync_status = "idle"
+        connection.disconnected_at = utc_now()
+        self._session.flush()
+        return _connection_from_model(connection)
+
+    def mark_connection_credentials_active(self, integration_connection_id: str, *, credential_format: str) -> IntegrationConnectionRef:
+        connection = self._require_connection(integration_connection_id)
+        connection.status = "active"
+        connection.credential_status = "active"
+        connection.credential_secret_ref = None
+        connection.credential_format = credential_format
+        connection.sync_status = "idle"
+        connection.last_sync_error = None
+        connection.disconnected_at = None
+        connection.credential_rotated_at = utc_now()
+        self._session.flush()
+        return _connection_from_model(connection)
+
     def start_sync_run(self, integration_connection_id: str) -> SyncRun:
         now = utc_now()
         claimed = self._session.execute(

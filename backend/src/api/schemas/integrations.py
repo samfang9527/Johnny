@@ -43,6 +43,12 @@ class GarminConnectRequest(BaseModel):
     region: Literal["global", "china"] = "global"
 
 
+class GarminAdminTokenImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_payload: str = Field(min_length=1)
+
+
 class ProviderWebhookRequest(BaseModel):
     activities: list[dict[str, Any]] = Field(default_factory=list)
     health: list[dict[str, Any]] = Field(default_factory=list)

@@ -625,6 +625,79 @@ def test_manual_garmin_sync_endpoint_returns_existing_running_status_or_conflict
     assert stale.json()["error"]["code"] == "conflict"
 
 
+def test_garmin_disconnect_endpoint_deletes_secret_and_preserves_imported_data() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    connected = _connect_api_garmin(
+        client,
+        provider_account_id="garmin-account-disconnect-api",
+        with_profile=True,
+    )
+
+    response = client.delete(
+        f"/api/v1/integrations/connections/{connected['id']}",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+    sync_after_disconnect = client.post(
+        f"/api/v1/integrations/connections/{connected['id']}/sync",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+    activities = client.get(
+        "/api/v1/activities?started_on_or_after=2027-01-01&started_on_or_before=2027-01-31",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+    health = client.get(
+        "/api/v1/health-metrics/daily?measured_on_or_after=2027-01-01&measured_on_or_before=2027-01-31",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "disconnected"
+    assert data["credential_status"] == "deleted"
+    assert data["sync_status"] == "idle"
+    assert data["provider_account_id"] == "garmin-account-disconnect-api"
+    assert "encrypted_payload" not in data
+    assert "secret-token" not in response.text
+    assert sync_after_disconnect.status_code == 404
+    assert activities.json()["data"][0]["source_activity_id"] == "garmin-activity-1"
+    assert health.json()["data"][0]["values"]["body_battery_score"] == 72
+
+
+def test_garmin_admin_token_import_requires_admin_token_and_redacts_session_payload(monkeypatch) -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    monkeypatch.setenv("JOHNNY_ADMIN_TOKEN", "admin-secret")
+    client = create_sqlite_test_client()
+    connected = _connect_api_garmin(
+        client,
+        provider_account_id="garmin-account-admin-import-api",
+        with_profile=True,
+    )
+
+    unauthorized = client.post(
+        f"/api/v1/integrations/connections/{connected['id']}/admin-token-import",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={"session_payload": '{"oauth2_token":"manual-secret-token"}'},
+    )
+    response = client.post(
+        f"/api/v1/integrations/connections/{connected['id']}/admin-token-import",
+        headers={"X-Johnny-User-Id": "user-1", "X-Johnny-Admin-Token": "admin-secret"},
+        json={"session_payload": '{"oauth2_token":"manual-secret-token"}'},
+    )
+
+    assert unauthorized.status_code == 401
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["status"] == "active"
+    assert data["credential_status"] == "active"
+    assert data["credential_format"] == "garminconnect-session-json"
+    assert "encrypted_payload" not in data
+    assert "manual-secret-token" not in response.text
+    assert "admin-secret" not in response.text
+
+
 def test_garmin_connect_endpoint_rejects_user_entered_provider_account_id(monkeypatch) -> None:
     from cryptography.fernet import Fernet
     from tests.unit.api_test_helpers import create_sqlite_test_client
@@ -761,7 +834,7 @@ class _ApiFakeCipher:
     key_id = "local-fernet"
 
     def encrypt(self, plaintext: str) -> str:
-        assert plaintext == '{"oauth2_token":"secret-token"}'
+        assert plaintext in {'{"oauth2_token":"secret-token"}', '{"oauth2_token":"manual-secret-token"}'}
         return "fernet:encrypted-session"
 
     def decrypt(self, encrypted_payload: str) -> str:

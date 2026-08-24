@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
+from secrets import compare_digest
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiConflictError, ApiNotFoundError, ApiUnauthorizedError, ApiUnavailableError
 from src.api.schemas.common import DataEnvelope
 from src.api.schemas.integrations import (
+    GarminAdminTokenImportRequest,
     GarminConnectRequest,
     IntegrationConnectionRequest,
     IntegrationConnectionResponse,
@@ -17,10 +20,14 @@ from src.api.schemas.integrations import (
     SyncSummaryResponse,
 )
 from src.application.integrations import (
+    AdminImportGarminTokenCommand,
+    AdminImportGarminTokenHandler,
     ConnectGarminAccountCommand,
     ConnectGarminAccountHandler,
     ConnectSyncProviderCommand,
     ConnectSyncProviderHandler,
+    DisconnectGarminConnectionCommand,
+    DisconnectGarminConnectionHandler,
     GARMIN_PROVIDER,
     GarminInitialSyncCommand,
     GarminInitialSyncHandler,
@@ -127,6 +134,52 @@ def connect_garmin(
     except GarminAuthenticationError as exc:
         raise ApiUnauthorizedError("Garmin credentials could not be verified") from exc
     return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary))
+
+
+@router.delete("/connections/{connection_id}", response_model=DataEnvelope[IntegrationConnectionResponse])
+def disconnect_connection(
+    connection_id: str,
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+) -> DataEnvelope[IntegrationConnectionResponse]:
+    ensure_current_user(session, current_user)
+    repository = SqlAlchemyIntegrationRepository(session)
+    try:
+        connection = DisconnectGarminConnectionHandler(integrations=repository).handle(
+            DisconnectGarminConnectionCommand(user_id=current_user.id, connection_id=connection_id)
+        )
+    except ValueError as exc:
+        raise ApiNotFoundError("integration connection not found") from exc
+    return DataEnvelope(data=_connection_response(connection))
+
+
+@router.post("/connections/{connection_id}/admin-token-import", response_model=DataEnvelope[IntegrationConnectionResponse])
+def admin_import_garmin_token(
+    connection_id: str,
+    payload: GarminAdminTokenImportRequest,
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+    admin_token: str | None = Header(default=None, alias="X-Johnny-Admin-Token"),
+    cipher: CredentialCipher = Depends(get_garmin_credential_cipher),
+) -> DataEnvelope[IntegrationConnectionResponse]:
+    ensure_current_user(session, current_user)
+    _require_admin_token(admin_token)
+    repository = SqlAlchemyIntegrationRepository(session)
+    try:
+        connection = AdminImportGarminTokenHandler(
+            integrations=repository,
+            credentials=repository,
+            cipher=cipher,
+        ).handle(
+            AdminImportGarminTokenCommand(
+                user_id=current_user.id,
+                connection_id=connection_id,
+                session_payload=payload.session_payload,
+            )
+        )
+    except ValueError as exc:
+        raise ApiNotFoundError("integration connection not found") from exc
+    return DataEnvelope(data=_connection_response(connection))
 
 
 @router.post("/connections/{connection_id}/sync", response_model=DataEnvelope[IntegrationConnectionResponse])
@@ -242,6 +295,12 @@ def _run_garmin_sync(
             sync_run_id=sync_run_id,
         )
     )
+
+
+def _require_admin_token(provided: str | None) -> None:
+    configured = os.getenv("JOHNNY_ADMIN_TOKEN")
+    if not configured or not provided or not compare_digest(provided, configured):
+        raise ApiUnauthorizedError("Admin token required")
 
 
 class _WebhookProviderAdapter:

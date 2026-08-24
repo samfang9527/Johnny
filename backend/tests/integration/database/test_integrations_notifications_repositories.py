@@ -12,7 +12,15 @@ from src.domain.integrations_notifications import (
     SyncSummary,
 )
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
-from src.infrastructure.database.models import ActivityModel, Base, IntegrationConnectionModel, IntegrationResourceCursorModel, UserModel
+from src.infrastructure.database.models import (
+    ActivityModel,
+    Base,
+    HealthMetricModel,
+    IntegrationConnectionModel,
+    IntegrationCredentialModel,
+    IntegrationResourceCursorModel,
+    UserModel,
+)
 from src.infrastructure.database.notification_repository import SqlAlchemyNotificationRepository
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
@@ -189,6 +197,71 @@ def test_integration_repository_stores_encrypted_credentials_separately_from_con
         }
         assert connection_model.credential_secret_ref is None
         assert connection_model.provider_metadata == {}
+
+
+def test_integration_repository_disconnect_deletes_credentials_and_preserves_imported_data(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="disconnect@example.com", display_name="Disconnect Runner")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        connection = repository.create_connection(
+            user_id=user.id,
+            provider="garmin_connect",
+            provider_account_id="garmin-account-disconnect",
+            credential_format="garminconnect-session-json",
+        )
+        repository.upsert_credential(
+            IntegrationCredential.create(
+                connection_id=connection.id,
+                credential_format="garminconnect-session-json",
+                encrypted_payload="fernet:encrypted-session",
+                key_id="local-fernet",
+            )
+        )
+        activity = ActivityModel(
+            user_id=user.id,
+            provider_connection_id=connection.id,
+            provider_activity_id="garmin-activity-disconnect",
+            started_at=datetime(2027, 1, 5, 7, tzinfo=timezone.utc),
+            activity_type="running",
+            distance_meters=5000,
+            duration_seconds=1500,
+            provider_summary={"source": "garmin_connect"},
+        )
+        health = HealthMetricModel(
+            user_id=user.id,
+            provider_connection_id=connection.id,
+            provider_metric_id="garmin-body-battery-2027-01-05",
+            measured_at=datetime(2027, 1, 5, tzinfo=timezone.utc),
+            metric_type="body_battery_score",
+            value=72,
+            unit="score",
+            provider_summary={"source": "garmin_connect"},
+        )
+        uow.session.add_all([activity, health])
+        uow.session.flush()
+
+        disconnected = repository.disconnect_connection(connection.id)
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded_connection = uow.session.get(IntegrationConnectionModel, connection.id)
+        credential = uow.session.query(IntegrationCredentialModel).filter_by(integration_connection_id=connection.id).one_or_none()
+        loaded_activity = uow.session.get(ActivityModel, activity.id)
+        loaded_health = uow.session.get(HealthMetricModel, health.id)
+
+        assert disconnected.status == "disconnected"
+        assert disconnected.credential_status == "deleted"
+        assert loaded_connection.status == "disconnected"
+        assert loaded_connection.credential_status == "deleted"
+        assert loaded_connection.sync_status == "idle"
+        assert loaded_connection.disconnected_at is not None
+        assert credential is None
+        assert loaded_activity.provider_connection_id == connection.id
+        assert loaded_health.provider_connection_id == connection.id
 
 
 def test_sync_connection_lifecycle_replaces_reactivates_resets_cursors_and_preserves_history(sqlite_session_factory) -> None:

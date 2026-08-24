@@ -104,6 +104,12 @@ class SyncConnectionLifecycleStore(Protocol):
 
     def reset_resource_cursors(self, integration_connection_id: str) -> None: ...
 
+    def get_connection_for_user(self, user_id: str, connection_id: str) -> IntegrationConnectionRef | None: ...
+
+    def disconnect_connection(self, connection_id: str) -> IntegrationConnectionRef: ...
+
+    def mark_connection_credentials_active(self, connection_id: str, *, credential_format: str) -> IntegrationConnectionRef: ...
+
 
 class GarminLoginAdapter(Protocol):
     def exchange_credentials(self, *, email: str, password: str, region: str) -> GarminAccountProfile:
@@ -169,6 +175,19 @@ class ConnectGarminAccountCommand:
     email: str
     password: str
     region: str
+
+
+@dataclass(frozen=True)
+class DisconnectGarminConnectionCommand:
+    user_id: str
+    connection_id: str
+
+
+@dataclass(frozen=True)
+class AdminImportGarminTokenCommand:
+    user_id: str
+    connection_id: str
+    session_payload: str
 
 
 @dataclass(frozen=True)
@@ -271,6 +290,53 @@ class ConnectGarminAccountHandler:
             )
         )
         return connection
+
+
+class DisconnectGarminConnectionHandler:
+    def __init__(
+        self,
+        *,
+        integrations: SyncConnectionLifecycleStore,
+    ) -> None:
+        self._integrations = integrations
+
+    def handle(self, command: DisconnectGarminConnectionCommand) -> IntegrationConnectionRef:
+        connection = self._integrations.get_connection_for_user(command.user_id, command.connection_id)
+        if connection is None or connection.provider != GARMIN_PROVIDER:
+            raise ValueError("integration connection not found")
+        return self._integrations.disconnect_connection(connection.id)
+
+
+class AdminImportGarminTokenHandler:
+    def __init__(
+        self,
+        *,
+        integrations: SyncConnectionLifecycleStore,
+        credentials: IntegrationCredentialStore,
+        cipher: CredentialCipher,
+    ) -> None:
+        self._integrations = integrations
+        self._credentials = credentials
+        self._cipher = cipher
+
+    def handle(self, command: AdminImportGarminTokenCommand) -> IntegrationConnectionRef:
+        connection = self._integrations.get_connection_for_user(command.user_id, command.connection_id)
+        if connection is None or connection.provider != GARMIN_PROVIDER:
+            raise ValueError("integration connection not found")
+        encrypted_payload = self._cipher.encrypt(command.session_payload)
+        self._credentials.upsert_credential(
+            IntegrationCredential.create(
+                connection_id=connection.id,
+                credential_format=GARMIN_CREDENTIAL_FORMAT,
+                encrypted_payload=encrypted_payload,
+                key_id=self._cipher.key_id,
+                lifecycle_metadata={"source": "admin_import"},
+            )
+        )
+        return self._integrations.mark_connection_credentials_active(
+            connection.id,
+            credential_format=GARMIN_CREDENTIAL_FORMAT,
+        )
 
 
 class GarminInitialSyncHandler:

@@ -58,6 +58,8 @@ Users can have only one active sync provider connection at a time. `POST /api/v1
 - Connecting the same `(provider, provider_account_id)` again for the same user reactivates the existing row instead of creating a duplicate.
 - Connecting a provider account that belongs to another user returns a conflict error.
 - Replaced connection rows and imported activity/health records are preserved so historical data keeps provider provenance.
+- `DELETE /api/v1/integrations/connections/{connection_id}` disconnects a Garmin connection, deletes its encrypted credential row, and preserves imported activity/health records.
+- `POST /api/v1/integrations/connections/{connection_id}/admin-token-import` is backend-only and requires `X-Johnny-Admin-Token` matching `JOHNNY_ADMIN_TOKEN`; it stores an encrypted Garmin session payload without returning the raw payload.
 
 ## Route Groups
 
@@ -80,5 +82,7 @@ Users can have only one active sync provider connection at a time. `POST /api/v1
 - `POST /api/v1/recommendations/{recommendation_id}/discuss`
 - `POST /api/v1/conversations/messages`
 - `POST /api/v1/integrations/connections`
+- `DELETE /api/v1/integrations/connections/{connection_id}`
+- `POST /api/v1/integrations/connections/{connection_id}/admin-token-import`
 - `POST /api/v1/integrations/connections/{connection_id}/sync`
 - `POST /api/v1/integrations/webhooks/{provider}/{connection_id}`

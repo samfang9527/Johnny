@@ -44,6 +44,10 @@ Garmin sync treats expired, revoked, MFA-blocked, or otherwise credential-blocke
 
 `POST /api/v1/integrations/connections/{connection_id}/sync` triggers a synchronous manual Garmin sync for the active connection. It returns the same connection response shape as Garmin connect, including resource counts, redacted errors, timestamps, partial-failure warnings, and reauth state. If the connection already has a running sync and a started sync run exists, the endpoint returns that running status instead of starting another sync; if the connection is marked running without a matching started run, it returns a conflict.
 
+`DELETE /api/v1/integrations/connections/{connection_id}` disconnects a Garmin connection by deleting its encrypted credential row and marking the connection `disconnected`. Imported Garmin activities and daily health metrics keep their `provider_connection_id` so historical provenance remains available.
+
+`POST /api/v1/integrations/connections/{connection_id}/admin-token-import` is the backend-only MFA escape hatch for the MVP. It requires `X-Johnny-Admin-Token` to match `JOHNNY_ADMIN_TOKEN`, encrypts the supplied Garmin session payload, stores only non-sensitive lifecycle metadata, and returns the normal redacted connection response.
+
 ## Notification Flow
 
 ```mermaid
@@ -71,6 +75,7 @@ sequenceDiagram
 ## Schema Notes
 
 - `integration_connections.credential_secret_ref` stores only a reference to a token store or secret manager entry. It must not contain Garmin email/password, access tokens, refresh tokens, cookies, or session payloads. Private/self-hosted `garminconnect` mode may store encrypted session/token payloads in a dedicated credential store; Garmin passwords are used only once in memory for session exchange and then discarded. Raw passwords, cookies, unencrypted token-store JSON, and unencrypted provider tokens must not appear in connection metadata, logs, sync summaries, provider summaries, or API responses.
+- Disconnect deletes the encrypted credential record, not imported data. Admin token import writes a fresh encrypted credential and marks credentials active without adding a public token-import UI.
 - Garmin ingestion is compatible with `garminconnect` payload shapes, but the database schema remains provider-neutral through `provider`, `provider_connection_id`, provider IDs, JSON summaries, and resource cursors.
 - `activities` deduplicates imported activities by `provider_connection_id` and `provider_activity_id`.
 - Daily health payloads are mapped into the supported `DailyHealthMetrics` fields and persisted as one row per metric type for each day, matching the existing `health_metrics` table design.
