@@ -3,8 +3,10 @@ from datetime import date, datetime, timezone
 
 from src.application.integrations import (
     GARMIN_SYNC_RESOURCES,
+    GarminCredentialBlockedError,
     GarminInitialSyncCommand,
     GarminInitialSyncHandler,
+    GarminRateLimitError,
     GarminResourceFetchResult,
 )
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
@@ -162,13 +164,178 @@ def test_garmin_initial_sync_does_not_advance_cursor_for_resource_with_item_fail
     assert "sleep" in integrations.advanced_cursors
 
 
+def test_garmin_initial_sync_marks_requires_reauth_and_stops_fetching_after_credential_block() -> None:
+    integrations = _FakeIntegrationStore()
+    adapter = _FakeGarminResourceAdapter(
+        results={},
+        failures={"activities": GarminCredentialBlockedError("oauth2_token expired; cookie=session-secret")},
+    )
+
+    summary = GarminInitialSyncHandler(
+        integrations=integrations,
+        activities=_FakeActivityStore(),
+        outbox=_FakeOutboxStore(),
+        garmin=adapter,
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=_normalize_health,
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id="user-1",
+            connection_id="conn-1",
+            as_of=datetime(2027, 1, 31, tzinfo=timezone.utc),
+        )
+    )
+
+    payload = summary.to_payload()["resources"]
+    assert payload["activities"]["failed"] == 1
+    assert payload["activities"]["errors"] == ["Garmin connection requires reauth"]
+    assert integrations.connection.credential_status == "requires_reauth"
+    assert integrations.completed_status == "failed"
+    assert integrations.advanced_cursors == {}
+    assert [call["resource_type"] for call in adapter.calls] == ["activities"]
+
+
+def test_garmin_initial_sync_records_rate_limit_backoff_without_reauth() -> None:
+    integrations = _FakeIntegrationStore()
+    adapter = _FakeGarminResourceAdapter(
+        results={},
+        failures={"activities": GarminRateLimitError("Garmin rate limit exceeded", retry_after_seconds=900)},
+    )
+
+    summary = GarminInitialSyncHandler(
+        integrations=integrations,
+        activities=_FakeActivityStore(),
+        outbox=_FakeOutboxStore(),
+        garmin=adapter,
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=_normalize_health,
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id="user-1",
+            connection_id="conn-1",
+            as_of=datetime(2027, 1, 31, tzinfo=timezone.utc),
+        )
+    )
+
+    payload = summary.to_payload()["resources"]
+    assert payload["activities"]["failed"] == 1
+    assert payload["activities"]["errors"] == ["Garmin rate limit exceeded"]
+    assert payload["activities"]["backoff"] == {"retry_after_seconds": 900}
+    assert integrations.connection.credential_status == "active"
+    assert integrations.completed_status == "failed"
+    assert integrations.advanced_cursors == {}
+    assert [call["resource_type"] for call in adapter.calls] == ["activities"]
+
+
+def test_garmin_initial_sync_classifies_raw_provider_auth_and_rate_limit_errors() -> None:
+    auth_integrations = _FakeIntegrationStore()
+    GarminInitialSyncHandler(
+        integrations=auth_integrations,
+        activities=_FakeActivityStore(),
+        outbox=_FakeOutboxStore(),
+        garmin=_FakeGarminResourceAdapter(results={}, failures={"activities": RuntimeError('MFA required for {"sid":"abc"}')}),
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=_normalize_health,
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id="user-1",
+            connection_id="conn-1",
+            as_of=datetime(2027, 1, 31, tzinfo=timezone.utc),
+        )
+    )
+
+    rate_integrations = _FakeIntegrationStore()
+    rate_summary = GarminInitialSyncHandler(
+        integrations=rate_integrations,
+        activities=_FakeActivityStore(),
+        outbox=_FakeOutboxStore(),
+        garmin=_FakeGarminResourceAdapter(
+            results={},
+            failures={"activities": RuntimeError("HTTP 429 Too Many Requests Retry-After: 120 opaque-provider-value")},
+        ),
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=_normalize_health,
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id="user-1",
+            connection_id="conn-1",
+            as_of=datetime(2027, 1, 31, tzinfo=timezone.utc),
+        )
+    )
+
+    assert auth_integrations.connection.credential_status == "requires_reauth"
+    assert auth_integrations.completed_status == "failed"
+    assert rate_integrations.connection.credential_status == "active"
+    assert rate_integrations.completed_status == "failed"
+    assert rate_summary.to_payload()["resources"]["activities"]["backoff"] == {"retry_after_seconds": 120}
+    assert rate_summary.to_payload()["resources"]["activities"]["errors"] == ["Garmin rate limit exceeded"]
+
+
+def test_garmin_initial_sync_classifies_temporary_403_block_as_failed_sync_not_reauth() -> None:
+    integrations = _FakeIntegrationStore()
+
+    summary = GarminInitialSyncHandler(
+        integrations=integrations,
+        activities=_FakeActivityStore(),
+        outbox=_FakeOutboxStore(),
+        garmin=_FakeGarminResourceAdapter(
+            results={},
+            failures={"activities": RuntimeError("HTTP 403 temporarily blocked Retry-After: 900")},
+        ),
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=_normalize_health,
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id="user-1",
+            connection_id="conn-1",
+            as_of=datetime(2027, 1, 31, tzinfo=timezone.utc),
+        )
+    )
+
+    assert integrations.connection.credential_status == "active"
+    assert integrations.completed_status == "failed"
+    assert summary.to_payload()["resources"]["activities"]["errors"] == ["Garmin temporary sync failure"]
+    assert summary.to_payload()["resources"]["activities"]["backoff"] == {"retry_after_seconds": 900}
+
+
+def test_garmin_initial_sync_does_not_fetch_when_connection_already_requires_reauth() -> None:
+    integrations = _FakeIntegrationStore(credential_status="requires_reauth")
+    adapter = _FakeGarminResourceAdapter(results={resource: GarminResourceFetchResult() for resource in GARMIN_SYNC_RESOURCES})
+
+    summary = GarminInitialSyncHandler(
+        integrations=integrations,
+        activities=_FakeActivityStore(),
+        outbox=_FakeOutboxStore(),
+        garmin=adapter,
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=_normalize_health,
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id="user-1",
+            connection_id="conn-1",
+            as_of=datetime(2027, 1, 31, tzinfo=timezone.utc),
+        )
+    )
+
+    assert summary.to_payload()["resources"]["sync"]["errors"] == ["Garmin connection requires reauth"]
+    assert integrations.started_count == 0
+    assert adapter.calls == []
+
+
 class _FakeIntegrationStore:
-    def __init__(self, provider_timezone: str | None = "Asia/Taipei") -> None:
+    def __init__(self, provider_timezone: str | None = "Asia/Taipei", credential_status: str = "active") -> None:
         self.connection = IntegrationConnectionRef.create(
             id="conn-1",
             user_id="user-1",
             provider="garmin_connect",
             provider_metadata={"timezone": provider_timezone} if provider_timezone else {},
+            credential_status=credential_status,
         )
         self.sync_run = SyncRun.start(
             id="sync-1",
@@ -178,6 +345,8 @@ class _FakeIntegrationStore:
         self.cursors = {"activities": {"after": "old-activity"}}
         self.advanced_cursors: dict[str, dict] = {}
         self.completed_summary: SyncSummary | None = None
+        self.completed_status: str | None = None
+        self.started_count = 0
 
     def get_connection_for_user(self, user_id: str, connection_id: str) -> IntegrationConnectionRef | None:
         if user_id == self.connection.user_id and connection_id == self.connection.id:
@@ -185,14 +354,33 @@ class _FakeIntegrationStore:
         return None
 
     def start_sync_run(self, integration_connection_id: str) -> SyncRun:
+        self.started_count += 1
         return self.sync_run
 
-    def complete_sync_run(self, sync_run_id: str, summary: SyncSummary) -> SyncRun:
+    def complete_sync_run(self, sync_run_id: str, summary: SyncSummary, *, status: str = "succeeded") -> SyncRun:
         self.completed_summary = summary
-        return self.sync_run.complete(summary, finished_at=datetime(2027, 1, 31, 0, 1, tzinfo=timezone.utc))
+        self.completed_status = status
+        return self.sync_run.complete(summary, finished_at=datetime(2027, 1, 31, 0, 1, tzinfo=timezone.utc), status=status)
 
     def fail_sync_run(self, sync_run_id: str, error: str) -> SyncRun:
         raise AssertionError("initial sync should record resource failures without failing the whole run")
+
+    def mark_connection_requires_reauth(self, connection_id: str, error: str) -> IntegrationConnectionRef:
+        self.connection = IntegrationConnectionRef.create(
+            id=self.connection.id,
+            user_id=self.connection.user_id,
+            provider=self.connection.provider,
+            provider_account_id=self.connection.provider_account_id,
+            provider_display_name=self.connection.provider_display_name,
+            auth_scheme=self.connection.auth_scheme,
+            credential_secret_ref=self.connection.credential_secret_ref,
+            credential_format=self.connection.credential_format,
+            credential_status="requires_reauth",
+            status=self.connection.status,
+            capabilities=self.connection.capabilities,
+            provider_metadata=self.connection.provider_metadata,
+        )
+        return self.connection
 
     def get_resource_cursor(self, integration_connection_id: str, resource_type: str) -> dict | None:
         return self.cursors.get(resource_type)

@@ -45,10 +45,13 @@ class IntegrationStore(Protocol):
     def start_sync_run(self, integration_connection_id: str) -> SyncRun:
         ...
 
-    def complete_sync_run(self, sync_run_id: str, summary: SyncSummary) -> SyncRun:
+    def complete_sync_run(self, sync_run_id: str, summary: SyncSummary, *, status: str = "succeeded") -> SyncRun:
         ...
 
     def fail_sync_run(self, sync_run_id: str, error: str) -> SyncRun:
+        ...
+
+    def mark_connection_requires_reauth(self, integration_connection_id: str, error: str) -> IntegrationConnectionRef:
         ...
 
     def get_resource_cursor(self, integration_connection_id: str, resource_type: str) -> dict[str, Any] | None:

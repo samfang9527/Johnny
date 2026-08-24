@@ -40,6 +40,8 @@ sequenceDiagram
 
 The password is used only during the in-memory exchange. Session/token material is encrypted through the integration credential cipher and stored in `integration_credentials`; `integration_connections` remains metadata and keeps `credential_secret_ref` empty for this mode. Normal tests override the Garmin login adapter and credential cipher so they remain network-free.
 
+Garmin sync treats expired, revoked, MFA-blocked, or otherwise credential-blocked sessions as a reauth state: the connection remains connected for historical provenance, but `credential_status` becomes `requires_reauth` and future sync work must wait for a user/admin reconnect action. Garmin rate limits and temporary blocking errors are recorded as failed sync summaries with redacted error text and provider backoff metadata when available; they do not mark credentials as invalid unless the adapter raises a credential-blocked error.
+
 ## Notification Flow
 
 ```mermaid

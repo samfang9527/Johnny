@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,6 +26,12 @@ class IntegrationConnectionResponse(BaseModel):
     credential_secret_ref: str | None = None
     credential_format: str | None = None
     credential_status: str = "active"
+    sync_status: str = "idle"
+    last_sync_started_at: datetime | None = None
+    last_sync_completed_at: datetime | None = None
+    last_sync_error: str | None = None
+    has_partial_failures: bool = False
+    sync_warning: str | None = None
     sync_summary: SyncSummaryResponse | None = None
 
 

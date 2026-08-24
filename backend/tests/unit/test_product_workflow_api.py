@@ -346,6 +346,13 @@ def test_garmin_connect_endpoint_uses_discovered_identity_and_redacts_credential
     assert data["provider_display_name"] == "Garmin Runner"
     assert data["credential_secret_ref"] is None
     assert data["credential_format"] == "garminconnect-session-json"
+    assert data["credential_status"] == "active"
+    assert data["sync_status"] == "idle"
+    assert data["last_sync_started_at"] is not None
+    assert data["last_sync_completed_at"] is not None
+    assert data["last_sync_error"] is None
+    assert data["has_partial_failures"] is False
+    assert data["sync_warning"] is None
     assert data["sync_summary"]["resources"]["activities"]["stored"] == 1
     assert data["sync_summary"]["resources"]["sleep"]["stored"] == 1
     assert data["sync_summary"]["resources"]["hrv"]["stored"] == 1
@@ -375,6 +382,84 @@ def test_garmin_connect_endpoint_uses_discovered_identity_and_redacts_credential
     assert health.json()["data"][0]["values"]["resting_heart_rate"] == 48
     assert health.json()["data"][0]["values"]["stress_score"] == 31
     assert health.json()["data"][0]["values"]["body_battery_score"] == 72
+
+
+def test_garmin_connect_endpoint_returns_reauth_state_when_initial_sync_is_credential_blocked() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+    from src.api.routes.integrations import get_garmin_credential_cipher, get_garmin_login_adapter, get_garmin_resource_adapter
+    from src.application.integrations import GarminAccountProfile
+
+    client = create_sqlite_test_client()
+    client.app.dependency_overrides[get_garmin_login_adapter] = lambda: _ApiFakeGarminLoginAdapter(
+        GarminAccountProfile(
+            provider_account_id="garmin-account-reauth",
+            display_name="Garmin Runner",
+            session_payload='{"oauth2_token":"secret-token"}',
+        )
+    )
+    client.app.dependency_overrides[get_garmin_credential_cipher] = lambda: _ApiFakeCipher()
+    client.app.dependency_overrides[get_garmin_resource_adapter] = lambda: _ApiFakeGarminCredentialBlockedResourceAdapter()
+
+    response = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "email": "runner@example.com",
+            "password": "garmin-password",
+            "region": "global",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["credential_status"] == "requires_reauth"
+    assert data["sync_status"] == "failed"
+    assert data["last_sync_started_at"] is not None
+    assert data["last_sync_completed_at"] is not None
+    assert data["last_sync_error"] == "Garmin connection requires reauth"
+    assert data["has_partial_failures"] is False
+    assert data["sync_warning"] == "Garmin connection requires reauth"
+    assert data["sync_summary"]["resources"]["activities"]["errors"] == ["Garmin connection requires reauth"]
+    assert "session-secret" not in response.text
+    assert "secret-token" not in response.text
+    assert "garmin-password" not in response.text
+
+
+def test_garmin_connect_endpoint_reports_partial_failure_after_zero_item_successes() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+    from src.api.routes.integrations import get_garmin_credential_cipher, get_garmin_login_adapter, get_garmin_resource_adapter
+    from src.application.integrations import GarminAccountProfile
+
+    client = create_sqlite_test_client()
+    client.app.dependency_overrides[get_garmin_login_adapter] = lambda: _ApiFakeGarminLoginAdapter(
+        GarminAccountProfile(
+            provider_account_id="garmin-account-partial",
+            display_name="Garmin Runner",
+            session_payload='{"oauth2_token":"secret-token"}',
+        )
+    )
+    client.app.dependency_overrides[get_garmin_credential_cipher] = lambda: _ApiFakeCipher()
+    client.app.dependency_overrides[get_garmin_resource_adapter] = lambda: _ApiFakeGarminZeroItemPartialFailureResourceAdapter()
+
+    response = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "email": "runner@example.com",
+            "password": "garmin-password",
+            "region": "global",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["credential_status"] == "active"
+    assert data["sync_status"] == "idle"
+    assert data["has_partial_failures"] is True
+    assert data["sync_warning"] == "Some Garmin resources failed to sync"
+    assert data["sync_summary"]["resources"]["activities"]["fetched"] == 0
+    assert data["sync_summary"]["resources"]["body_battery"]["errors"] == ["Garmin resource sync failed"]
+    assert "abc-session" not in response.text
 
 
 def test_garmin_connect_endpoint_rejects_user_entered_provider_account_id(monkeypatch) -> None:
@@ -509,3 +594,19 @@ class _ApiFakeGarminResourceAdapter:
             "body_battery": [{"calendarDate": "2027-01-10", "get_body_battery": {"bodyBatteryValuesArray": [[0, 72]]}}],
         }
         return GarminResourceFetchResult(items=payloads.get(resource_type, []), cursor={"date": end_date.isoformat()})
+
+
+class _ApiFakeGarminCredentialBlockedResourceAdapter:
+    def fetch_resource(self, *, connection, resource_type, start_date, end_date, timezone_name, cursor):
+        from src.application.integrations import GarminCredentialBlockedError
+
+        raise GarminCredentialBlockedError("session cookie=session-secret expired")
+
+
+class _ApiFakeGarminZeroItemPartialFailureResourceAdapter:
+    def fetch_resource(self, *, connection, resource_type, start_date, end_date, timezone_name, cursor):
+        from src.application.integrations import GarminResourceFetchResult
+
+        if resource_type == "body_battery":
+            raise RuntimeError('{"sid":"abc-session"}')
+        return GarminResourceFetchResult(items=[], cursor={"date": end_date.isoformat()})

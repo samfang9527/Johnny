@@ -72,6 +72,38 @@ def test_integration_repository_failed_sync_records_safe_error(sqlite_session_fa
         assert failed.summary.to_payload()["resources"]["sync"]["errors"] == ["credential or token details redacted"]
 
 
+def test_integration_repository_records_reauth_and_failed_sync_summary(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="reauth-sync@example.com", display_name="Reauth Sync")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        connection = repository.create_connection(user_id=user.id, provider="garmin_connect", provider_account_id="acct-reauth")
+        run = repository.start_sync_run(connection.id)
+        summary = SyncSummary.empty().record_failed("activities", "Garmin rate limit exceeded", backoff={"retry_after_seconds": 900})
+        completed = repository.complete_sync_run(run.id, summary, status="failed")
+        marked = repository.mark_connection_requires_reauth(connection.id, "cookie=session-secret expired")
+        uow.commit()
+
+        assert completed.status == "failed"
+        assert completed.summary.to_payload()["resources"]["activities"]["backoff"] == {"retry_after_seconds": 900}
+        assert marked.credential_status == "requires_reauth"
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        loaded = repository.get_connection_for_user(user.id, connection.id)
+        connection_model = uow.session.get(IntegrationConnectionModel, connection.id)
+
+        assert loaded is not None
+        assert loaded.credential_status == "requires_reauth"
+        assert connection_model.sync_status == "failed"
+        assert connection_model.last_sync_started_at is not None
+        assert connection_model.last_sync_completed_at is not None
+        assert connection_model.last_sync_error == "credential or token details redacted"
+
+
 def test_integration_repository_stores_encrypted_credentials_separately_from_connection_metadata(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
 

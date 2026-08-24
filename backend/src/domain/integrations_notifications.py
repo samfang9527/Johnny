@@ -10,6 +10,31 @@ class DomainValidationError(ValueError):
 
 
 _UNSAFE_METADATA = object()
+_SENSITIVE_TEXT_MARKERS = ("password", "token", "secret", "credential", "cookie", "session", "bearer", "authorization")
+_SENSITIVE_KEY_MARKERS = (*_SENSITIVE_TEXT_MARKERS, "email")
+_RAW_SECRET_VALUE_MARKERS = (
+    "password",
+    "token=",
+    "oauth2_token",
+    "refresh_token",
+    "access_token",
+    "cookie",
+    "session_id",
+    "bearer ",
+    "authorization:",
+    "{",
+)
+_SAFE_ERROR_SUMMARIES = {
+    "credential or token details redacted",
+    "Garmin activity import failed",
+    "Garmin connection requires reauth",
+    "Garmin health import failed",
+    "Garmin rate limit exceeded",
+    "Garmin resource sync failed",
+    "Garmin sync failed",
+    "Garmin temporary sync failure",
+    "sync error details redacted",
+}
 
 
 @dataclass(frozen=True)
@@ -24,6 +49,10 @@ class IntegrationConnectionRef:
     credential_format: str | None = None
     credential_status: str = "active"
     status: str = "active"
+    sync_status: str = "idle"
+    last_sync_started_at: datetime | None = None
+    last_sync_completed_at: datetime | None = None
+    last_sync_error: str | None = None
     capabilities: dict[str, Any] | None = None
     provider_metadata: dict[str, Any] | None = None
 
@@ -36,6 +65,8 @@ class IntegrationConnectionRef:
             raise DomainValidationError("provider is required")
         if self.status not in {"active", "replaced", "disconnected"}:
             raise DomainValidationError("integration connection status is not supported")
+        if self.sync_status not in {"idle", "running", "failed"}:
+            raise DomainValidationError("integration connection sync status is not supported")
         if self.credential_secret_ref and _looks_like_raw_secret(self.credential_secret_ref):
             raise DomainValidationError("credential_secret_ref must reference a secret, not contain credentials")
         object.__setattr__(self, "capabilities", dict(self.capabilities or {}))
@@ -55,6 +86,10 @@ class IntegrationConnectionRef:
         credential_format: str | None = None,
         credential_status: str = "active",
         status: str = "active",
+        sync_status: str = "idle",
+        last_sync_started_at: datetime | None = None,
+        last_sync_completed_at: datetime | None = None,
+        last_sync_error: str | None = None,
         capabilities: dict[str, Any] | None = None,
         provider_metadata: dict[str, Any] | None = None,
     ) -> IntegrationConnectionRef:
@@ -69,6 +104,10 @@ class IntegrationConnectionRef:
             credential_format=credential_format,
             credential_status=credential_status,
             status=status,
+            sync_status=sync_status,
+            last_sync_started_at=last_sync_started_at,
+            last_sync_completed_at=last_sync_completed_at,
+            last_sync_error=_safe_error_summary(last_sync_error) if last_sync_error else None,
             capabilities=capabilities,
             provider_metadata=provider_metadata,
         )
@@ -84,6 +123,10 @@ class IntegrationConnectionRef:
             "credential_format": self.credential_format,
             "credential_status": self.credential_status,
             "status": self.status,
+            "sync_status": self.sync_status,
+            "last_sync_started_at": self.last_sync_started_at,
+            "last_sync_completed_at": self.last_sync_completed_at,
+            "last_sync_error": self.last_sync_error,
             "capabilities": dict(self.capabilities or {}),
             "provider_metadata": dict(self.provider_metadata or {}),
         }
@@ -209,11 +252,21 @@ class SyncSummary:
     def record_duplicate(self, resource_type: str, count: int = 1) -> SyncSummary:
         return self._increment(resource_type, "duplicates", count)
 
-    def record_failed(self, resource_type: str, error: str, count: int = 1) -> SyncSummary:
+    def record_failed(
+        self,
+        resource_type: str,
+        error: str,
+        count: int = 1,
+        *,
+        backoff: dict[str, Any] | None = None,
+    ) -> SyncSummary:
         resources = _copy_resources(self.resources)
         bucket = _bucket(resources, resource_type)
         bucket["failed"] += count
         bucket["errors"].append(_safe_error_summary(error))
+        safe_backoff = _safe_backoff_metadata(backoff or {})
+        if safe_backoff:
+            bucket["backoff"] = safe_backoff
         return SyncSummary(resources=resources)
 
     def to_payload(self) -> dict[str, Any]:
@@ -231,7 +284,10 @@ class SyncSummary:
             bucket["stored"] = int(values.get("stored", 0))
             bucket["duplicates"] = int(values.get("duplicates", 0))
             bucket["failed"] = int(values.get("failed", 0))
-            bucket["errors"] = list(values.get("errors", []))
+            bucket["errors"] = [_safe_error_summary(str(error)) for error in values.get("errors", [])]
+            safe_backoff = _safe_backoff_metadata(values.get("backoff", {}))
+            if safe_backoff:
+                bucket["backoff"] = safe_backoff
         return cls(resources=resources)
 
     def _increment(self, resource_type: str, field: str, count: int) -> SyncSummary:
@@ -263,8 +319,10 @@ class SyncRun:
     def start(cls, *, id: str, integration_connection_id: str, started_at: datetime) -> SyncRun:
         return cls(id=id, integration_connection_id=integration_connection_id, status="started", started_at=started_at)
 
-    def complete(self, summary: SyncSummary, *, finished_at: datetime) -> SyncRun:
-        return replace(self, status="succeeded", finished_at=finished_at, summary=summary)
+    def complete(self, summary: SyncSummary, *, finished_at: datetime, status: str = "succeeded") -> SyncRun:
+        if status not in {"succeeded", "failed"}:
+            raise DomainValidationError("completed sync run status is not supported")
+        return replace(self, status=status, finished_at=finished_at, summary=summary)
 
     def fail(self, error: str, *, finished_at: datetime) -> SyncRun:
         return replace(
@@ -420,10 +478,7 @@ class NotificationDelivery:
 
 def _looks_like_raw_secret(value: str) -> bool:
     lowered = value.lower()
-    return any(
-        marker in lowered
-        for marker in ("password", "token=", "oauth2_token", "refresh_token", "access_token", "cookie", "session_id", "{")
-    )
+    return any(marker in lowered for marker in _RAW_SECRET_VALUE_MARKERS)
 
 
 def _has_encrypted_payload_scheme(value: str) -> bool:
@@ -434,7 +489,7 @@ def _safe_lifecycle_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     safe: dict[str, Any] = {}
     for key, value in metadata.items():
         lowered_key = str(key).lower()
-        if any(marker in lowered_key for marker in ("password", "token", "secret", "cookie", "email")):
+        if any(marker in lowered_key for marker in _SENSITIVE_KEY_MARKERS):
             continue
         safe_value = _safe_metadata_value(value)
         if safe_value is _UNSAFE_METADATA:
@@ -466,10 +521,24 @@ def _safe_metadata_value(value: Any) -> Any:
 
 
 def _safe_error_summary(error: str) -> str:
-    lowered = error.lower()
-    if any(marker in lowered for marker in ("password", "token", "secret", "credential")):
+    if error in _SAFE_ERROR_SUMMARIES:
+        return error
+    if _looks_like_raw_secret(error):
         return "credential or token details redacted"
-    return error[:500]
+    return "sync error details redacted"
+
+
+def _safe_backoff_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in metadata.items():
+        lowered_key = str(key).lower()
+        if any(marker in lowered_key for marker in _SENSITIVE_KEY_MARKERS):
+            continue
+        safe_value = _safe_metadata_value(value)
+        if safe_value is _UNSAFE_METADATA:
+            continue
+        safe[str(key)] = safe_value
+    return safe
 
 
 def _bucket(resources: dict[str, dict[str, Any]], resource_type: str) -> dict[str, Any]:
@@ -481,13 +550,17 @@ def _bucket(resources: dict[str, dict[str, Any]], resource_type: str) -> dict[st
 
 
 def _copy_resources(resources: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {
-        resource_type: {
+    copied = {}
+    for resource_type, values in resources.items():
+        bucket = {
             "fetched": int(values.get("fetched", 0)),
             "stored": int(values.get("stored", 0)),
             "duplicates": int(values.get("duplicates", 0)),
             "failed": int(values.get("failed", 0)),
-            "errors": list(values.get("errors", [])),
+            "errors": [_safe_error_summary(str(error)) for error in values.get("errors", [])],
         }
-        for resource_type, values in resources.items()
-    }
+        safe_backoff = _safe_backoff_metadata(values.get("backoff", {}))
+        if safe_backoff:
+            bucket["backoff"] = safe_backoff
+        copied[resource_type] = bucket
+    return copied

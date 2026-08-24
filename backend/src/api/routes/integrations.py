@@ -132,6 +132,7 @@ def connect_garmin(
                 as_of=datetime.now(timezone.utc),
             )
         )
+        connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
     except ProviderAccountAlreadyConnectedError as exc:
         raise ApiConflictError(str(exc)) from exc
     except GarminIntegrationConfigurationError as exc:
@@ -199,5 +200,36 @@ def _connection_response(
         credential_secret_ref=connection.credential_secret_ref,
         credential_format=connection.credential_format,
         credential_status=connection.credential_status,
+        sync_status=connection.sync_status,
+        last_sync_started_at=connection.last_sync_started_at,
+        last_sync_completed_at=connection.last_sync_completed_at,
+        last_sync_error=connection.last_sync_error,
+        has_partial_failures=_has_partial_failures(sync_summary),
+        sync_warning=_sync_warning(connection, sync_summary),
         sync_summary=SyncSummaryResponse(**sync_summary.to_payload()) if sync_summary is not None else None,
     )
+
+
+def _has_partial_failures(sync_summary) -> bool:  # noqa: ANN001
+    has_failure, has_successful_resource = _sync_summary_failure_state(sync_summary)
+    return has_failure and has_successful_resource
+
+
+def _sync_warning(connection: IntegrationConnectionRef, sync_summary) -> str | None:  # noqa: ANN001
+    has_failure, has_successful_resource = _sync_summary_failure_state(sync_summary)
+    if not has_failure:
+        return None
+    if connection.credential_status == "requires_reauth":
+        return "Garmin connection requires reauth"
+    if has_successful_resource:
+        return "Some Garmin resources failed to sync"
+    return "Garmin sync failed"
+
+
+def _sync_summary_failure_state(sync_summary) -> tuple[bool, bool]:  # noqa: ANN001
+    if sync_summary is None:
+        return False, False
+    resources = sync_summary.to_payload()["resources"]
+    has_failure = any(int(bucket.get("failed", 0)) > 0 for bucket in resources.values())
+    has_successful_resource = any(int(bucket.get("failed", 0)) == 0 for bucket in resources.values())
+    return has_failure, has_successful_resource

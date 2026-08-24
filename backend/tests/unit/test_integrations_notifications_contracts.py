@@ -51,6 +51,10 @@ def test_connection_ref_preserves_secret_reference_without_raw_credentials() -> 
         "credential_format": "garminconnect-token-file",
         "credential_status": "active",
         "status": "active",
+        "sync_status": "idle",
+        "last_sync_started_at": None,
+        "last_sync_completed_at": None,
+        "last_sync_error": None,
         "capabilities": {"activities": True},
         "provider_metadata": {},
     }
@@ -112,7 +116,11 @@ def test_integration_credential_requires_encrypted_payload() -> None:
 
 def test_sync_summary_counts_and_safe_error_summary() -> None:
     summary = SyncSummary.empty().record_fetched("activities", 3).record_stored("activities").record_duplicate("activities")
-    failed = summary.record_failed("activities", "token=abc123 could not decode payload")
+    failed = summary.record_failed(
+        "activities",
+        "token=abc123 could not decode payload",
+        backoff={"retry_after_seconds": 900, "cookie": "session-secret"},
+    )
 
     assert failed.to_payload() == {
         "resources": {
@@ -122,9 +130,24 @@ def test_sync_summary_counts_and_safe_error_summary() -> None:
                 "duplicates": 1,
                 "failed": 1,
                 "errors": ["credential or token details redacted"],
+                "backoff": {"retry_after_seconds": 900},
             }
         }
     }
+
+    session_failed = summary.record_failed("activities", "session cookie abc123 expired")
+    raw_session_failed = summary.record_failed("activities", '{"sid":"abc123"}')
+
+    assert session_failed.to_payload()["resources"]["activities"]["errors"] == ["credential or token details redacted"]
+    assert raw_session_failed.to_payload()["resources"]["activities"]["errors"] == ["credential or token details redacted"]
+
+    rehydrated = SyncSummary.from_payload(
+        {"resources": {"activities": {"failed": 1, "errors": ['{"sid":"abc123"}']}}}
+    )
+    manually_constructed = SyncSummary(resources={"activities": {"failed": 1, "errors": ["opaque-provider-error"]}})
+
+    assert rehydrated.to_payload()["resources"]["activities"]["errors"] == ["credential or token details redacted"]
+    assert manually_constructed.to_payload()["resources"]["activities"]["errors"] == ["sync error details redacted"]
 
 
 def test_sync_run_lifecycle_records_safe_summary() -> None:

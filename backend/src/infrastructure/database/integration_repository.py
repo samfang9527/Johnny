@@ -188,17 +188,22 @@ class SqlAlchemyIntegrationRepository:
         self._session.flush()
         return _sync_run_from_model(model)
 
-    def complete_sync_run(self, sync_run_id: str, summary: SyncSummary) -> SyncRun:
+    def complete_sync_run(self, sync_run_id: str, summary: SyncSummary, *, status: str = "succeeded") -> SyncRun:
         run = self._require_sync_run(sync_run_id)
         now = utc_now()
-        run.status = "succeeded"
+        if status not in {"succeeded", "failed"}:
+            raise ValueError(f"Sync run status is not supported: {status}")
+        run.status = status
         run.finished_at = now
         run.summary = summary.to_payload()
         connection = self._session.get(IntegrationConnectionModel, run.integration_connection_id)
         if connection is not None:
-            connection.sync_status = "idle"
+            connection.sync_status = "idle" if status == "succeeded" else "failed"
             connection.last_sync_completed_at = now
-            connection.last_sync_error = None
+            if status == "succeeded":
+                connection.last_sync_error = None
+            else:
+                connection.last_sync_error = _first_summary_error(summary)
         self._session.flush()
         return _sync_run_from_model(run)
 
@@ -212,9 +217,19 @@ class SqlAlchemyIntegrationRepository:
         connection = self._session.get(IntegrationConnectionModel, run.integration_connection_id)
         if connection is not None:
             connection.sync_status = "failed"
+            connection.last_sync_completed_at = now
             connection.last_sync_error = failed.summary.to_payload()["resources"]["sync"]["errors"][0]
         self._session.flush()
         return _sync_run_from_model(run)
+
+    def mark_connection_requires_reauth(self, integration_connection_id: str, error: str) -> IntegrationConnectionRef:
+        connection = self._require_connection(integration_connection_id)
+        safe_error = SyncSummary.empty().record_failed("sync", error).to_payload()["resources"]["sync"]["errors"][0]
+        connection.credential_status = "requires_reauth"
+        connection.sync_status = "failed"
+        connection.last_sync_error = safe_error
+        self._session.flush()
+        return _connection_from_model(connection)
 
     def get_resource_cursor(self, integration_connection_id: str, resource_type: str) -> dict | None:
         cursor = self._session.scalar(
@@ -281,6 +296,10 @@ def _connection_from_model(model: IntegrationConnectionModel) -> IntegrationConn
         credential_format=model.credential_format,
         credential_status=model.credential_status,
         status=model.status,
+        sync_status=model.sync_status,
+        last_sync_started_at=model.last_sync_started_at,
+        last_sync_completed_at=model.last_sync_completed_at,
+        last_sync_error=model.last_sync_error,
         capabilities=model.capabilities or {},
         provider_metadata=model.provider_metadata or {},
     )
@@ -308,3 +327,11 @@ def _sync_run_from_model(model: SyncRunModel) -> SyncRun:
         finished_at=model.finished_at,
         summary=SyncSummary.from_payload(model.summary),
     )
+
+
+def _first_summary_error(summary: SyncSummary) -> str:
+    for bucket in summary.to_payload()["resources"].values():
+        errors = bucket.get("errors", [])
+        if errors:
+            return str(errors[0])
+    return "sync failed"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Protocol
@@ -33,6 +34,41 @@ class GarminAuthenticationError(ValueError):
 
 class GarminIntegrationConfigurationError(RuntimeError):
     pass
+
+
+class GarminCredentialBlockedError(RuntimeError):
+    pass
+
+
+class _GarminBackoffSyncError(RuntimeError):
+    safe_summary = "Garmin sync failed"
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        retry_after_seconds: int | None = None,
+        backoff_until: str | None = None,
+    ) -> None:
+        super().__init__(message or self.safe_summary)
+        self.retry_after_seconds = retry_after_seconds
+        self.backoff_until = backoff_until
+
+    def backoff_metadata(self) -> dict[str, int | str]:
+        metadata: dict[str, int | str] = {}
+        if self.retry_after_seconds is not None:
+            metadata["retry_after_seconds"] = self.retry_after_seconds
+        if self.backoff_until is not None:
+            metadata["backoff_until"] = self.backoff_until
+        return metadata
+
+
+class GarminRateLimitError(_GarminBackoffSyncError):
+    safe_summary = "Garmin rate limit exceeded"
+
+
+class GarminTemporarySyncError(_GarminBackoffSyncError):
+    safe_summary = "Garmin temporary sync failure"
 
 
 class SyncConnectionLifecycleStore(Protocol):
@@ -260,12 +296,15 @@ class GarminInitialSyncHandler:
         connection = self._integrations.get_connection_for_user(command.user_id, command.connection_id)
         if connection is None:
             raise ValueError("integration connection not found")
+        if connection.credential_status == "requires_reauth":
+            return SyncSummary.empty().record_failed("sync", "Garmin connection requires reauth")
 
         sync_run = self._integrations.start_sync_run(connection.id)
         timezone_name = self._timezone_name(command.user_id, connection)
         end_date = _local_date(command.as_of or datetime.now(timezone.utc), timezone_name)
         start_date = end_date - timedelta(days=29)
         summary = SyncSummary.empty()
+        sync_status = "succeeded"
 
         for resource_type in GARMIN_SYNC_RESOURCES:
             cursor = self._integrations.get_resource_cursor(connection.id, resource_type)
@@ -289,10 +328,35 @@ class GarminInitialSyncHandler:
                         sync_from=_start_of_day(start_date),
                         sync_until=_end_of_day(end_date),
                     )
+            except GarminCredentialBlockedError:
+                summary = summary.record_failed(resource_type, "Garmin connection requires reauth")
+                self._integrations.mark_connection_requires_reauth(
+                    connection.id,
+                    summary.to_payload()["resources"][resource_type]["errors"][-1],
+                )
+                sync_status = "failed"
+                break
+            except _GarminBackoffSyncError as exc:
+                summary = summary.record_failed(resource_type, exc.safe_summary, backoff=exc.backoff_metadata())
+                sync_status = "failed"
+                break
             except Exception as exc:  # noqa: BLE001
-                summary = summary.record_failed(resource_type, str(exc))
+                classified = _classify_garmin_sync_exception(exc)
+                if isinstance(classified, GarminCredentialBlockedError):
+                    summary = summary.record_failed(resource_type, "Garmin connection requires reauth")
+                    self._integrations.mark_connection_requires_reauth(
+                        connection.id,
+                        summary.to_payload()["resources"][resource_type]["errors"][-1],
+                    )
+                    sync_status = "failed"
+                    break
+                if isinstance(classified, _GarminBackoffSyncError):
+                    summary = summary.record_failed(resource_type, classified.safe_summary, backoff=classified.backoff_metadata())
+                    sync_status = "failed"
+                    break
+                summary = summary.record_failed(resource_type, "Garmin resource sync failed")
 
-        self._integrations.complete_sync_run(sync_run.id, summary)
+        self._integrations.complete_sync_run(sync_run.id, summary, status=sync_status)
         return summary
 
     def _store_resource(
@@ -338,8 +402,8 @@ class GarminInitialSyncHandler:
                         source_activity_id=activity.source_activity_id or "",
                     )
                 )
-            except Exception as exc:  # noqa: BLE001
-                summary = summary.record_failed("activities", str(exc))
+            except Exception:  # noqa: BLE001
+                summary = summary.record_failed("activities", "Garmin activity import failed")
         return summary
 
     def _store_health_resource(
@@ -354,8 +418,8 @@ class GarminInitialSyncHandler:
                 metrics = self._normalize_health(user_id, payload)
                 self._activities.save_daily_health_metrics(user_id, metrics)
                 summary = summary.record_stored(resource_type)
-            except Exception as exc:  # noqa: BLE001
-                summary = summary.record_failed(resource_type, str(exc))
+            except Exception:  # noqa: BLE001
+                summary = summary.record_failed(resource_type, "Garmin health import failed")
         return summary
 
     def _timezone_name(self, user_id: str, connection: IntegrationConnectionRef) -> str:
@@ -482,3 +546,21 @@ def _valid_timezone(timezone_name: str) -> bool:
     except ZoneInfoNotFoundError:
         return False
     return True
+
+
+def _classify_garmin_sync_exception(exc: Exception) -> Exception | None:
+    message = f"{type(exc).__name__} {exc}".lower()
+    if any(marker in message for marker in ("429", "rate limit", "too many requests")):
+        return GarminRateLimitError(retry_after_seconds=_retry_after_seconds(message))
+    if any(marker in message for marker in ("temporarily blocked", "temporary block", "retry-after", "retry after", "502", "503", "504")):
+        return GarminTemporarySyncError(retry_after_seconds=_retry_after_seconds(message))
+    if any(marker in message for marker in ("mfa", "2fa", "unauthorized", "forbidden", "401", "403", "login", "reauth", "expired", "revoked")):
+        return GarminCredentialBlockedError()
+    return None
+
+
+def _retry_after_seconds(message: str) -> int | None:
+    match = re.search(r"retry[- ]after[:= ]+(\d+)", message)
+    if match is None:
+        return None
+    return int(match.group(1))
