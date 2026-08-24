@@ -38,6 +38,7 @@ def normalize_garmin_daily_health(*, user_id: str, payload: dict[str, Any]) -> D
     hrv_summary = _as_mapping(hrv_payload.get("hrvSummary"))
     rhr_payload = _as_mapping(payload.get("get_rhr_day"))
     stress_payload = _as_mapping(payload.get("get_stress_data"))
+    body_battery_payload = _as_mapping(payload.get("get_body_battery"))
 
     return DailyHealthMetrics.create(
         user_id=user_id,
@@ -53,6 +54,7 @@ def normalize_garmin_daily_health(*, user_id: str, payload: dict[str, Any]) -> D
         hrv_baseline_ms=_first_number(hrv_summary, "weeklyAvg", "baseline", "weeklyAverage"),
         resting_heart_rate=_first_number(rhr_payload, "restingHeartRate", "value"),
         stress_score=_first_number(stress_payload, "avgStressLevel", "stressScore", "value"),
+        body_battery_score=_body_battery_score(body_battery_payload),
     )
 
 
@@ -110,3 +112,17 @@ def _seconds_to_minutes(value: float | None) -> float | None:
     if value is None:
         return None
     return value / 60
+
+
+def _body_battery_score(payload: dict[str, Any]) -> float | None:
+    score = _first_number(payload, "charged", "value", "bodyBattery")
+    if score is not None:
+        return score
+
+    values = payload.get("bodyBatteryValuesArray")
+    if not isinstance(values, list):
+        return None
+    for item in reversed(values):
+        if isinstance(item, (list, tuple)) and len(item) >= 2 and item[1] is not None:
+            return float(item[1])
+    return None

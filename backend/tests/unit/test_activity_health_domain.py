@@ -88,6 +88,7 @@ def test_health_metrics_allow_full_and_sparse_daily_entries() -> None:
         hrv_baseline_ms=50,
         resting_heart_rate=48,
         stress_score=22,
+        body_battery_score=74,
     )
     sparse = DailyHealthMetrics.create(
         user_id="user-1",
@@ -98,6 +99,7 @@ def test_health_metrics_allow_full_and_sparse_daily_entries() -> None:
 
     assert full.values_by_metric_type()["sleep_duration_minutes"] == 480
     assert full.values_by_metric_type()["hrv_ms"] == 55
+    assert full.values_by_metric_type()["body_battery_score"] == 74
     assert sparse.values_by_metric_type() == {"resting_heart_rate": 49}
 
 
@@ -114,6 +116,13 @@ def test_health_metrics_reject_negative_values() -> None:
             user_id="user-1",
             metric_date=date(2027, 1, 3),
             stress_score=-1,
+        )
+
+    with pytest.raises(DomainValidationError, match="Body Battery"):
+        DailyHealthMetrics.create(
+            user_id="user-1",
+            metric_date=date(2027, 1, 3),
+            body_battery_score=-1,
         )
 
 

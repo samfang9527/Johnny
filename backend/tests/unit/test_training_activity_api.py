@@ -66,6 +66,7 @@ def test_activity_and_health_routes_create_and_list_current_user_data() -> None:
             "hrv_ms": 55,
             "hrv_baseline_ms": 52,
             "resting_heart_rate": 48,
+            "body_battery_score": 74,
         },
     )
 
@@ -86,3 +87,4 @@ def test_activity_and_health_routes_create_and_list_current_user_data() -> None:
     assert hidden.json()["data"] == []
     assert health.status_code == 200
     assert health.json()["data"][0]["values"]["hrv_ms"] == 55
+    assert health.json()["data"][0]["values"]["body_battery_score"] == 74

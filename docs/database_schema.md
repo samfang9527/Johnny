@@ -8,7 +8,7 @@ This document describes the current MVP persistence schema. SQLAlchemy models li
 - Mutable entities include `created_at` and `updated_at` timestamps through the shared timestamp mixin.
 - Queryable, sortable, joinable, and constrained fields are explicit columns.
 - JSON columns are reserved for flexible provider payloads, evidence, metadata, traces, and compact summaries.
-- Secrets are never stored directly. Integration credential fields store references to a secret store or uncommitted local token-store boundary.
+- Raw secrets are never stored directly. Integration connection metadata stores references to a secret store or uncommitted local token-store boundary. Private/self-hosted Garmin sync may store encrypted session/token payloads in dedicated credential records when that mode is configured; Garmin passwords are used only once in memory for session exchange and then discarded. Raw passwords, cookies, unencrypted token-store JSON, and unencrypted provider tokens must not be stored.
 
 ## Entity Relationship Overview
 
@@ -283,7 +283,9 @@ erDiagram
 - `credential_format`: `garminconnect_tokenstore`
 - `credential_secret_ref`: a secret/local token-store reference, not raw token JSON
 
-`integration_resource_cursors` tracks independent sync progress for each provider resource, such as `activities`, `sleep`, `steps`, `heart_rates`, `stress`, and `spo2`. This lets one resource fail or lag without making the whole connection stale.
+Private/self-hosted `garminconnect` mode may store encrypted Garmin session/token payloads in a dedicated credential store. The connection row remains metadata: it must not contain Garmin passwords, cookies, unencrypted token-store JSON, or unencrypted provider tokens. Garmin passwords are used only once in memory for session exchange and then discarded.
+
+`integration_resource_cursors` tracks independent sync progress for each provider resource, such as `activities`, `sleep`, `hrv`, `resting_heart_rate`, `stress`, and `body_battery`. This lets one resource fail or lag without making the whole connection stale.
 
 `activities` and `health_metrics` store normalized imported data. Provider-specific fields that are useful for debugging but not central to querying stay in `provider_summary`.
 

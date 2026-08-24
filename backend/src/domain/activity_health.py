@@ -109,6 +109,7 @@ class DailyHealthMetrics:
     hrv_baseline_ms: float | None = None
     resting_heart_rate: float | None = None
     stress_score: float | None = None
+    body_battery_score: float | None = None
 
     def __post_init__(self) -> None:
         if not self.user_id:
@@ -121,6 +122,7 @@ class DailyHealthMetrics:
         _validate_non_negative(self.hrv_baseline_ms, "HRV baseline")
         _validate_non_negative(self.resting_heart_rate, "resting heart rate")
         _validate_non_negative(self.stress_score, "stress score")
+        _validate_non_negative(self.body_battery_score, "Body Battery")
         if not self.values_by_metric_type():
             raise DomainValidationError("at least one health metric value is required")
 
@@ -137,6 +139,7 @@ class DailyHealthMetrics:
         hrv_baseline_ms: float | None = None,
         resting_heart_rate: float | None = None,
         stress_score: float | None = None,
+        body_battery_score: float | None = None,
     ) -> DailyHealthMetrics:
         return cls(
             user_id=user_id,
@@ -148,6 +151,7 @@ class DailyHealthMetrics:
             hrv_baseline_ms=hrv_baseline_ms,
             resting_heart_rate=resting_heart_rate,
             stress_score=stress_score,
+            body_battery_score=body_battery_score,
         )
 
     def values_by_metric_type(self) -> dict[str, float]:
@@ -158,6 +162,7 @@ class DailyHealthMetrics:
             "hrv_baseline_ms": self.hrv_baseline_ms,
             "resting_heart_rate": self.resting_heart_rate,
             "stress_score": self.stress_score,
+            "body_battery_score": self.body_battery_score,
         }
         return {metric_type: value for metric_type, value in values.items() if value is not None}
 

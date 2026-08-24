@@ -132,20 +132,30 @@ The system SHALL persist SSO provider identities separately from Johnny applicat
 
 ### Requirement: Garmin Connect Credential Lifecycle Persistence
 
-The system SHALL persist Garmin Connect integration credential/session lifecycle metadata without storing raw usernames, passwords, session cookies, token-store JSON, or provider tokens in the database.
+The system SHALL persist Garmin Connect integration credential/session lifecycle metadata without storing raw usernames, passwords, session cookies, unencrypted token-store JSON, or unencrypted provider tokens in the database. Private/self-hosted `garminconnect` mode MAY store encrypted Garmin session/token payloads in a dedicated integration credential store. Future official Garmin OAuth mode remains an external/OAuth credential boundary.
+
+Garmin passwords SHALL be used only once in memory for the session/token exchange and discarded immediately after the exchange completes or fails.
 
 #### Scenario: Garmin connection stores credential metadata
 
 - **GIVEN** a Johnny user connects Garmin through the Python `garminconnect` integration boundary
 - **WHEN** the Garmin connection is persisted
-- **THEN** the provider account identifier, auth scheme, credential format/status, credential secret reference, credential expiry, credential rotation timestamp, and last credential refresh timestamp can be stored
-- **AND** the credential secret reference points outside the database to a secret store or uncommitted local token-store file boundary
+- **THEN** the provider account identifier, auth scheme, credential format/status, credential expiry, credential rotation timestamp, and last credential refresh timestamp can be stored
+- **AND** the Garmin password has been discarded after the in-memory exchange
+- **AND** raw Garmin passwords, cookies, unencrypted token-store JSON, and unencrypted provider tokens are not stored
+
+#### Scenario: Private Garmin session payload is encrypted at rest
+
+- **GIVEN** private/self-hosted `garminconnect` mode is enabled with a valid encryption key
+- **WHEN** Garmin session or token-store payloads are persisted for reuse
+- **THEN** the payload is stored only as encrypted credential data in a dedicated credential store
+- **AND** connection metadata, logs, sync summaries, provider summaries, and API responses do not expose the raw payload
 
 #### Scenario: Garmin session credential refresh is recorded
 
 - **GIVEN** a Garmin integration connection exists
 - **WHEN** the `garminconnect` token-store data is rotated or refreshed
-- **THEN** the credential secret reference and credential lifecycle timestamps can be updated without exposing raw credentials or session data in application service records
+- **THEN** encrypted credential data and credential lifecycle timestamps can be updated without exposing raw credentials or session data in application service records
 
 ### Requirement: Integration Resource Cursor Persistence
 
@@ -153,7 +163,7 @@ The system SHALL persist sync progress independently for each data resource unde
 
 #### Scenario: Garmin resource cursors tracked independently
 
-- **GIVEN** one Garmin Connect integration connection exposes activities, sleep, steps, heart rate, stress, and SpO2 data
+- **GIVEN** one Garmin Connect integration connection exposes activities, sleep, HRV, resting heart rate, stress, and Body Battery data
 - **WHEN** sync progress is recorded for multiple resource types
 - **THEN** each resource stores its own cursor value, sync window, last successful sync timestamp, status, and metadata
 - **AND** one resource can fail or lag without marking every other resource as stale or failed
@@ -165,11 +175,11 @@ The system SHALL provide an opt-in verification step that fetches actual activit
 
 #### Scenario: Live Garmin payloads fit persistence tables
 
-- **GIVEN** a developer provides Garmin Connect access through environment credentials or a local uncommitted token-store file
+- **GIVEN** a developer provides Garmin Connect access through environment credentials, encrypted private-mode session storage, or a local uncommitted token-store file
 - **WHEN** the live Garmin schema probe runs
 - **THEN** the probe fetches recent activity and daily health data through the Python `garminconnect` package
 - **AND** it emits normalized activity and health metric records with provider identifiers, measured timestamps, metric values, units, and sanitized provider summaries
-- **AND** no raw username, password, session cookie, token-store JSON, or token value is written to the database
+- **AND** no raw username, password, session cookie, unencrypted token-store JSON, or unencrypted token value is written to the database
 
 ### Requirement: Persistence Test Coverage
 

@@ -56,6 +56,12 @@ The system SHALL derive recovery context from available daily health metrics and
 - **WHEN** sleep is below target, HRV is below baseline, resting heart rate is above baseline, or recent load has increased sharply
 - **THEN** the system returns `caution` or `rest` according to the documented MVP thresholds with the evidence values that caused it
 
+#### Scenario: Optional Body Battery evidence
+- **WHEN** daily health metrics include Body Battery for the anchor date
+- **THEN** the system includes Body Battery as explicit recovery evidence
+- **AND** Body Battery scores of 25 or lower are `rest`, scores up to 50 are `caution`, and higher scores are `ready`
+- **AND** the system still derives recovery context when Body Battery is absent
+
 #### Scenario: Unknown recovery label
 - **WHEN** required recovery inputs are missing
 - **THEN** the system returns an `unknown` readiness label and lists unavailable signals without scoring them as zero

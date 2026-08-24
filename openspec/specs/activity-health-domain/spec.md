@@ -35,7 +35,7 @@ The system SHALL derive average pace from distance and duration when average pac
 The system SHALL record daily health metrics used for recovery context.
 
 #### Scenario: Daily recovery entry
-- **WHEN** a user records sleep duration, sleep quality, HRV, HRV baseline, resting heart rate, and stress score for a date
+- **WHEN** a user records sleep duration, sleep quality, HRV, HRV baseline, resting heart rate, stress score, and Body Battery for a date
 - **THEN** the system stores normalized daily health metric values for that user and date
 
 #### Scenario: Sparse daily recovery entry
@@ -43,7 +43,7 @@ The system SHALL record daily health metrics used for recovery context.
 - **THEN** the system stores the supplied values and leaves missing values absent
 
 #### Scenario: Rejecting invalid health values
-- **WHEN** a user records negative sleep duration, HRV, resting heart rate, or stress score
+- **WHEN** a user records negative sleep duration, HRV, resting heart rate, stress score, or Body Battery
 - **THEN** the system rejects the health metric entry with a validation error
 
 ### Requirement: Duplicate Provider Activity Protection

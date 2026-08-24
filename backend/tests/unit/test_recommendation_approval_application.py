@@ -156,6 +156,7 @@ def _today_context(*, readiness: str = "rest", scheduled_workouts: tuple[dict, .
             resting_heart_rate_baseline=48,
             resting_heart_rate_delta_bpm=5,
             stress_score=70,
+            body_battery_score=None,
         ),
     )
 

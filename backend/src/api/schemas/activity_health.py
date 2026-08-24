@@ -42,6 +42,7 @@ class DailyHealthMetricsRequest(BaseModel):
     hrv_baseline_ms: float | None = Field(default=None, ge=0)
     resting_heart_rate: float | None = Field(default=None, ge=0)
     stress_score: float | None = Field(default=None, ge=0)
+    body_battery_score: float | None = Field(default=None, ge=0)
 
 
 class DailyHealthMetricsResponse(BaseModel):

@@ -18,6 +18,7 @@ HEALTH_METRIC_TYPES = {
     "hrv_baseline_ms",
     "resting_heart_rate",
     "stress_score",
+    "body_battery_score",
 }
 
 
@@ -242,6 +243,7 @@ class SqlAlchemyActivityRepository:
             hrv_baseline_ms=values.get("hrv_baseline_ms"),
             resting_heart_rate=values.get("resting_heart_rate"),
             stress_score=values.get("stress_score"),
+            body_battery_score=values.get("body_battery_score"),
         )
 
     def list_daily_health_metrics_for_user_between(
@@ -285,6 +287,7 @@ class SqlAlchemyActivityRepository:
                     hrv_baseline_ms=values.get("hrv_baseline_ms"),
                     resting_heart_rate=values.get("resting_heart_rate"),
                     stress_score=values.get("stress_score"),
+                    body_battery_score=values.get("body_battery_score"),
                 )
             )
         return metrics[offset : offset + limit if limit is not None else None]
@@ -355,4 +358,5 @@ def _metric_unit(metric_type: str) -> str | None:
         "hrv_baseline_ms": "ms",
         "resting_heart_rate": "bpm",
         "stress_score": "score",
+        "body_battery_score": "score",
     }.get(metric_type)

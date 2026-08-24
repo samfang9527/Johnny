@@ -10,7 +10,7 @@ The system SHALL fetch external activity and health data through provider adapte
 - **WHEN** a Garmin-compatible activity payload is fetched
 - **THEN** the system normalizes it into a `CompletedActivity`
 - **AND** provider-specific identity is preserved as provider connection and source activity metadata
-- **AND** raw credentials are not stored in the database
+- **AND** raw credentials are not exposed through connection metadata, logs, sync summaries, provider summaries, or API responses
 
 #### Scenario: Garmin-compatible health payload received
 - **WHEN** a Garmin-compatible daily health payload is fetched

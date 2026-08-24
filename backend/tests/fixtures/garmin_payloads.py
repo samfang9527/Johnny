@@ -18,5 +18,6 @@ GARMIN_DAILY_HEALTH_PAYLOAD = {
     "get_sleep_data": {"dailySleepDTO": {"sleepTimeSeconds": 28800}, "sleepScores": {"overall": {"value": 82}}},
     "get_hrv_data": {"hrvSummary": {"lastNightAvg": 56, "weeklyAvg": 52}},
     "get_stress_data": {"avgStressLevel": 21},
+    "get_body_battery": {"bodyBatteryValuesArray": [[1609459200000, 67]]},
     "get_steps_data": {"totalSteps": 12345},
 }

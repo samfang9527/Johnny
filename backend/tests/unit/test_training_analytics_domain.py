@@ -39,6 +39,7 @@ def _health(
     hrv_baseline_ms: float | None = None,
     resting_heart_rate: float | None = None,
     stress_score: float | None = None,
+    body_battery_score: float | None = None,
 ) -> DailyHealthMetrics:
     return DailyHealthMetrics.create(
         user_id=user_id,
@@ -48,6 +49,7 @@ def _health(
         hrv_baseline_ms=hrv_baseline_ms,
         resting_heart_rate=resting_heart_rate,
         stress_score=stress_score,
+        body_battery_score=body_battery_score,
     )
 
 
@@ -124,6 +126,7 @@ def test_recovery_context_uses_health_deltas_load_evidence_and_thresholds() -> N
                 hrv_baseline_ms=50,
                 resting_heart_rate=54,
                 stress_score=72,
+                body_battery_score=18,
             ),
         ),
         training_load=training_load,
@@ -136,6 +139,8 @@ def test_recovery_context_uses_health_deltas_load_evidence_and_thresholds() -> N
     assert recovery.readiness_label == "rest"
     assert recovery.unavailable_signals == ()
     assert recovery.evidence["stress"]["level"] == "rest"
+    assert recovery.body_battery_score == 18
+    assert recovery.evidence["body_battery"] == {"value": 18, "level": "rest"}
 
 
 def test_recovery_context_marks_missing_signals_and_uses_unknown_label() -> None:
@@ -153,6 +158,8 @@ def test_recovery_context_marks_missing_signals_and_uses_unknown_label() -> None
     assert recovery.sleep_debt_minutes is None
     assert recovery.hrv_delta_percentage is None
     assert recovery.resting_heart_rate_delta_bpm is None
+    assert recovery.body_battery_score is None
+    assert "body_battery" not in recovery.evidence
     assert set(recovery.unavailable_signals) == {
         "sleep_debt_minutes",
         "hrv_delta_percentage",

@@ -67,6 +67,7 @@ class RecoveryContext:
     resting_heart_rate_baseline: float | None
     resting_heart_rate_delta_bpm: float | None
     stress_score: float | None
+    body_battery_score: float | None
     unavailable_signals: tuple[str, ...] = ()
     evidence: dict[str, Any] | None = None
 
@@ -80,6 +81,7 @@ class RecoveryContext:
             "resting_heart_rate_baseline": self.resting_heart_rate_baseline,
             "resting_heart_rate_delta_bpm": self.resting_heart_rate_delta_bpm,
             "stress_score": self.stress_score,
+            "body_battery_score": self.body_battery_score,
             "unavailable_signals": list(self.unavailable_signals),
             "evidence": self.evidence or {},
         }
@@ -264,6 +266,14 @@ class RecoveryService:
             rest_count += int(level == "rest")
             evidence["stress"] = {"value": stress_score, "level": level}
 
+        body_battery_score = current.body_battery_score if current is not None else None
+        if body_battery_score is not None:
+            level = _level_for_body_battery(body_battery_score)
+            available_signal_count += 1
+            caution_count += int(level == "caution")
+            rest_count += int(level == "rest")
+            evidence["body_battery"] = {"value": body_battery_score, "level": level}
+
         if training_load is not None and training_load.acute_chronic_ratio is not None:
             level = _level_for_acute_chronic_ratio(training_load.acute_chronic_ratio)
             available_signal_count += 1
@@ -283,6 +293,7 @@ class RecoveryService:
             resting_heart_rate_baseline=rhr_baseline,
             resting_heart_rate_delta_bpm=rhr_delta,
             stress_score=stress_score,
+            body_battery_score=body_battery_score,
             unavailable_signals=tuple(unavailable),
             evidence=evidence,
         )
@@ -345,6 +356,14 @@ def _level_for_stress(stress_score: float) -> str:
     if stress_score >= 70:
         return "rest"
     if stress_score >= 50:
+        return "caution"
+    return "ready"
+
+
+def _level_for_body_battery(body_battery_score: float) -> str:
+    if body_battery_score <= 25:
+        return "rest"
+    if body_battery_score <= 50:
         return "caution"
     return "ready"
 

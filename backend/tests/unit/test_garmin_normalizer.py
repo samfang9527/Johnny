@@ -64,6 +64,7 @@ def test_garmin_health_normalizer_maps_supported_daily_metrics_and_ignores_unsup
         "hrv_baseline_ms": 52.0,
         "resting_heart_rate": 47.0,
         "stress_score": 21.0,
+        "body_battery_score": 67.0,
     }
 
 
@@ -76,6 +77,7 @@ def test_garmin_health_normalizer_accepts_missing_optional_fields() -> None:
     assert metrics.metric_date == date(2027, 1, 3)
     assert metrics.resting_heart_rate == 50
     assert metrics.hrv_ms is None
+    assert metrics.body_battery_score is None
 
 
 def test_garmin_health_normalizer_rejects_payload_without_supported_metrics() -> None:
