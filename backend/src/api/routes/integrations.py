@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -19,15 +20,19 @@ from src.application.integrations import (
     ConnectGarminAccountHandler,
     ConnectSyncProviderCommand,
     ConnectSyncProviderHandler,
+    GarminInitialSyncCommand,
+    GarminInitialSyncHandler,
     GarminAuthenticationError,
     GarminIntegrationConfigurationError,
     GarminLoginAdapter,
+    GarminResourceAdapter,
     ProviderAccountAlreadyConnectedError,
     ProviderSyncCommand,
     ProviderSyncHandler,
 )
 from src.domain.integrations_notifications import IntegrationConnectionRef, ProviderFetchResult
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
+from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
 from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health
@@ -48,6 +53,15 @@ def get_garmin_login_adapter() -> GarminLoginAdapter:
 
 def get_garmin_credential_cipher() -> CredentialCipher:
     return load_garmin_credential_cipher()
+
+
+class _UnavailableGarminResourceAdapter:
+    def fetch_resource(self, *, connection, resource_type, start_date, end_date, timezone_name, cursor):  # noqa: ANN001, ANN201
+        raise GarminIntegrationConfigurationError("Garmin resource adapter is not configured")
+
+
+def get_garmin_resource_adapter() -> GarminResourceAdapter:
+    return _UnavailableGarminResourceAdapter()
 
 
 @router.post("/connections", response_model=DataEnvelope[IntegrationConnectionResponse])
@@ -78,6 +92,7 @@ def connect_garmin(
     session: SessionDependency,
     garmin: GarminLoginAdapter = Depends(get_garmin_login_adapter),
     cipher: CredentialCipher = Depends(get_garmin_credential_cipher),
+    resource_adapter: GarminResourceAdapter = Depends(get_garmin_resource_adapter),
 ) -> DataEnvelope[IntegrationConnectionResponse]:
     ensure_current_user(session, current_user)
     repository = SqlAlchemyIntegrationRepository(session)
@@ -95,13 +110,35 @@ def connect_garmin(
                 region=payload.region,
             )
         )
+        sync_summary = GarminInitialSyncHandler(
+            integrations=repository,
+            activities=SqlAlchemyActivityRepository(session),
+            outbox=SqlAlchemyOutboxRepository(session),
+            garmin=resource_adapter,
+            athlete_profiles=SqlAlchemyAthleteRaceRepository(session),
+            normalize_activity=lambda user_id, provider_connection_id, activity_payload: normalize_garmin_activity(
+                user_id=user_id,
+                provider_connection_id=provider_connection_id,
+                payload=activity_payload,
+            ),
+            normalize_health=lambda user_id, health_payload: normalize_garmin_daily_health(
+                user_id=user_id,
+                payload=health_payload,
+            ),
+        ).handle(
+            GarminInitialSyncCommand(
+                user_id=current_user.id,
+                connection_id=connection.id,
+                as_of=datetime.now(timezone.utc),
+            )
+        )
     except ProviderAccountAlreadyConnectedError as exc:
         raise ApiConflictError(str(exc)) from exc
     except GarminIntegrationConfigurationError as exc:
         raise ApiUnavailableError("Garmin integration is not configured") from exc
     except GarminAuthenticationError as exc:
         raise ApiUnauthorizedError("Garmin credentials could not be verified") from exc
-    return DataEnvelope(data=_connection_response(connection))
+    return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary))
 
 
 @router.post("/webhooks/{provider}/{connection_id}")
@@ -147,7 +184,11 @@ class _WebhookProviderAdapter:
         )
 
 
-def _connection_response(connection: IntegrationConnectionRef) -> IntegrationConnectionResponse:
+def _connection_response(
+    connection: IntegrationConnectionRef,
+    *,
+    sync_summary=None,  # noqa: ANN001
+) -> IntegrationConnectionResponse:
     return IntegrationConnectionResponse(
         id=connection.id,
         user_id=connection.user_id,
@@ -158,4 +199,5 @@ def _connection_response(connection: IntegrationConnectionRef) -> IntegrationCon
         credential_secret_ref=connection.credential_secret_ref,
         credential_format=connection.credential_format,
         credential_status=connection.credential_status,
+        sync_summary=SyncSummaryResponse(**sync_summary.to_payload()) if sync_summary is not None else None,
     )

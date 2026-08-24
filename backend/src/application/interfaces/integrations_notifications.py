@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol
 
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
@@ -58,6 +59,9 @@ class IntegrationStore(Protocol):
         integration_connection_id: str,
         resource_type: str,
         cursor_value: dict[str, Any],
+        *,
+        sync_from: datetime | None = None,
+        sync_until: datetime | None = None,
     ) -> dict[str, Any]:
         ...
 

@@ -232,6 +232,9 @@ class SqlAlchemyIntegrationRepository:
         integration_connection_id: str,
         resource_type: str,
         cursor_value: dict,
+        *,
+        sync_from=None,  # noqa: ANN001
+        sync_until=None,  # noqa: ANN001
     ) -> dict:
         cursor = self._session.scalar(
             select(IntegrationResourceCursorModel).where(
@@ -246,6 +249,8 @@ class SqlAlchemyIntegrationRepository:
             )
             self._session.add(cursor)
         cursor.cursor_value = dict(cursor_value)
+        cursor.sync_from = sync_from
+        cursor.sync_until = sync_until
         cursor.status = "ready"
         cursor.last_successful_sync_at = utc_now()
         self._session.flush()

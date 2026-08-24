@@ -11,6 +11,10 @@ class IntegrationConnectionRequest(BaseModel):
     credential_secret_ref: str | None = None
 
 
+class SyncSummaryResponse(BaseModel):
+    resources: dict[str, dict[str, Any]]
+
+
 class IntegrationConnectionResponse(BaseModel):
     id: str
     user_id: str
@@ -21,6 +25,7 @@ class IntegrationConnectionResponse(BaseModel):
     credential_secret_ref: str | None = None
     credential_format: str | None = None
     credential_status: str = "active"
+    sync_summary: SyncSummaryResponse | None = None
 
 
 class GarminConnectRequest(BaseModel):
@@ -35,7 +40,3 @@ class ProviderWebhookRequest(BaseModel):
     activities: list[dict[str, Any]] = Field(default_factory=list)
     health: list[dict[str, Any]] = Field(default_factory=list)
     cursor: dict[str, Any] = Field(default_factory=dict)
-
-
-class SyncSummaryResponse(BaseModel):
-    resources: dict[str, dict[str, Any]]

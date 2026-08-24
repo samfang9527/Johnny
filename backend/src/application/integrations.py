@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.application.interfaces.integrations_notifications import (
     IntegrationCredentialStore,
@@ -10,6 +12,7 @@ from src.application.interfaces.integrations_notifications import (
     ProviderActivityStore,
     ProviderAdapter,
 )
+from src.application.interfaces.athlete_race_store import AthleteProfileStore
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.integrations_notifications import IntegrationConnectionRef, IntegrationCredential, OutboxEvent, SyncSummary
 
@@ -17,6 +20,7 @@ from src.domain.integrations_notifications import IntegrationConnectionRef, Inte
 GARMIN_PROVIDER = "garmin_connect"
 GARMIN_AUTH_SCHEME = "garminconnect_tokenstore"
 GARMIN_CREDENTIAL_FORMAT = "garminconnect-session-json"
+GARMIN_SYNC_RESOURCES = ("activities", "sleep", "hrv", "resting_heart_rate", "stress", "body_battery")
 
 
 class ProviderAccountAlreadyConnectedError(ValueError):
@@ -77,10 +81,41 @@ class CredentialCipher(Protocol):
         ...
 
 
+class GarminResourceAdapter(Protocol):
+    def fetch_resource(
+        self,
+        *,
+        connection: IntegrationConnectionRef,
+        resource_type: str,
+        start_date: date,
+        end_date: date,
+        timezone_name: str,
+        cursor: dict | None,
+    ) -> GarminResourceFetchResult:
+        ...
+
+
 @dataclass(frozen=True)
 class ProviderSyncCommand:
     user_id: str
     connection_id: str
+
+
+@dataclass(frozen=True)
+class GarminInitialSyncCommand:
+    user_id: str
+    connection_id: str
+    as_of: datetime | None = None
+
+
+@dataclass(frozen=True)
+class GarminResourceFetchResult:
+    items: tuple[dict, ...] = ()
+    cursor: dict | None = None
+
+    def __init__(self, items: list[dict] | tuple[dict, ...] | None = None, cursor: dict | None = None) -> None:
+        object.__setattr__(self, "items", tuple(dict(item) for item in items or ()))
+        object.__setattr__(self, "cursor", dict(cursor or {}))
 
 
 @dataclass(frozen=True)
@@ -201,6 +236,138 @@ class ConnectGarminAccountHandler:
         return connection
 
 
+class GarminInitialSyncHandler:
+    def __init__(
+        self,
+        *,
+        integrations: IntegrationStore,
+        activities: ProviderActivityStore,
+        outbox: OutboxStore,
+        garmin: GarminResourceAdapter,
+        athlete_profiles: AthleteProfileStore,
+        normalize_activity: Callable[[str, str, dict], CompletedActivity],
+        normalize_health: Callable[[str, dict], DailyHealthMetrics],
+    ) -> None:
+        self._integrations = integrations
+        self._activities = activities
+        self._outbox = outbox
+        self._garmin = garmin
+        self._athlete_profiles = athlete_profiles
+        self._normalize_activity = normalize_activity
+        self._normalize_health = normalize_health
+
+    def handle(self, command: GarminInitialSyncCommand) -> SyncSummary:
+        connection = self._integrations.get_connection_for_user(command.user_id, command.connection_id)
+        if connection is None:
+            raise ValueError("integration connection not found")
+
+        sync_run = self._integrations.start_sync_run(connection.id)
+        timezone_name = self._timezone_name(command.user_id, connection)
+        end_date = _local_date(command.as_of or datetime.now(timezone.utc), timezone_name)
+        start_date = end_date - timedelta(days=29)
+        summary = SyncSummary.empty()
+
+        for resource_type in GARMIN_SYNC_RESOURCES:
+            cursor = self._integrations.get_resource_cursor(connection.id, resource_type)
+            try:
+                result = self._garmin.fetch_resource(
+                    connection=connection,
+                    resource_type=resource_type,
+                    start_date=start_date,
+                    end_date=end_date,
+                    timezone_name=timezone_name,
+                    cursor=cursor,
+                )
+                summary = summary.record_fetched(resource_type, len(result.items))
+                failed_before = summary.failed_count(resource_type)
+                summary = self._store_resource(command.user_id, connection.id, resource_type, result.items, summary)
+                if summary.failed_count(resource_type) == failed_before:
+                    self._integrations.upsert_resource_cursor(
+                        connection.id,
+                        resource_type,
+                        result.cursor or {},
+                        sync_from=_start_of_day(start_date),
+                        sync_until=_end_of_day(end_date),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                summary = summary.record_failed(resource_type, str(exc))
+
+        self._integrations.complete_sync_run(sync_run.id, summary)
+        return summary
+
+    def _store_resource(
+        self,
+        user_id: str,
+        connection_id: str,
+        resource_type: str,
+        items: tuple[dict, ...],
+        summary: SyncSummary,
+    ) -> SyncSummary:
+        if resource_type == "activities":
+            return self._store_activities(user_id, connection_id, items, summary)
+        return self._store_health_resource(user_id, resource_type, items, summary)
+
+    def _store_activities(
+        self,
+        user_id: str,
+        connection_id: str,
+        items: tuple[dict, ...],
+        summary: SyncSummary,
+    ) -> SyncSummary:
+        for payload in items:
+            try:
+                activity = self._normalize_activity(user_id, connection_id, payload)
+                existing = self._activities.get_activity_by_provider_identifier(
+                    user_id,
+                    connection_id,
+                    activity.source_activity_id or "",
+                )
+                if existing is not None:
+                    summary = summary.record_duplicate("activities")
+                    continue
+                saved = self._activities.save_activity(user_id, activity)
+                if saved is None:
+                    summary = summary.record_duplicate("activities")
+                    continue
+                summary = summary.record_stored("activities")
+                self._outbox.create_event(
+                    OutboxEvent.activity_ingested(
+                        user_id=user_id,
+                        activity_id=saved.id or "",
+                        provider_connection_id=connection_id,
+                        source_activity_id=activity.source_activity_id or "",
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                summary = summary.record_failed("activities", str(exc))
+        return summary
+
+    def _store_health_resource(
+        self,
+        user_id: str,
+        resource_type: str,
+        items: tuple[dict, ...],
+        summary: SyncSummary,
+    ) -> SyncSummary:
+        for payload in items:
+            try:
+                metrics = self._normalize_health(user_id, payload)
+                self._activities.save_daily_health_metrics(user_id, metrics)
+                summary = summary.record_stored(resource_type)
+            except Exception as exc:  # noqa: BLE001
+                summary = summary.record_failed(resource_type, str(exc))
+        return summary
+
+    def _timezone_name(self, user_id: str, connection: IntegrationConnectionRef) -> str:
+        profile = self._athlete_profiles.get_profile_for_user(user_id)
+        if profile is not None and _valid_timezone(profile.timezone):
+            return profile.timezone
+        provider_timezone = (connection.provider_metadata or {}).get("timezone")
+        if provider_timezone and _valid_timezone(str(provider_timezone)):
+            return str(provider_timezone)
+        return "UTC"
+
+
 class ProviderSyncHandler:
     def __init__(
         self,
@@ -291,3 +458,27 @@ def _garmin_credential_metadata(*, region: str, display_name: str | None, timezo
     if timezone:
         metadata["timezone"] = timezone
     return metadata
+
+
+def _local_date(value: datetime, timezone_name: str) -> date:
+    try:
+        local_zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        local_zone = timezone.utc
+    return value.astimezone(local_zone).date()
+
+
+def _start_of_day(value: date) -> datetime:
+    return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+
+
+def _end_of_day(value: date) -> datetime:
+    return _start_of_day(value) + timedelta(days=1)
+
+
+def _valid_timezone(timezone_name: str) -> bool:
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return False
+    return True

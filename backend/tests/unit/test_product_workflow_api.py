@@ -284,7 +284,7 @@ def test_garmin_credential_configuration_errors_are_redacted_http_errors() -> No
 
 def test_garmin_connect_endpoint_uses_discovered_identity_and_redacts_credentials() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
-    from src.api.routes.integrations import get_garmin_credential_cipher, get_garmin_login_adapter
+    from src.api.routes.integrations import get_garmin_credential_cipher, get_garmin_login_adapter, get_garmin_resource_adapter
     from src.application.integrations import GarminAccountProfile
 
     client = create_sqlite_test_client()
@@ -297,6 +297,19 @@ def test_garmin_connect_endpoint_uses_discovered_identity_and_redacts_credential
     )
     client.app.dependency_overrides[get_garmin_login_adapter] = lambda: garmin
     client.app.dependency_overrides[get_garmin_credential_cipher] = lambda: _ApiFakeCipher()
+    client.app.dependency_overrides[get_garmin_resource_adapter] = lambda: _ApiFakeGarminResourceAdapter()
+    client.put(
+        "/api/v1/athlete/profile",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "timezone": "Asia/Taipei",
+            "experience_level": "intermediate",
+            "current_weekly_mileage": 42,
+            "preferred_training_days": ["tuesday", "thursday", "sunday"],
+            "preferred_long_run_day": "sunday",
+            "max_runs_per_week": 4,
+        },
+    )
 
     response = client.post(
         "/api/v1/integrations/garmin/connect",
@@ -333,6 +346,14 @@ def test_garmin_connect_endpoint_uses_discovered_identity_and_redacts_credential
     assert data["provider_display_name"] == "Garmin Runner"
     assert data["credential_secret_ref"] is None
     assert data["credential_format"] == "garminconnect-session-json"
+    assert data["sync_summary"]["resources"]["activities"]["stored"] == 1
+    assert data["sync_summary"]["resources"]["sleep"]["stored"] == 1
+    assert data["sync_summary"]["resources"]["hrv"]["stored"] == 1
+    assert data["sync_summary"]["resources"]["resting_heart_rate"]["stored"] == 1
+    assert data["sync_summary"]["resources"]["stress"]["stored"] == 1
+    assert data["sync_summary"]["resources"]["body_battery"]["stored"] == 1
+    assert "steps" not in data["sync_summary"]["resources"]
+    assert "spo2" not in data["sync_summary"]["resources"]
     assert "garmin-password" not in response.text
     assert "runner@example.com" not in response.text
     assert "secret-token" not in response.text
@@ -340,6 +361,20 @@ def test_garmin_connect_endpoint_uses_discovered_identity_and_redacts_credential
     assert reconnected.json()["data"]["id"] == data["id"]
     assert cross_user.status_code == 409
     assert garmin.calls[0] == {"email": "runner@example.com", "password": "garmin-password", "region": "china"}
+    activities = client.get(
+        "/api/v1/activities?started_on_or_after=2027-01-01&started_on_or_before=2027-01-31",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+    health = client.get(
+        "/api/v1/health-metrics/daily?measured_on_or_after=2027-01-01&measured_on_or_before=2027-01-31",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+    assert activities.json()["data"][0]["source"] == "garmin_connect"
+    assert health.json()["data"][0]["values"]["sleep_duration_minutes"] == 480
+    assert health.json()["data"][0]["values"]["hrv_ms"] == 55
+    assert health.json()["data"][0]["values"]["resting_heart_rate"] == 48
+    assert health.json()["data"][0]["values"]["stress_score"] == 31
+    assert health.json()["data"][0]["values"]["body_battery_score"] == 72
 
 
 def test_garmin_connect_endpoint_rejects_user_entered_provider_account_id(monkeypatch) -> None:
@@ -436,3 +471,41 @@ class _ApiFakeCipher:
 
     def decrypt(self, encrypted_payload: str) -> str:
         raise AssertionError("connect should not decrypt credentials")
+
+
+class _ApiFakeGarminResourceAdapter:
+    def fetch_resource(self, *, connection, resource_type, start_date, end_date, timezone_name, cursor):
+        from src.application.integrations import GarminResourceFetchResult
+
+        assert timezone_name == "Asia/Taipei"
+        assert start_date <= end_date
+        payloads = {
+            "activities": [
+                {
+                    "activityId": "garmin-activity-1",
+                    "activityType": {"typeKey": "running"},
+                    "startTimeGMT": "2027-01-10 07:00:00",
+                    "distance": 5000,
+                    "duration": 1500,
+                }
+            ],
+            "sleep": [
+                {
+                    "calendarDate": "2027-01-10",
+                    "get_sleep_data": {
+                        "dailySleepDTO": {"sleepTimeSeconds": 28800},
+                        "sleepScores": {"overall": {"value": 82}},
+                    },
+                }
+            ],
+            "hrv": [
+                {
+                    "calendarDate": "2027-01-10",
+                    "get_hrv_data": {"hrvSummary": {"lastNightAvg": 55, "weeklyAvg": 52}},
+                }
+            ],
+            "resting_heart_rate": [{"calendarDate": "2027-01-10", "get_rhr_day": {"restingHeartRate": 48}}],
+            "stress": [{"calendarDate": "2027-01-10", "get_stress_data": {"avgStressLevel": 31}}],
+            "body_battery": [{"calendarDate": "2027-01-10", "get_body_battery": {"bodyBatteryValuesArray": [[0, 72]]}}],
+        }
+        return GarminResourceFetchResult(items=payloads.get(resource_type, []), cursor={"date": end_date.isoformat()})

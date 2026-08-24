@@ -190,12 +190,13 @@ class SqlAlchemyActivityRepository:
     def save_daily_health_metrics(self, user_id: str, metrics: DailyHealthMetrics) -> DailyHealthMetrics:
         _ensure_matching_user_id(user_id, metrics.user_id)
         measured_at = _measured_at(metrics.metric_date)
+        metric_values = metrics.values_by_metric_type()
         existing = list(
             self._session.scalars(
                 select(HealthMetricModel).where(
                     HealthMetricModel.user_id == user_id,
                     HealthMetricModel.measured_at == measured_at,
-                    HealthMetricModel.metric_type.in_(HEALTH_METRIC_TYPES),
+                    HealthMetricModel.metric_type.in_(set(metric_values)),
                 )
             )
         )
@@ -203,7 +204,7 @@ class SqlAlchemyActivityRepository:
             self._session.delete(model)
         self._session.flush()
 
-        for metric_type, value in metrics.values_by_metric_type().items():
+        for metric_type, value in metric_values.items():
             self._session.add(
                 HealthMetricModel(
                     user_id=user_id,

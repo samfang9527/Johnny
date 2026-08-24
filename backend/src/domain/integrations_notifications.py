@@ -219,6 +219,9 @@ class SyncSummary:
     def to_payload(self) -> dict[str, Any]:
         return {"resources": _copy_resources(self.resources)}
 
+    def failed_count(self, resource_type: str) -> int:
+        return int(self.resources.get(resource_type, {}).get("failed", 0))
+
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> SyncSummary:
         resources = {}
