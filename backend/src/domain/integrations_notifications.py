@@ -9,6 +9,9 @@ class DomainValidationError(ValueError):
     """Raised when integration or notification data cannot be persisted safely."""
 
 
+_UNSAFE_METADATA = object()
+
+
 @dataclass(frozen=True)
 class IntegrationConnectionRef:
     id: str
@@ -70,6 +73,65 @@ class IntegrationConnectionRef:
             "credential_status": self.credential_status,
             "status": self.status,
             "capabilities": dict(self.capabilities or {}),
+        }
+
+
+@dataclass(frozen=True)
+class IntegrationCredential:
+    connection_id: str
+    credential_format: str
+    encrypted_payload: str
+    key_id: str
+    lifecycle_metadata: dict[str, Any] | None = None
+    id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.connection_id:
+            raise DomainValidationError("credential connection id is required")
+        if not self.credential_format:
+            raise DomainValidationError("credential format is required")
+        if not self.encrypted_payload:
+            raise DomainValidationError("encrypted credential payload is required")
+        if not _has_encrypted_payload_scheme(self.encrypted_payload):
+            raise DomainValidationError("encrypted credential payload scheme is required")
+        if _looks_like_raw_secret(self.encrypted_payload):
+            raise DomainValidationError("credential payload must be encrypted before storage")
+        if not self.key_id:
+            raise DomainValidationError("credential key id is required")
+        object.__setattr__(self, "lifecycle_metadata", _safe_lifecycle_metadata(self.lifecycle_metadata or {}))
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        connection_id: str,
+        credential_format: str,
+        encrypted_payload: str,
+        key_id: str,
+        lifecycle_metadata: dict[str, Any] | None = None,
+        id: str | None = None,
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
+    ) -> IntegrationCredential:
+        return cls(
+            id=id,
+            connection_id=connection_id,
+            credential_format=credential_format,
+            encrypted_payload=encrypted_payload,
+            key_id=key_id,
+            lifecycle_metadata=lifecycle_metadata,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+    def to_safe_summary(self) -> dict[str, Any]:
+        return {
+            "connection_id": self.connection_id,
+            "credential_format": self.credential_format,
+            "key_id": self.key_id,
+            "lifecycle_metadata": dict(self.lifecycle_metadata or {}),
         }
 
 
@@ -342,7 +404,49 @@ class NotificationDelivery:
 
 def _looks_like_raw_secret(value: str) -> bool:
     lowered = value.lower()
-    return any(marker in lowered for marker in ("password", "token=", "refresh_token", "access_token", "{"))
+    return any(
+        marker in lowered
+        for marker in ("password", "token=", "oauth2_token", "refresh_token", "access_token", "cookie", "session_id", "{")
+    )
+
+
+def _has_encrypted_payload_scheme(value: str) -> bool:
+    return value.startswith(("fernet:", "kms:"))
+
+
+def _safe_lifecycle_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in metadata.items():
+        lowered_key = str(key).lower()
+        if any(marker in lowered_key for marker in ("password", "token", "secret", "cookie", "email")):
+            continue
+        safe_value = _safe_metadata_value(value)
+        if safe_value is _UNSAFE_METADATA:
+            continue
+        safe[str(key)] = safe_value
+    return safe
+
+
+def _safe_metadata_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _safe_lifecycle_metadata(value)
+    if isinstance(value, list):
+        safe_values = []
+        for item in value:
+            safe_item = _safe_metadata_value(item)
+            if safe_item is not _UNSAFE_METADATA:
+                safe_values.append(safe_item)
+        return safe_values
+    if isinstance(value, tuple):
+        safe_values = []
+        for item in value:
+            safe_item = _safe_metadata_value(item)
+            if safe_item is not _UNSAFE_METADATA:
+                safe_values.append(safe_item)
+        return safe_values
+    if isinstance(value, str) and _looks_like_raw_secret(value):
+        return _UNSAFE_METADATA
+    return value
 
 
 def _safe_error_summary(error: str) -> str:

@@ -132,7 +132,7 @@ The system SHALL persist SSO provider identities separately from Johnny applicat
 
 ### Requirement: Garmin Connect Credential Lifecycle Persistence
 
-The system SHALL persist Garmin Connect integration credential/session lifecycle metadata without storing raw usernames, passwords, session cookies, unencrypted token-store JSON, or unencrypted provider tokens in the database. Private/self-hosted `garminconnect` mode MAY store encrypted Garmin session/token payloads in a dedicated integration credential store. Future official Garmin OAuth mode remains an external/OAuth credential boundary.
+The system SHALL persist Garmin Connect integration credential/session lifecycle metadata without storing raw usernames, passwords, session cookies, unencrypted token-store JSON, or unencrypted provider tokens in the database. Private/self-hosted `garminconnect` mode MAY store encrypted Garmin session/token payloads in a dedicated `integration_credentials` store keyed by integration connection. Future official Garmin OAuth mode remains an external/OAuth credential boundary.
 
 Garmin passwords SHALL be used only once in memory for the session/token exchange and discarded immediately after the exchange completes or fails.
 
@@ -148,8 +148,16 @@ Garmin passwords SHALL be used only once in memory for the session/token exchang
 
 - **GIVEN** private/self-hosted `garminconnect` mode is enabled with a valid encryption key
 - **WHEN** Garmin session or token-store payloads are persisted for reuse
-- **THEN** the payload is stored only as encrypted credential data in a dedicated credential store
+- **THEN** the payload is stored only as encrypted credential data in `integration_credentials`
+- **AND** the credential record stores connection ID, credential format, encrypted payload, key ID, timestamps, and non-sensitive lifecycle metadata
 - **AND** connection metadata, logs, sync summaries, provider summaries, and API responses do not expose the raw payload
+
+#### Scenario: Missing Garmin credential encryption configuration is local to Garmin operations
+
+- **GIVEN** private/self-hosted `garminconnect` mode is enabled without a valid `GARMIN_CREDENTIAL_MASTER_KEY`
+- **WHEN** a Garmin credential operation needs to encrypt or decrypt session data
+- **THEN** that Garmin operation fails with a configuration error
+- **AND** unrelated Johnny app behavior remains available
 
 #### Scenario: Garmin session credential refresh is recorded
 

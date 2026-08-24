@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.application.interfaces.integrations_notifications import (
+    IntegrationCredentialStore,
     IntegrationStore,
     NotificationChannelGateway,
     NotificationStore,
@@ -10,9 +11,13 @@ from src.application.interfaces.integrations_notifications import (
     ProviderAdapter,
     ProviderActivityStore,
 )
-from src.application.interfaces.persistence_repositories import IntegrationStore as ExportedIntegrationStore
+from src.application.interfaces.persistence_repositories import (
+    IntegrationCredentialStore as ExportedIntegrationCredentialStore,
+    IntegrationStore as ExportedIntegrationStore,
+)
 from src.domain.integrations_notifications import (
     DomainValidationError,
+    IntegrationCredential,
     IntegrationConnectionRef,
     LineDeliveryResult,
     NormalizedProviderRecord,
@@ -55,6 +60,50 @@ def test_connection_ref_rejects_raw_credential_payloads() -> None:
             user_id="user-1",
             provider="garmin_connect",
             credential_secret_ref='{"email":"runner@example.com","password":"secret"}',
+        )
+
+
+def test_integration_credential_summary_never_exposes_encrypted_payload() -> None:
+    credential = IntegrationCredential.create(
+        connection_id="conn-1",
+        credential_format="garminconnect-session-json",
+        encrypted_payload="fernet:gAAAAABrunner-credential",
+        key_id="local-fernet",
+        lifecycle_metadata={
+            "region": "global",
+            "password": "must-not-store",
+            "profile": {"email": "runner@example.com", "display_name": "Garmin Runner"},
+            "devices": [{"name": "Forerunner", "refresh_token": "must-not-store"}],
+        },
+    )
+
+    assert credential.to_safe_summary() == {
+        "connection_id": "conn-1",
+        "credential_format": "garminconnect-session-json",
+        "key_id": "local-fernet",
+        "lifecycle_metadata": {
+            "region": "global",
+            "profile": {"display_name": "Garmin Runner"},
+            "devices": [{"name": "Forerunner"}],
+        },
+    }
+
+
+def test_integration_credential_requires_encrypted_payload() -> None:
+    with pytest.raises(DomainValidationError):
+        IntegrationCredential.create(
+            connection_id="conn-1",
+            credential_format="garminconnect-session-json",
+            encrypted_payload='{"oauth2_token":"raw-token"}',
+            key_id="local-fernet",
+        )
+
+    with pytest.raises(DomainValidationError):
+        IntegrationCredential.create(
+            connection_id="conn-1",
+            credential_format="garminconnect-session-json",
+            encrypted_payload="gAAAAABmissing-scheme-prefix",
+            key_id="local-fernet",
         )
 
 
@@ -130,6 +179,7 @@ def test_outbox_and_notification_contracts_capture_delivery_state() -> None:
 
 def test_application_interfaces_export_integration_roles() -> None:
     assert ExportedIntegrationStore is IntegrationStore
+    assert ExportedIntegrationCredentialStore is IntegrationCredentialStore
     assert "fetch" in ProviderAdapter.__dict__
     assert "get_activity_by_provider_identifier" in ProviderActivityStore.__dict__
     assert "create_event" in OutboxStore.__dict__

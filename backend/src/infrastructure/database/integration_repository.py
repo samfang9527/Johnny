@@ -5,9 +5,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.domain.integrations_notifications import IntegrationConnectionRef, SyncRun, SyncSummary
+from src.domain.integrations_notifications import IntegrationConnectionRef, IntegrationCredential, SyncRun, SyncSummary
 
-from .models import IntegrationConnectionModel, IntegrationResourceCursorModel, SyncRunModel, utc_now
+from .models import IntegrationConnectionModel, IntegrationCredentialModel, IntegrationResourceCursorModel, SyncRunModel, utc_now
 
 
 class SqlAlchemyIntegrationRepository:
@@ -128,6 +128,42 @@ class SqlAlchemyIntegrationRepository:
             cursor.status = "stale"
         self._session.flush()
 
+    def upsert_credential(self, credential: IntegrationCredential) -> IntegrationCredential:
+        existing = self._session.scalar(
+            select(IntegrationCredentialModel).where(
+                IntegrationCredentialModel.integration_connection_id == credential.connection_id,
+            )
+        )
+        if existing is None:
+            existing = IntegrationCredentialModel(integration_connection_id=credential.connection_id)
+            self._session.add(existing)
+        existing.credential_format = credential.credential_format
+        existing.encrypted_payload = credential.encrypted_payload
+        existing.key_id = credential.key_id
+        existing.lifecycle_metadata = dict(credential.lifecycle_metadata or {})
+        self._session.flush()
+        return _credential_from_model(existing)
+
+    def get_credential_for_connection(self, integration_connection_id: str) -> IntegrationCredential | None:
+        credential = self._session.scalar(
+            select(IntegrationCredentialModel).where(
+                IntegrationCredentialModel.integration_connection_id == integration_connection_id,
+            )
+        )
+        if credential is None:
+            return None
+        return _credential_from_model(credential)
+
+    def delete_credential_for_connection(self, integration_connection_id: str) -> None:
+        credential = self._session.scalar(
+            select(IntegrationCredentialModel).where(
+                IntegrationCredentialModel.integration_connection_id == integration_connection_id,
+            )
+        )
+        if credential is not None:
+            self._session.delete(credential)
+            self._session.flush()
+
     def start_sync_run(self, integration_connection_id: str) -> SyncRun:
         now = utc_now()
         connection = self._session.get(IntegrationConnectionModel, integration_connection_id)
@@ -233,6 +269,19 @@ def _connection_from_model(model: IntegrationConnectionModel) -> IntegrationConn
         credential_status=model.credential_status,
         status=model.status,
         capabilities=model.capabilities or {},
+    )
+
+
+def _credential_from_model(model: IntegrationCredentialModel) -> IntegrationCredential:
+    return IntegrationCredential.create(
+        id=model.id,
+        connection_id=model.integration_connection_id,
+        credential_format=model.credential_format,
+        encrypted_payload=model.encrypted_payload,
+        key_id=model.key_id,
+        lifecycle_metadata=model.lifecycle_metadata or {},
+        created_at=model.created_at,
+        updated_at=model.updated_at,
     )
 
 

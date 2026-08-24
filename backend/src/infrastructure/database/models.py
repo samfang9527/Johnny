@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     MetaData,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -214,6 +215,20 @@ class IntegrationConnectionModel(TimestampMixin, Base):
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     provider_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+
+
+class IntegrationCredentialModel(TimestampMixin, Base):
+    __tablename__ = "integration_credentials"
+    __table_args__ = (
+        UniqueConstraint("integration_connection_id", name="uq_integration_credentials_connection"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    integration_connection_id: Mapped[str] = mapped_column(ForeignKey("integration_connections.id"), nullable=False)
+    credential_format: Mapped[str] = mapped_column(String(80), nullable=False)
+    encrypted_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    key_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    lifecycle_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
 
 class IntegrationResourceCursorModel(TimestampMixin, Base):

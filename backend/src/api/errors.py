@@ -10,6 +10,7 @@ from src.domain.athlete_race import DomainValidationError as AthleteRaceValidati
 from src.domain.integrations_notifications import DomainValidationError as IntegrationsNotificationsValidationError
 from src.domain.recommendation_approval import DomainValidationError as RecommendationValidationError
 from src.domain.training_plan import DomainValidationError as TrainingPlanValidationError
+from src.infrastructure.security.integration_credentials import CredentialEncryptionConfigurationError
 
 
 class ApiNotFoundError(ValueError):
@@ -54,6 +55,18 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiUnauthorizedError)
     async def unauthorized_exception_handler(request: Request, exc: ApiUnauthorizedError) -> JSONResponse:
         return _error_response(status_code=401, code="unauthorized", message=str(exc), details=[])
+
+    @app.exception_handler(CredentialEncryptionConfigurationError)
+    async def credential_encryption_configuration_exception_handler(
+        request: Request,
+        exc: CredentialEncryptionConfigurationError,
+    ) -> JSONResponse:
+        return _error_response(
+            status_code=503,
+            code="configuration_error",
+            message="Garmin credential encryption is not configured",
+            details=[],
+        )
 
     for error_type in DOMAIN_ERRORS:
         app.add_exception_handler(error_type, domain_validation_exception_handler)

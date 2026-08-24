@@ -2,6 +2,7 @@ pydantic>=2.0,<3.0
 python-dotenv>=1.0,<2.0
 sqlalchemy>=2.0,<3.0
 alembic>=1.13,<2.0
+cryptography>=42.0,<47.0
 psycopg[binary]>=3.1,<4.0
 garminconnect==0.3.11
 openai>=1.0,<3.0

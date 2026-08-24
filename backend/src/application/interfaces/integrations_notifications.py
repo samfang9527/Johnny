@@ -5,6 +5,7 @@ from typing import Any, Protocol
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.integrations_notifications import (
     IntegrationConnectionRef,
+    IntegrationCredential,
     LineDeliveryResult,
     NotificationDelivery,
     NotificationIntent,
@@ -58,6 +59,17 @@ class IntegrationStore(Protocol):
         resource_type: str,
         cursor_value: dict[str, Any],
     ) -> dict[str, Any]:
+        ...
+
+
+class IntegrationCredentialStore(Protocol):
+    def upsert_credential(self, credential: IntegrationCredential) -> IntegrationCredential:
+        ...
+
+    def get_credential_for_connection(self, integration_connection_id: str) -> IntegrationCredential | None:
+        ...
+
+    def delete_credential_for_connection(self, integration_connection_id: str) -> None:
         ...
 
 

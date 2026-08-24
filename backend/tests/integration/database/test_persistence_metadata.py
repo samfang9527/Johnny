@@ -22,6 +22,7 @@ EXPECTED_TABLES = {
     "agent_run_steps",
     "agent_context_sources",
     "integration_connections",
+    "integration_credentials",
     "integration_resource_cursors",
     "sync_runs",
     "outbox_events",
@@ -140,6 +141,16 @@ def test_core_tables_expose_queryable_columns() -> None:
             "status",
             "metadata_json",
         },
+        "integration_credentials": {
+            "id",
+            "integration_connection_id",
+            "credential_format",
+            "encrypted_payload",
+            "key_id",
+            "lifecycle_metadata",
+            "created_at",
+            "updated_at",
+        },
     }
 
     for table_name, columns in expected_columns.items():
@@ -159,6 +170,7 @@ def test_flexible_payload_fields_are_json_columns() -> None:
         ("outbox_events", "payload"),
         ("integration_connections", "capabilities"),
         ("integration_connections", "provider_metadata"),
+        ("integration_credentials", "lifecycle_metadata"),
         ("integration_resource_cursors", "cursor_value"),
         ("integration_resource_cursors", "metadata_json"),
         ("auth_identities", "provider_claims"),

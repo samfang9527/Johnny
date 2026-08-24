@@ -18,7 +18,9 @@ def test_alembic_upgrade_creates_mvp_schema(tmp_path: Path, monkeypatch) -> None
     table_names = set(inspect(engine).get_table_names())
 
     assert "alembic_version" in table_names
-    assert {"users", "training_plans", "activities", "recommendations", "agent_runs"}.issubset(table_names)
+    assert {"users", "training_plans", "activities", "recommendations", "agent_runs", "integration_credentials"}.issubset(
+        table_names
+    )
 
 
 def test_root_alembic_config_supports_plain_upgrade_command(tmp_path: Path, monkeypatch) -> None:
@@ -33,4 +35,6 @@ def test_root_alembic_config_supports_plain_upgrade_command(tmp_path: Path, monk
     engine = create_engine(database_url)
     table_names = set(inspect(engine).get_table_names())
 
-    assert {"alembic_version", "users", "auth_sessions", "password_credentials"}.issubset(table_names)
+    assert {"alembic_version", "users", "auth_sessions", "password_credentials", "integration_credentials"}.issubset(
+        table_names
+    )

@@ -3,12 +3,13 @@ from datetime import datetime, timezone
 import pytest
 
 from src.application.integrations import ConnectSyncProviderCommand, ConnectSyncProviderHandler, ProviderAccountAlreadyConnectedError
-from src.domain.integrations_notifications import NotificationDelivery, NotificationIntent, OutboxEvent, SyncSummary
+from src.domain.integrations_notifications import IntegrationCredential, NotificationDelivery, NotificationIntent, OutboxEvent, SyncSummary
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
 from src.infrastructure.database.models import ActivityModel, Base, IntegrationConnectionModel, IntegrationResourceCursorModel, UserModel
 from src.infrastructure.database.notification_repository import SqlAlchemyNotificationRepository
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
+from src.infrastructure.security.integration_credentials import FernetCredentialCipher
 
 
 def test_integration_repository_tracks_sync_runs_and_resource_cursors(sqlite_session_factory) -> None:
@@ -69,6 +70,54 @@ def test_integration_repository_failed_sync_records_safe_error(sqlite_session_fa
 
         assert failed.status == "failed"
         assert failed.summary.to_payload()["resources"]["sync"]["errors"] == ["credential or token details redacted"]
+
+
+def test_integration_repository_stores_encrypted_credentials_separately_from_connection_metadata(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        cipher = FernetCredentialCipher(
+            key="KK5cvF9bgFob_Z3qH2gsXU_EJKeRko3W6lJFaw6mSXE=",
+            key_id="local-fernet",
+        )
+        user = UserModel(email="credential-owner@example.com", display_name="Credential Owner")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        connection = repository.create_connection(
+            user_id=user.id,
+            provider="garmin_connect",
+            provider_account_id="garmin-account-credential",
+            credential_format="garminconnect-session-json",
+        )
+        saved = repository.upsert_credential(
+            IntegrationCredential.create(
+                connection_id=connection.id,
+                credential_format="garminconnect-session-json",
+                encrypted_payload=cipher.encrypt('{"oauth2_token":"secret-token"}'),
+                key_id=cipher.key_id,
+                lifecycle_metadata={"region": "global", "display_name": "Garmin Runner", "email": "runner@example.com"},
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyIntegrationRepository(uow.session)
+        loaded = repository.get_credential_for_connection(connection.id)
+        connection_model = uow.session.get(IntegrationConnectionModel, connection.id)
+
+        assert saved.id is not None
+        assert loaded is not None
+        assert loaded.connection_id == connection.id
+        assert cipher.decrypt(loaded.encrypted_payload) == '{"oauth2_token":"secret-token"}'
+        assert loaded.to_safe_summary() == {
+            "connection_id": connection.id,
+            "credential_format": "garminconnect-session-json",
+            "key_id": "local-fernet",
+            "lifecycle_metadata": {"region": "global", "display_name": "Garmin Runner"},
+        }
+        assert connection_model.credential_secret_ref is None
+        assert connection_model.provider_metadata == {}
 
 
 def test_sync_connection_lifecycle_replaces_reactivates_resets_cursors_and_preserves_history(sqlite_session_factory) -> None:

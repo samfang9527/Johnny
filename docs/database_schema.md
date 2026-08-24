@@ -25,6 +25,7 @@ erDiagram
     TRAINING_PLANS ||--o{ RECOMMENDATIONS : informs
     RECOMMENDATIONS ||--o{ PLAN_ADJUSTMENTS : proposes
     USERS ||--o{ INTEGRATION_CONNECTIONS : connects
+    INTEGRATION_CONNECTIONS ||--o| INTEGRATION_CREDENTIALS : secures
     INTEGRATION_CONNECTIONS ||--o{ INTEGRATION_RESOURCE_CURSORS : tracks
     INTEGRATION_CONNECTIONS ||--o{ ACTIVITIES : imports
     USERS ||--o{ ACTIVITIES : owns
@@ -130,6 +131,17 @@ erDiagram
         string sync_status
         json capabilities
         json provider_metadata
+    }
+
+    INTEGRATION_CREDENTIALS {
+        string id PK
+        string integration_connection_id FK,UK
+        string credential_format
+        string encrypted_payload
+        string key_id
+        json lifecycle_metadata
+        datetime created_at
+        datetime updated_at
     }
 
     INTEGRATION_RESOURCE_CURSORS {
@@ -283,7 +295,9 @@ erDiagram
 - `credential_format`: `garminconnect_tokenstore`
 - `credential_secret_ref`: a secret/local token-store reference, not raw token JSON
 
-Private/self-hosted `garminconnect` mode may store encrypted Garmin session/token payloads in a dedicated credential store. The connection row remains metadata: it must not contain Garmin passwords, cookies, unencrypted token-store JSON, or unencrypted provider tokens. Garmin passwords are used only once in memory for session exchange and then discarded.
+Private/self-hosted `garminconnect` mode may store encrypted Garmin session/token payloads in `integration_credentials`. Each record belongs to one `integration_connections` row and stores `credential_format`, `encrypted_payload`, `key_id`, timestamps, and only non-sensitive lifecycle metadata such as Garmin region or display name. The local/private MVP Fernet key comes from `GARMIN_CREDENTIAL_MASTER_KEY`; `GARMIN_CREDENTIAL_KEY_ID` identifies the active key for rotation/audit. Garmin credential operations fail with a configuration error if this key is absent or invalid, while unrelated app behavior remains available.
+
+The connection row remains metadata: it must not contain Garmin passwords, cookies, unencrypted token-store JSON, or unencrypted provider tokens. Garmin passwords are used only once in memory for session exchange and then discarded.
 
 `integration_resource_cursors` tracks independent sync progress for each provider resource, such as `activities`, `sleep`, `hrv`, `resting_heart_rate`, `stress`, and `body_battery`. This lets one resource fail or lag without making the whole connection stale.
 
@@ -305,6 +319,7 @@ Private/self-hosted `garminconnect` mode may store encrypted Garmin session/toke
 
 - `auth_identities` enforces uniqueness by provider, issuer, and subject.
 - `integration_connections` enforces one provider account per provider/provider account identifier.
+- `integration_credentials` enforces one encrypted credential payload per integration connection.
 - `integration_resource_cursors` enforces one cursor per integration connection and resource type.
 - `activities` deduplicates by provider connection and provider activity identifier.
 - `health_metrics` deduplicates provider metrics by provider connection and provider metric identifier.

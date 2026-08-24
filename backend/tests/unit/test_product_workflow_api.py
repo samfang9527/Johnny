@@ -237,3 +237,46 @@ def test_sync_provider_connection_replaces_reactivates_and_rejects_cross_user_ac
     assert cross_user_conflict.json()["error"]["code"] == "conflict"
     assert missing_account.status_code == 422
     assert missing_account.json()["error"]["code"] == "validation_error"
+
+
+def test_integration_connection_response_does_not_expose_encrypted_credential_fields() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+
+    response = client.post(
+        "/api/v1/integrations/connections",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "provider": "garmin_connect",
+            "provider_account_id": "garmin-account-redacted",
+            "encrypted_payload": "fernet:gAAAAABtoken",
+            "lifecycle_metadata": {"email": "runner@example.com", "region": "global"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert "encrypted_payload" not in response.json()["data"]
+    assert "lifecycle_metadata" not in response.json()["data"]
+    assert "runner@example.com" not in response.text
+    assert "gAAAAABtoken" not in response.text
+
+
+def test_garmin_credential_configuration_errors_are_redacted_http_errors() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+    from src.infrastructure.security.integration_credentials import CredentialEncryptionConfigurationError
+
+    client = create_sqlite_test_client()
+
+    @client.app.get("/api/v1/test-garmin-credential-configuration")
+    def broken_garmin_configuration() -> None:
+        raise CredentialEncryptionConfigurationError("GARMIN_CREDENTIAL_MASTER_KEY is invalid")
+
+    response = client.get("/api/v1/test-garmin-credential-configuration")
+
+    assert response.status_code == 503
+    assert response.json()["error"] == {
+        "code": "configuration_error",
+        "message": "Garmin credential encryption is not configured",
+        "details": [],
+    }
