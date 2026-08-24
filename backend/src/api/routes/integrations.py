@@ -44,6 +44,7 @@ from src.infrastructure.database.activity_repository import SqlAlchemyActivityRe
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
+from src.infrastructure.integrations.garminconnect_adapter import GarminConnectLoginAdapter, GarminConnectResourceAdapter
 from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health
 from src.infrastructure.security.integration_credentials import CredentialCipher, load_garmin_credential_cipher
 
@@ -51,26 +52,22 @@ from src.infrastructure.security.integration_credentials import CredentialCipher
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
-class _UnavailableGarminLoginAdapter:
-    def exchange_credentials(self, *, email: str, password: str, region: str):  # noqa: ANN201
-        raise GarminIntegrationConfigurationError("Garmin Connect login adapter is not configured")
-
-
 def get_garmin_login_adapter() -> GarminLoginAdapter:
-    return _UnavailableGarminLoginAdapter()
+    return GarminConnectLoginAdapter()
 
 
 def get_garmin_credential_cipher() -> CredentialCipher:
     return load_garmin_credential_cipher()
 
 
-class _UnavailableGarminResourceAdapter:
-    def fetch_resource(self, *, connection, resource_type, start_date, end_date, timezone_name, cursor):  # noqa: ANN001, ANN201
-        raise GarminIntegrationConfigurationError("Garmin resource adapter is not configured")
-
-
-def get_garmin_resource_adapter() -> GarminResourceAdapter:
-    return _UnavailableGarminResourceAdapter()
+def get_garmin_resource_adapter(
+    session: SessionDependency,
+    cipher: CredentialCipher = Depends(get_garmin_credential_cipher),
+) -> GarminResourceAdapter:
+    return GarminConnectResourceAdapter(
+        credentials=SqlAlchemyIntegrationRepository(session),
+        cipher=cipher,
+    )
 
 
 @router.get("/connections", response_model=DataEnvelope[list[IntegrationConnectionResponse]])

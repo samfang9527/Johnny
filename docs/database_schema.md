@@ -292,10 +292,10 @@ erDiagram
 
 - `provider`: `garmin_connect`
 - `auth_scheme`: `garminconnect_tokenstore`
-- `credential_format`: `garminconnect_tokenstore`
-- `credential_secret_ref`: a secret/local token-store reference, not raw token JSON
+- `credential_format`: `garminconnect-session-json`
+- `credential_secret_ref`: empty for private encrypted-session mode, or a non-sensitive external credential reference for future modes
 
-Private/self-hosted `garminconnect` mode may store encrypted Garmin session/token payloads in `integration_credentials`. Each record belongs to one `integration_connections` row and stores `credential_format`, `encrypted_payload`, `key_id`, timestamps, and only non-sensitive lifecycle metadata such as Garmin region or display name. The local/private MVP Fernet key comes from `GARMIN_CREDENTIAL_MASTER_KEY`; `GARMIN_CREDENTIAL_KEY_ID` identifies the active key for rotation/audit. Garmin credential operations fail with a configuration error if this key is absent or invalid, while unrelated app behavior remains available.
+Private/self-hosted `garminconnect` mode stores encrypted Garmin session/token payloads in `integration_credentials`. Each record belongs to one `integration_connections` row and stores `credential_format`, `encrypted_payload`, `key_id`, timestamps, and only non-sensitive lifecycle metadata such as Garmin region or display name. The local/private MVP Fernet key comes from `GARMIN_CREDENTIAL_MASTER_KEY`; `GARMIN_CREDENTIAL_KEY_ID` identifies the active key for rotation/audit. Garmin credential operations fail with a configuration error if this key is absent or invalid, while unrelated app behavior remains available.
 
 The connection row remains metadata: it must not contain Garmin passwords, cookies, unencrypted token-store JSON, or unencrypted provider tokens. Garmin passwords are used only once in memory for session exchange and then discarded.
 

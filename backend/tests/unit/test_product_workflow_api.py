@@ -779,11 +779,10 @@ def test_garmin_connect_validation_errors_do_not_echo_password(monkeypatch) -> N
     assert "garmin-password" not in response.text
 
 
-def test_garmin_connect_endpoint_reports_unconfigured_adapter_without_echoing_credentials(monkeypatch) -> None:
-    from cryptography.fernet import Fernet
+def test_garmin_connect_endpoint_reports_missing_credential_cipher_without_echoing_credentials(monkeypatch) -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 
-    monkeypatch.setenv("GARMIN_CREDENTIAL_MASTER_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.delenv("GARMIN_CREDENTIAL_MASTER_KEY", raising=False)
     client = create_sqlite_test_client()
 
     response = client.post(
@@ -799,7 +798,7 @@ def test_garmin_connect_endpoint_reports_unconfigured_adapter_without_echoing_cr
     assert response.status_code == 503
     assert response.json()["error"] == {
         "code": "configuration_error",
-        "message": "Garmin integration is not configured",
+        "message": "Garmin credential encryption is not configured",
         "details": [],
     }
     assert "runner@example.com" not in response.text
