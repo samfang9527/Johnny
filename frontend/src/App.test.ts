@@ -17,6 +17,7 @@ function garminConnectionData(overrides: Record<string, unknown> = {}): Record<s
     status: 'active',
     credential_status: 'active',
     sync_status: 'idle',
+    last_sync_completed_at: '2026-08-25T15:42:00Z',
     sync_warning: null,
     has_partial_failures: false,
     sync_summary: {
@@ -304,8 +305,14 @@ describe('Johnny product shell', () => {
 
     expect(wrapper.text()).toContain('Garmin Runner 已連接')
     expect(wrapper.text()).toContain('初始同步完成')
-    expect(wrapper.text()).toContain('活動：取得 2，新增 1，重複 1')
-    expect(wrapper.text()).toContain('Body Battery：取得 1，新增 1')
+    const garminCard = wrapper.get('[data-testid="provider-card-garmin_connect"]')
+    expect(garminCard.text()).toContain('Garmin Runner')
+    expect(garminCard.text()).toContain('已連接')
+    expect(garminCard.text()).toContain('上次同步')
+    expect(garminCard.text()).toContain('活動：取得 2，新增 1，重複 1')
+    expect(garminCard.text()).toContain('Body Battery：取得 1，新增 1')
+    expect(garminCard.text()).toContain('手動同步')
+    expect(garminCard.text()).toContain('中斷連接')
     expect(wrapper.text()).not.toContain('garmin-password')
     expect(fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:8000/api/v1/integrations/garmin/connect',
@@ -331,6 +338,83 @@ describe('Johnny product shell', () => {
 
     expect(wrapper.text()).toContain('請輸入 Garmin 電子郵件')
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+  })
+
+  it('hydrates an existing Garmin connection into the provider card on page load', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/athlete/profile') && init?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { timezone: 'America/Los_Angeles' } }) } as Response)
+      }
+      if (url.endsWith('/api/v1/integrations/connections') && init?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [garminConnectionData()] }) } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [] }),
+      } as Response)
+    })
+
+    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    await flushPromises()
+
+    const garminCard = wrapper.get('[data-testid="provider-card-garmin_connect"]')
+    expect(garminCard.text()).toContain('Garmin Runner')
+    expect(garminCard.text()).toContain('已連接')
+    expect(garminCard.text()).toContain('上次同步')
+    expect(garminCard.text()).toContain('08:42')
+    expect(garminCard.text()).toContain('活動：取得 2，新增 1，重複 1')
+    expect(garminCard.text()).toContain('手動同步')
+  })
+
+  it('runs manual Garmin sync from the provider card and renders partial failure details', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/integrations/garmin/connect') && init?.method === 'POST') {
+        return Promise.resolve(okJson(garminConnectionData()))
+      }
+      if (url.endsWith('/api/v1/integrations/connections/conn-garmin-1/sync') && init?.method === 'POST') {
+        return Promise.resolve(
+          okJson(
+            garminConnectionData({
+              has_partial_failures: true,
+              sync_warning: 'HRV 暫時無法同步',
+              sync_summary: {
+                resources: {
+                  activities: { fetched: 4, stored: 2, duplicates: 2, failed: 0, errors: [] },
+                  hrv: { fetched: 0, stored: 0, duplicates: 0, failed: 1, errors: ['HRV 暫時無法同步'] },
+                  body_battery: { fetched: 1, stored: 1, duplicates: 0, failed: 0, errors: [] },
+                },
+              },
+            }),
+          ),
+        )
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: {} }),
+      } as Response)
+    })
+    const wrapper = mount(App, { props: { initialView: 'sources' } })
+
+    await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
+    await wrapper.get('input[name="garminPassword"]').setValue('garmin-password')
+    await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
+    await flushPromises()
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="manual-sync"]').trigger('click')
+    await flushPromises()
+
+    const garminCard = wrapper.get('[data-testid="provider-card-garmin_connect"]')
+    expect(garminCard.text()).toContain('部分資料同步失敗')
+    expect(garminCard.text()).toContain('HRV 暫時無法同步')
+    expect(garminCard.text()).toContain('活動：取得 4，新增 2，重複 2')
+    expect(garminCard.text()).toContain('HRV：取得 0，新增 0，失敗 1')
+    expect(wrapper.text()).toContain('Garmin 手動同步完成')
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/integrations/connections/conn-garmin-1/sync',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(wrapper.text()).not.toContain('garmin-password')
   })
 
   it('shows Garmin partial failures and reauth-needed state without echoing the password', async () => {
@@ -360,8 +444,56 @@ describe('Johnny product shell', () => {
 
     expect(wrapper.text()).toContain('已連接，需要重新登入')
     expect(wrapper.text()).toContain('部分資料同步失敗')
+    expect(wrapper.get('[data-testid="provider-card-garmin_connect"]').text()).toContain('重新連接')
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
+    expect(wrapper.text()).toContain('請重新輸入 Garmin 電子郵件與密碼後連接。')
     expect(wrapper.text()).toContain('Body Battery：取得 0，新增 0，失敗 1')
     expect(wrapper.text()).not.toContain('garmin-password')
+  })
+
+  it('disconnects Garmin from the provider card while preserving imported-data copy', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/integrations/garmin/connect') && init?.method === 'POST') {
+        return Promise.resolve(okJson(garminConnectionData()))
+      }
+      if (url.endsWith('/api/v1/integrations/connections/conn-garmin-1') && init?.method === 'DELETE') {
+        return Promise.resolve(
+          okJson(
+            garminConnectionData({
+              status: 'disconnected',
+              credential_status: 'deleted',
+              sync_status: 'idle',
+            }),
+          ),
+        )
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: {} }),
+      } as Response)
+    })
+    const wrapper = mount(App, { props: { initialView: 'sources' } })
+
+    await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
+    await wrapper.get('input[name="garminPassword"]').setValue('garmin-password')
+    await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
+    await flushPromises()
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="disconnect"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="provider-card-garmin_connect"]').text()).toContain('歷史匯入資料會保留')
+
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="confirm-disconnect"]').trigger('click')
+    await flushPromises()
+
+    const garminCard = wrapper.get('[data-testid="provider-card-garmin_connect"]')
+    expect(garminCard.text()).toContain('已中斷')
+    expect(garminCard.text()).toContain('重新連接')
+    expect(wrapper.text()).toContain('Garmin 已中斷連接；歷史匯入資料會保留。')
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/integrations/connections/conn-garmin-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
   })
 
   it('renders Conversation as a support surface with threads, evidence, and proposed actions', () => {

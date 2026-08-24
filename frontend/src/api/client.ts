@@ -1,4 +1,5 @@
 import type {
+  AthleteProfileResponse,
   AuthResponse,
   ConversationMessageResponse,
   CurrentUser,
@@ -7,6 +8,7 @@ import type {
   GarminConnectPayload,
   IntegrationConnectionEnvelope,
   IntegrationConnectionPayload,
+  IntegrationConnectionResponse,
   RaceGoalCreatePayload,
 } from '../types'
 
@@ -49,12 +51,20 @@ async function postJson<T>(path: string, payload?: unknown): Promise<T> {
   })
 }
 
+async function deleteJson<T>(path: string): Promise<T> {
+  return requestJson(path, { method: 'DELETE' })
+}
+
 export function getTodayContext(anchorDate: string): Promise<{ data: Record<string, unknown> }> {
   return getJson(`/today?anchor_date=${encodeURIComponent(anchorDate)}`)
 }
 
 export function getCurrentUser(): Promise<{ data: CurrentUser }> {
   return getJson('/me')
+}
+
+export function getAthleteProfile(): Promise<{ data: AthleteProfileResponse }> {
+  return getJson('/athlete/profile')
 }
 
 export function signUpWithEmail(payload: EmailPasswordSignupPayload): Promise<AuthResponse> {
@@ -108,6 +118,18 @@ export function connectIntegration(payload: IntegrationConnectionPayload): Promi
 
 export function connectGarminIntegration(payload: GarminConnectPayload): Promise<IntegrationConnectionEnvelope> {
   return postJson('/integrations/garmin/connect', payload)
+}
+
+export function listIntegrationConnections(): Promise<{ data: IntegrationConnectionResponse[] }> {
+  return getJson('/integrations/connections')
+}
+
+export function syncIntegrationConnection(connectionId: string): Promise<IntegrationConnectionEnvelope> {
+  return postJson(`/integrations/connections/${encodeURIComponent(connectionId)}/sync`)
+}
+
+export function disconnectIntegrationConnection(connectionId: string): Promise<IntegrationConnectionEnvelope> {
+  return deleteJson(`/integrations/connections/${encodeURIComponent(connectionId)}`)
 }
 
 export function submitConversationMessage(content: string): Promise<ConversationMessageResponse> {

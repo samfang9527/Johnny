@@ -275,6 +275,16 @@ class SqlAlchemyIntegrationRepository:
             return None
         return _sync_run_from_model(run)
 
+    def get_latest_sync_run_for_connection(self, integration_connection_id: str) -> SyncRun | None:
+        run = self._session.scalar(
+            select(SyncRunModel)
+            .where(SyncRunModel.integration_connection_id == integration_connection_id)
+            .order_by(SyncRunModel.started_at.desc())
+        )
+        if run is None:
+            return None
+        return _sync_run_from_model(run)
+
     def mark_connection_requires_reauth(self, integration_connection_id: str, error: str) -> IntegrationConnectionRef:
         connection = self._require_connection(integration_connection_id)
         safe_error = SyncSummary.empty().record_failed("sync", error).to_payload()["resources"]["sync"]["errors"][0]

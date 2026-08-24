@@ -462,6 +462,39 @@ def test_garmin_connect_endpoint_reports_partial_failure_after_zero_item_success
     assert "abc-session" not in response.text
 
 
+def test_integration_connections_endpoint_lists_current_users_active_connections() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    connected = _connect_api_garmin(
+        client,
+        provider_account_id="garmin-account-list",
+        with_profile=True,
+    )
+    other_user = _connect_api_garmin(
+        client,
+        user_id="user-2",
+        provider_account_id="garmin-account-other-list",
+        email="other@example.com",
+    )
+
+    response = client.get(
+        "/api/v1/integrations/connections",
+        headers={"X-Johnny-User-Id": "user-1"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert [connection["id"] for connection in data] == [connected["id"]]
+    assert data[0]["provider"] == "garmin_connect"
+    assert data[0]["provider_display_name"] == "Garmin Runner"
+    assert data[0]["last_sync_completed_at"] is not None
+    assert data[0]["sync_summary"]["resources"]["activities"]["stored"] == 1
+    assert data[0]["sync_summary"]["resources"]["body_battery"]["stored"] == 1
+    assert other_user["id"] not in response.text
+    assert "secret-token" not in response.text
+
+
 def test_manual_garmin_sync_endpoint_returns_summary_and_uses_existing_import_path() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 
@@ -803,6 +836,8 @@ def _connect_api_garmin(
     client,  # noqa: ANN001
     *,
     provider_account_id: str,
+    user_id: str = "user-1",
+    email: str = "runner@example.com",
     resource_adapter=None,  # noqa: ANN001
     with_profile: bool = False,
 ) -> dict:
@@ -823,8 +858,8 @@ def _connect_api_garmin(
     client.app.dependency_overrides[get_garmin_resource_adapter] = lambda: adapter
     response = client.post(
         "/api/v1/integrations/garmin/connect",
-        headers={"X-Johnny-User-Id": "user-1"},
-        json={"email": "runner@example.com", "password": "garmin-password", "region": "global"},
+        headers={"X-Johnny-User-Id": user_id},
+        json={"email": email, "password": "garmin-password", "region": "global"},
     )
     assert response.status_code == 200
     return response.json()["data"]

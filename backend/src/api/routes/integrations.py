@@ -73,6 +73,29 @@ def get_garmin_resource_adapter() -> GarminResourceAdapter:
     return _UnavailableGarminResourceAdapter()
 
 
+@router.get("/connections", response_model=DataEnvelope[list[IntegrationConnectionResponse]])
+def list_connections(
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+) -> DataEnvelope[list[IntegrationConnectionResponse]]:
+    ensure_current_user(session, current_user)
+    repository = SqlAlchemyIntegrationRepository(session)
+    connections = repository.list_active_connections_for_user(current_user.id)
+    return DataEnvelope(
+        data=[
+            _connection_response(
+                connection,
+                sync_summary=(
+                    latest_sync.summary
+                    if (latest_sync := repository.get_latest_sync_run_for_connection(connection.id))
+                    else None
+                ),
+            )
+            for connection in connections
+        ]
+    )
+
+
 @router.post("/connections", response_model=DataEnvelope[IntegrationConnectionResponse])
 def create_connection(
     payload: IntegrationConnectionRequest,

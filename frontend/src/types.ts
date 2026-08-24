@@ -7,6 +7,10 @@ export interface CurrentUser {
   capabilities: string[]
 }
 
+export interface AthleteProfileResponse {
+  timezone?: string | null
+}
+
 export interface AuthResponse {
   data: {
     user: CurrentUser
@@ -164,6 +168,9 @@ export interface IntegrationConnectionResponse {
   status: 'active' | 'replaced' | 'disconnected' | string
   credential_status: 'active' | 'requires_reauth' | 'deleted' | string
   sync_status: 'idle' | 'running' | 'failed' | string
+  last_sync_started_at?: string | null
+  last_sync_completed_at?: string | null
+  last_sync_error?: string | null
   sync_warning?: string | null
   has_partial_failures?: boolean
   sync_summary?: {

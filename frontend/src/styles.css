@@ -747,6 +747,61 @@ button:disabled {
 .provider-card {
   display: grid;
   gap: 1rem;
+  align-content: start;
+}
+
+.provider-card__account {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(246, 239, 228, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(17, 21, 20, 0.52);
+}
+
+.provider-card__account strong {
+  color: var(--color-lane-chalk);
+}
+
+.provider-card__account span {
+  color: var(--color-muted-chalk);
+  font-family: var(--font-data);
+  font-size: 0.88rem;
+}
+
+.provider-card__sync-summary,
+.provider-card__confirm {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(246, 239, 228, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(17, 21, 20, 0.72);
+}
+
+.provider-card__confirm {
+  border-color: rgba(185, 90, 80, 0.55);
+}
+
+.provider-card__sync-summary ul {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--color-muted-chalk);
+  font-family: var(--font-data);
+  font-size: 0.9rem;
+}
+
+.provider-card__warning {
+  margin: 0;
+  color: var(--color-split-amber) !important;
+}
+
+.provider-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
 }
 
 .provider-form {

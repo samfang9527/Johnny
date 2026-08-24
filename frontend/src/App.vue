@@ -5,9 +5,12 @@ import {
   ApiRequestError,
   connectGarminIntegration,
   createRaceGoal,
+  disconnectIntegrationConnection,
   discussRecommendation,
+  getAthleteProfile,
   getCurrentUser,
   getTodayContext,
+  listIntegrationConnections,
   listRaceGoals,
   listRecommendations,
   listTrainingPlans,
@@ -16,6 +19,7 @@ import {
   signOut,
   signUpWithEmail,
   startGoogleSignIn,
+  syncIntegrationConnection,
   submitConversationMessage,
 } from './api/client'
 import AppButton from './components/AppButton.vue'
@@ -105,7 +109,9 @@ const garminRegion = ref<'global' | 'china'>('global')
 const garminConnection = ref<IntegrationConnectionResponse | null>(null)
 const providerMessage = ref('')
 const providerError = ref('')
-const providerBusy = ref(false)
+const providerBusy = ref<'' | 'connect' | 'sync' | 'disconnect'>('')
+const pendingDisconnectConnectionId = ref('')
+const userTimezone = ref('UTC')
 const conversationMessage = ref('')
 const conversationError = ref('')
 const conversationStatus = ref('')
@@ -331,12 +337,21 @@ function handleEdit() {
 function selectProvider(provider: ProviderOption) {
   selectedProvider.value = provider
   providerError.value = ''
+  pendingDisconnectConnectionId.value = ''
+  if (provider.id === 'garmin_connect' && garminConnection.value?.credential_status === 'requires_reauth') {
+    providerMessage.value = '請重新輸入 Garmin 電子郵件與密碼後連接。'
+    return
+  }
   providerMessage.value = ''
 }
 
 async function submitProvider() {
+  if (providerBusy.value) {
+    return
+  }
   providerError.value = ''
   providerMessage.value = ''
+  pendingDisconnectConnectionId.value = ''
   if (selectedProvider.value.id !== 'garmin_connect') {
     providerError.value = '這個資料來源尚未開放連接。'
     return
@@ -350,7 +365,7 @@ async function submitProvider() {
     return
   }
   try {
-    providerBusy.value = true
+    providerBusy.value = 'connect'
     const response = await connectGarminIntegration({
       email: garminEmail.value.trim(),
       password: garminPassword.value,
@@ -364,7 +379,62 @@ async function submitProvider() {
     }
   } finally {
     garminPassword.value = ''
-    providerBusy.value = false
+    providerBusy.value = ''
+  }
+}
+
+async function syncGarminConnection(connection: IntegrationConnectionResponse) {
+  if (providerBusy.value || connection.credential_status === 'requires_reauth' || connection.status === 'disconnected') {
+    return
+  }
+  providerError.value = ''
+  providerMessage.value = ''
+  pendingDisconnectConnectionId.value = ''
+  providerBusy.value = 'sync'
+  try {
+    const response = await syncIntegrationConnection(connection.id)
+    garminConnection.value = response.data
+    providerMessage.value = response.data.has_partial_failures ? 'Garmin 手動同步完成，部分資料需要處理。' : 'Garmin 手動同步完成'
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      providerError.value = error instanceof ApiRequestError && error.status === 409 ? 'Garmin 同步已在進行中，請稍後再試。' : 'Garmin 手動同步失敗。請稍後再試。'
+    }
+  } finally {
+    providerBusy.value = ''
+  }
+}
+
+function requestDisconnectGarmin(connection: IntegrationConnectionResponse) {
+  if (providerBusy.value || connection.status === 'disconnected') {
+    return
+  }
+  providerError.value = ''
+  providerMessage.value = ''
+  pendingDisconnectConnectionId.value = connection.id
+}
+
+function cancelDisconnectGarmin() {
+  pendingDisconnectConnectionId.value = ''
+}
+
+async function confirmDisconnectGarmin(connection: IntegrationConnectionResponse) {
+  if (providerBusy.value || pendingDisconnectConnectionId.value !== connection.id) {
+    return
+  }
+  providerError.value = ''
+  providerMessage.value = ''
+  providerBusy.value = 'disconnect'
+  try {
+    const response = await disconnectIntegrationConnection(connection.id)
+    garminConnection.value = response.data
+    providerMessage.value = 'Garmin 已中斷連接；歷史匯入資料會保留。'
+    pendingDisconnectConnectionId.value = ''
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      providerError.value = 'Garmin 中斷連接失敗。請稍後再試。'
+    }
+  } finally {
+    providerBusy.value = ''
   }
 }
 
@@ -390,6 +460,47 @@ function garminSyncRows(connection: IntegrationConnectionResponse | null): strin
     return []
   }
   return Object.entries(resources).map(([resource, summary]) => formatSyncResource(resource, summary))
+}
+
+function providerConnection(provider: ProviderOption): IntegrationConnectionResponse | null {
+  return provider.id === 'garmin_connect' ? garminConnection.value : null
+}
+
+function providerSyncRows(provider: ProviderOption): string[] {
+  return provider.id === 'garmin_connect' ? garminSyncRows(garminConnection.value) : []
+}
+
+function providerLastSyncLabel(provider: ProviderOption): string {
+  if (provider.id !== 'garmin_connect') {
+    return ''
+  }
+  return formatLastSyncLabel(garminConnection.value)
+}
+
+function providerBusyAction(provider: ProviderOption): '' | 'connect' | 'sync' | 'disconnect' {
+  return provider.id === 'garmin_connect' ? providerBusy.value : ''
+}
+
+function isDisconnectConfirming(provider: ProviderOption): boolean {
+  return provider.id === 'garmin_connect' && Boolean(garminConnection.value?.id && pendingDisconnectConnectionId.value === garminConnection.value.id)
+}
+
+function formatLastSyncLabel(connection: IntegrationConnectionResponse | null): string {
+  const value = connection?.last_sync_completed_at || connection?.last_sync_started_at
+  if (!value) {
+    return '尚未同步'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return '尚未同步'
+  }
+  return `上次同步：${date.toLocaleString('zh-TW', {
+    timeZone: userTimezone.value,
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`
 }
 
 function formatSyncResource(resource: string, summary: SyncResourceSummary): string {
@@ -589,13 +700,15 @@ onMounted(() => {
 
 async function hydrateFromBackend() {
   const anchorDate = new Date().toISOString().slice(0, 10)
-  const [todayResult, recommendationsResult, plansResult, racesResult] = await Promise.allSettled([
+  const [todayResult, recommendationsResult, plansResult, racesResult, integrationsResult, profileResult] = await Promise.allSettled([
     getTodayContext(anchorDate),
     listRecommendations(),
     listTrainingPlans(),
     listRaceGoals(anchorDate, sixMonthWindowEnd(anchorDate)),
+    listIntegrationConnections(),
+    getAthleteProfile(),
   ])
-  const results = [todayResult, recommendationsResult, plansResult, racesResult]
+  const results = [todayResult, recommendationsResult, plansResult, racesResult, integrationsResult, profileResult]
   if (results.some((result) => result.status === 'rejected' && handleSessionExpiry(result.reason))) {
     return
   }
@@ -612,7 +725,35 @@ async function hydrateFromBackend() {
   if (racesResult.status === 'fulfilled') {
     applyRaceGoalsPayload(Array.isArray(racesResult.value.data) ? racesResult.value.data : [])
   }
+  if (integrationsResult.status === 'fulfilled') {
+    applyIntegrationsPayload(Array.isArray(integrationsResult.value.data) ? integrationsResult.value.data : [])
+  }
+  if (profileResult.status === 'fulfilled') {
+    applyAthleteProfilePayload(profileResult.value.data)
+  }
   hasBackendHydrated.value = true
+}
+
+function applyAthleteProfilePayload(profile: { timezone?: string | null }) {
+  if (profile.timezone && isValidTimezone(profile.timezone)) {
+    userTimezone.value = profile.timezone
+  }
+}
+
+function isValidTimezone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('zh-TW', { timeZone: timezone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function applyIntegrationsPayload(connections: IntegrationConnectionResponse[]) {
+  const garmin = connections.find((connection) => connection.provider === 'garmin_connect')
+  if (garmin) {
+    garminConnection.value = garmin
+  }
 }
 
 function applyTodayPayload(payload: Record<string, unknown>) {
@@ -1460,7 +1601,16 @@ function shouldRequireAuth(): boolean {
             v-for="provider in providers"
             :key="provider.id"
             :provider="provider"
+            :connection="providerConnection(provider)"
+            :resource-rows="providerSyncRows(provider)"
+            :last-sync-label="providerLastSyncLabel(provider)"
+            :busy-action="providerBusyAction(provider)"
+            :disconnect-confirming="isDisconnectConfirming(provider)"
             @select="selectProvider"
+            @sync="syncGarminConnection"
+            @disconnect="requestDisconnectGarmin"
+            @confirm-disconnect="confirmDisconnectGarmin"
+            @cancel-disconnect="cancelDisconnectGarmin"
           />
         </div>
 
@@ -1503,7 +1653,7 @@ function shouldRequireAuth(): boolean {
             </select>
           </label>
           <p v-if="providerError" id="provider-form-error" class="field-error">{{ providerError }}</p>
-          <AppButton tone="primary" type="submit" :busy="providerBusy">連接 Garmin</AppButton>
+          <AppButton tone="primary" type="submit" :busy="providerBusy === 'connect'">連接 Garmin</AppButton>
           <p v-if="providerMessage" class="inline-note">{{ providerMessage }}</p>
           <div v-if="garminConnection" class="sync-result" aria-live="polite">
             <div class="sync-result__header">
