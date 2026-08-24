@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Annotated, Generator
 
-from fastapi import Depends, Header
+from fastapi import Cookie, Depends, Header
 from sqlalchemy.orm import Session
 
 from src.application.agent_runtime import RunningCompanionAgent
@@ -19,12 +20,14 @@ from src.application.agent_tools import (
     TrainingPlanTool,
     WorkoutAdjustmentProposalTool,
 )
+from src.api.errors import ApiUnauthorizedError
 from src.application.training_analytics import BuildTodayContextHandler
-from src.infrastructure.database.models import UserModel
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
+from src.infrastructure.database.auth_repository import SqlAlchemyAuthRepository
 from src.infrastructure.database.memory_repository import SqlAlchemyMemoryCandidateRepository
+from src.infrastructure.database.models import UserModel
 from src.infrastructure.database.recommendation_repository import SqlAlchemyRecommendationRepository
 from src.infrastructure.database.session import create_session_factory
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
@@ -45,23 +48,14 @@ MVP_CAPABILITIES = [
 ]
 
 
+SESSION_COOKIE_NAME = "johnny_session"
+
+
 @dataclass(frozen=True)
 class CurrentUser:
     id: str
     email: str | None = None
     display_name: str | None = None
-
-
-def get_current_user(
-    user_id: Annotated[str | None, Header(alias="X-Johnny-User-Id")] = None,
-    email: Annotated[str | None, Header(alias="X-Johnny-User-Email")] = None,
-    display_name: Annotated[str | None, Header(alias="X-Johnny-User-Display-Name")] = None,
-) -> CurrentUser:
-    return CurrentUser(
-        id=user_id or "local-user",
-        email=email,
-        display_name=display_name,
-    )
 
 
 _session_factory = create_session_factory()
@@ -79,8 +73,57 @@ def get_session() -> Generator[Session]:
         session.close()
 
 
-CurrentUserDependency = Annotated[CurrentUser, Depends(get_current_user)]
 SessionDependency = Annotated[Session, Depends(get_session)]
+
+
+def get_current_user(
+    session: SessionDependency,
+    session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
+    user_id: Annotated[str | None, Header(alias="X-Johnny-User-Id")] = None,
+    email: Annotated[str | None, Header(alias="X-Johnny-User-Email")] = None,
+    display_name: Annotated[str | None, Header(alias="X-Johnny-User-Display-Name")] = None,
+) -> CurrentUser:
+    if session_token:
+        user = SqlAlchemyAuthRepository(session).get_user_by_session_token(session_token)
+        if user is not None:
+            return CurrentUser(id=user.id, email=user.email, display_name=user.display_name)
+
+    if user_id and _allow_header_user():
+        return CurrentUser(
+            id=user_id,
+            email=email,
+            display_name=display_name,
+        )
+
+    if _auth_required():
+        raise ApiUnauthorizedError("Authentication required")
+
+    return CurrentUser(
+        id=user_id or "local-user",
+        email=email,
+        display_name=display_name,
+    )
+
+
+CurrentUserDependency = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+def _auth_required() -> bool:
+    configured = os.getenv("JOHNNY_AUTH_REQUIRED")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return not _running_under_pytest()
+
+
+def _allow_header_user() -> bool:
+    configured = os.getenv("JOHNNY_AUTH_ALLOW_HEADER_USER")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return not _auth_required()
+
+
+def _running_under_pytest() -> bool:
+    return os.getenv("ENV", "").strip().lower() == "test" and bool(os.getenv("PYTEST_CURRENT_TEST"))
 
 
 def ensure_current_user(session: Session, current_user: CurrentUser) -> UserModel:

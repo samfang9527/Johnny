@@ -1,5 +1,29 @@
 export type ViewKey = 'today' | 'calendar' | 'inbox' | 'conversation' | 'sources'
 
+export interface CurrentUser {
+  id: string
+  email?: string | null
+  display_name?: string | null
+  capabilities: string[]
+}
+
+export interface AuthResponse {
+  data: {
+    user: CurrentUser
+  }
+}
+
+export interface EmailPasswordSignupPayload {
+  display_name: string
+  email: string
+  password: string
+}
+
+export interface EmailPasswordLoginPayload {
+  email: string
+  password: string
+}
+
 export interface RaceSummary {
   name: string
   date: string

@@ -2,14 +2,20 @@
 import { computed, onMounted, ref } from 'vue'
 import {
   acceptRecommendation,
+  ApiRequestError,
   connectIntegration,
   createRaceGoal,
   discussRecommendation,
+  getCurrentUser,
   getTodayContext,
   listRaceGoals,
   listRecommendations,
   listTrainingPlans,
   rejectRecommendation,
+  signInWithEmail,
+  signOut,
+  signUpWithEmail,
+  startGoogleSignIn,
   submitConversationMessage,
 } from './api/client'
 import AppButton from './components/AppButton.vue'
@@ -31,6 +37,7 @@ import {
 } from './fixtures'
 import type {
   ConversationThread,
+  CurrentUser,
   InboxRecommendation,
   LinkedRecommendationContext,
   ProviderOption,
@@ -51,6 +58,7 @@ const props = withDefaults(
     workouts?: WorkoutSummary[]
     conversationThreads?: ConversationThread[]
     inboxItems?: InboxRecommendation[]
+    requireAuth?: boolean
   }>(),
   {
     todayState: 'full',
@@ -59,6 +67,7 @@ const props = withDefaults(
     workouts: undefined,
     conversationThreads: undefined,
     inboxItems: undefined,
+    requireAuth: false,
   },
 )
 
@@ -108,17 +117,45 @@ const raceDistance = ref('')
 const raceGoal = ref('')
 const raceFormError = ref('')
 const raceFormMessage = ref('')
+const authStatus = ref<'checking' | 'anonymous' | 'authenticated'>(shouldRequireAuth() ? 'checking' : 'authenticated')
+const currentUser = ref<CurrentUser | null>(null)
+const authMode = ref<'login' | 'signup'>('login')
+const authDisplayName = ref('')
+const authEmail = ref('')
+const authPassword = ref('')
+const authPasswordConfirm = ref('')
+const authError = ref('')
+const authMessage = ref('')
+const authBusy = ref(false)
+const hasBackendHydrated = ref(false)
 
 const activeTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label || '今日')
-const raceSummary = computed(() => apiRaceSummary.value ?? fixtureRaceSummary)
-const todayWorkout = computed(() => apiTodayWorkout.value ?? fixtureTodayWorkout)
-const recoveryEvidence = computed(() => (apiRecoveryEvidence.value.length ? apiRecoveryEvidence.value : fixtureRecoveryEvidence))
-const unavailableSignals = computed(() => (apiUnavailableSignals.value.length ? apiUnavailableSignals.value : fixtureUnavailableSignals))
+const isAuthenticated = computed(() => authStatus.value === 'authenticated')
+const effectiveTodayState = computed(() => {
+  if (props.todayState !== 'full') {
+    return props.todayState
+  }
+  return hasBackendHydrated.value && shouldRequireAuth() && !apiRaceSummary.value && !apiTodayWorkout.value ? 'empty' : 'full'
+})
+const raceSummary = computed(() => apiRaceSummary.value ?? (hasBackendHydrated.value && shouldRequireAuth() ? emptyRaceSummary() : fixtureRaceSummary))
+const todayWorkout = computed(() => apiTodayWorkout.value ?? (hasBackendHydrated.value && shouldRequireAuth() ? emptyWorkoutSummary() : fixtureTodayWorkout))
+const recoveryEvidence = computed(() => {
+  if (apiRecoveryEvidence.value.length) {
+    return apiRecoveryEvidence.value
+  }
+  return hasBackendHydrated.value && shouldRequireAuth() ? [] : fixtureRecoveryEvidence
+})
+const unavailableSignals = computed(() => {
+  if (apiUnavailableSignals.value.length) {
+    return apiUnavailableSignals.value
+  }
+  return hasBackendHydrated.value && shouldRequireAuth() ? [] : fixtureUnavailableSignals
+})
 const recommendation = computed(() => apiRecommendation.value ?? fixtureRecommendation)
-const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : fixtureWorkouts))
+const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : hasBackendHydrated.value && shouldRequireAuth() ? [] : fixtureWorkouts))
 const displayThreads = computed(() => props.conversationThreads ?? fixtureConversationThreads)
 const displayInboxItems = computed(() => {
-  const source = props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : fixtureInboxRecommendations)
+  const source = props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : hasBackendHydrated.value && shouldRequireAuth() ? [] : fixtureInboxRecommendations)
   return source.map((item) => {
     const status = recommendationDecisions.value[item.id]
     return status ? { ...item, status, statusLabel: statusLabel(status) } : item
@@ -129,6 +166,107 @@ const activeThread = computed(() => displayThreads.value.find((thread) => thread
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
 const historicalInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status !== 'pending'))
 const raceCalendarMonths = computed(() => buildRaceCalendarMonths(raceEntries.value))
+
+async function initializeAuth() {
+  if (!shouldRequireAuth()) {
+    authStatus.value = 'authenticated'
+    await hydrateFromBackend()
+    return
+  }
+
+  authStatus.value = 'checking'
+  authError.value = ''
+  try {
+    const response = await getCurrentUser()
+    currentUser.value = response.data
+    authStatus.value = 'authenticated'
+    await hydrateFromBackend()
+  } catch (error) {
+    authStatus.value = 'anonymous'
+    authError.value = error instanceof ApiRequestError && error.status === 401 ? '' : '登入狀態檢查失敗，請重新登入。'
+  }
+}
+
+function selectAuthMode(mode: 'login' | 'signup') {
+  authMode.value = mode
+  authError.value = ''
+  authMessage.value = ''
+}
+
+async function submitAuth() {
+  authError.value = ''
+  authMessage.value = ''
+  const email = authEmail.value.trim()
+  const password = authPassword.value
+  if (!email || !password) {
+    authError.value = '請輸入 Email 與密碼'
+    return
+  }
+  if (password.length < 8) {
+    authError.value = '密碼至少需要 8 個字元'
+    return
+  }
+  if (authMode.value === 'signup') {
+    if (!authDisplayName.value.trim()) {
+      authError.value = '請輸入顯示名稱'
+      return
+    }
+    if (authPasswordConfirm.value !== password) {
+      authError.value = '兩次輸入的密碼不一致'
+      return
+    }
+  }
+
+  authBusy.value = true
+  try {
+    const response =
+      authMode.value === 'signup'
+        ? await signUpWithEmail({ display_name: authDisplayName.value.trim(), email, password })
+        : await signInWithEmail({ email, password })
+    currentUser.value = response.data.user
+    authDisplayName.value = response.data.user.display_name || authDisplayName.value
+    authPassword.value = ''
+    authPasswordConfirm.value = ''
+    authStatus.value = 'authenticated'
+    authMessage.value = authMode.value === 'signup' ? '帳號已建立' : '已登入'
+    await hydrateFromBackend()
+  } catch (error) {
+    authError.value = error instanceof ApiRequestError && error.status === 401 ? 'Email 或密碼不正確' : '登入失敗，請檢查資料後再試。'
+  } finally {
+    authBusy.value = false
+  }
+}
+
+async function handleGoogleSignIn() {
+  authError.value = ''
+  authBusy.value = true
+  try {
+    const callbackUrl = typeof window !== 'undefined' ? window.location.hash || '#today' : '#today'
+    const response = await startGoogleSignIn(callbackUrl, authMode.value === 'signup' ? authDisplayName.value.trim() || undefined : undefined)
+    if (typeof window !== 'undefined') {
+      window.location.assign(response.data.authorization_url)
+    }
+  } catch {
+    authError.value = 'Google 登入尚未設定完成，請先使用 Email 登入。'
+    authBusy.value = false
+  }
+}
+
+async function handleSignOut() {
+  await signOut()
+  currentUser.value = null
+  authStatus.value = shouldRequireAuth() ? 'anonymous' : 'authenticated'
+}
+
+function handleSessionExpiry(error: unknown): boolean {
+  if (shouldRequireAuth() && error instanceof ApiRequestError && error.status === 401) {
+    currentUser.value = null
+    authStatus.value = 'anonymous'
+    authError.value = '登入已過期，請重新登入。'
+    return true
+  }
+  return false
+}
 
 function showView(view: ViewKey) {
   activeView.value = view
@@ -142,6 +280,8 @@ async function handleAccept() {
   try {
     await acceptRecommendation(recommendation.value.id)
     recommendationStatus.value = 'accepted'
+  } catch (error) {
+    handleSessionExpiry(error)
   } finally {
     busyAction.value = ''
   }
@@ -152,6 +292,8 @@ async function handleKeepOriginal() {
   try {
     await rejectRecommendation(recommendation.value.id)
     recommendationStatus.value = 'kept'
+  } catch (error) {
+    handleSessionExpiry(error)
   } finally {
     busyAction.value = ''
   }
@@ -170,6 +312,8 @@ async function handleDiscuss() {
       evidence: recoveryEvidence.value,
     }
     showView('conversation')
+  } catch (error) {
+    handleSessionExpiry(error)
   } finally {
     busyAction.value = ''
   }
@@ -189,12 +333,18 @@ async function submitProvider() {
     providerError.value = '請輸入 Provider account ID'
     return
   }
-  await connectIntegration({
-    provider: selectedProvider.value.id,
-    provider_account_id: providerAccountId.value.trim(),
-    credential_secret_ref: credentialSecretRef.value || undefined,
-  })
-  providerMessage.value = `${selectedProvider.value.name} 連接已送出`
+  try {
+    await connectIntegration({
+      provider: selectedProvider.value.id,
+      provider_account_id: providerAccountId.value.trim(),
+      credential_secret_ref: credentialSecretRef.value || undefined,
+    })
+    providerMessage.value = `${selectedProvider.value.name} 連接已送出`
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      providerError.value = '資料來源連接失敗，請稍後再試。'
+    }
+  }
 }
 
 function statusTone(status: RecommendationStatus): 'info' | 'warning' | 'danger' | 'success' {
@@ -260,8 +410,10 @@ async function submitConversation() {
     conversationMessage.value = ''
     conversationStatus.value = runRef ? `Johnny 已收到問題 · ${runRef}` : 'Johnny 已收到問題'
     appendConversationMessages(content, response)
-  } catch {
-    conversationError.value = '訊息送出失敗，請稍後再試。'
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      conversationError.value = '訊息送出失敗，請稍後再試。'
+    }
   } finally {
     conversationBusy.value = false
   }
@@ -273,6 +425,8 @@ async function handleInboxAccept(item: InboxRecommendation) {
   try {
     await acceptRecommendation(item.id)
     recommendationDecisions.value = { ...recommendationDecisions.value, [item.id]: 'accepted' }
+  } catch (error) {
+    handleSessionExpiry(error)
   } finally {
     inboxBusyRecommendationId.value = ''
     inboxBusyAction.value = ''
@@ -285,6 +439,8 @@ async function handleInboxKeep(item: InboxRecommendation) {
   try {
     await rejectRecommendation(item.id)
     recommendationDecisions.value = { ...recommendationDecisions.value, [item.id]: 'rejected' }
+  } catch (error) {
+    handleSessionExpiry(error)
   } finally {
     inboxBusyRecommendationId.value = ''
     inboxBusyAction.value = ''
@@ -327,8 +483,10 @@ async function submitRaceEntry() {
     raceDistance.value = ''
     raceGoal.value = ''
     raceFormMessage.value = '賽事已加入訓練安排'
-  } catch {
-    raceFormError.value = '訓練安排儲存失敗，請稍後再試。'
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      raceFormError.value = '訓練安排儲存失敗，請稍後再試。'
+    }
   }
 }
 
@@ -348,15 +506,17 @@ async function handleInboxDiscuss(item: InboxRecommendation) {
     const response = await discussRecommendation(item.id, '我想了解這次建議的原因。')
     const runRef = (response as { data?: { run_ref?: string } }).data?.run_ref
     conversationStatus.value = runRef ? `Johnny 已開啟討論 · ${runRef}` : 'Johnny 已開啟討論'
-  } catch {
-    conversationError.value = '討論原因送出失敗，請稍後再試。'
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      conversationError.value = '討論原因送出失敗，請稍後再試。'
+    }
   } finally {
     inboxBusyRecommendationId.value = ''
   }
 }
 
 onMounted(() => {
-  void hydrateFromBackend()
+  void initializeAuth()
 })
 
 async function hydrateFromBackend() {
@@ -367,6 +527,10 @@ async function hydrateFromBackend() {
     listTrainingPlans(),
     listRaceGoals(anchorDate, sixMonthWindowEnd(anchorDate)),
   ])
+  const results = [todayResult, recommendationsResult, plansResult, racesResult]
+  if (results.some((result) => result.status === 'rejected' && handleSessionExpiry(result.reason))) {
+    return
+  }
 
   if (todayResult.status === 'fulfilled') {
     applyTodayPayload(todayResult.value.data)
@@ -380,6 +544,7 @@ async function hydrateFromBackend() {
   if (racesResult.status === 'fulfilled') {
     applyRaceGoalsPayload(Array.isArray(racesResult.value.data) ? racesResult.value.data : [])
   }
+  hasBackendHydrated.value = true
 }
 
 function applyTodayPayload(payload: Record<string, unknown>) {
@@ -693,10 +858,105 @@ function sixMonthWindowEnd(anchorDate: string): string {
   const end = new Date(anchor.getFullYear(), anchor.getMonth() + 6, 0)
   return end.toISOString().slice(0, 10)
 }
+
+function emptyRaceSummary(): RaceSummary {
+  return {
+    name: '尚未設定目標',
+    date: '',
+    distance: 'N/A',
+    goal: '先新增你的目標',
+    daysRemaining: 0,
+  }
+}
+
+function emptyWorkoutSummary(): WorkoutSummary {
+  return {
+    id: 'empty-workout',
+    weekday: '待排',
+    dateLabel: '',
+    type: '尚未有今日課表',
+    purpose: '連接資料來源或建立訓練計畫後，Johnny 會在這裡顯示今天的安排。',
+    status: 'empty',
+  }
+}
+
+function shouldRequireAuth(): boolean {
+  return props.requireAuth || import.meta.env.MODE !== 'test'
+}
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="authStatus === 'checking' && shouldRequireAuth()" class="app-shell auth-shell">
+    <main class="auth-surface">
+      <section class="auth-panel" aria-live="polite">
+        <p class="section-label">Johnny</p>
+        <h1>正在確認登入狀態</h1>
+        <p>如果 session 已過期，Johnny 會帶你回到登入頁。</p>
+      </section>
+    </main>
+  </div>
+
+  <div v-else-if="authStatus === 'anonymous' && shouldRequireAuth()" class="app-shell auth-shell">
+    <main class="auth-surface">
+      <section class="auth-panel" aria-labelledby="auth-title">
+        <div class="auth-panel__header">
+          <p class="section-label">Running Companion</p>
+          <h1 id="auth-title">登入 Johnny</h1>
+          <p>登入後 Johnny 才會讀取你的訓練安排、資料來源與 Agent 建議。</p>
+        </div>
+
+        <div class="auth-mode-switch" role="tablist" aria-label="登入方式">
+          <button
+            type="button"
+            data-auth-mode="login"
+            :class="{ 'auth-mode-switch__item--active': authMode === 'login' }"
+            @click="selectAuthMode('login')"
+          >
+            Email 登入
+          </button>
+          <button
+            type="button"
+            data-auth-mode="signup"
+            :class="{ 'auth-mode-switch__item--active': authMode === 'signup' }"
+            @click="selectAuthMode('signup')"
+          >
+            建立帳號
+          </button>
+        </div>
+
+        <button class="google-auth-button" type="button" :disabled="authBusy" @click="handleGoogleSignIn">
+          使用 Google 登入
+        </button>
+
+        <form class="auth-form" data-testid="auth-form" novalidate @submit.prevent="submitAuth">
+          <label v-if="authMode === 'signup'">
+            顯示名稱
+            <input v-model="authDisplayName" name="displayName" autocomplete="name" :aria-invalid="authError ? 'true' : 'false'" />
+          </label>
+          <label>
+            Email
+            <input v-model="authEmail" name="authEmail" type="email" autocomplete="email" :aria-invalid="authError ? 'true' : 'false'" />
+          </label>
+          <label>
+            密碼
+            <input v-model="authPassword" name="authPassword" type="password" :autocomplete="authMode === 'signup' ? 'new-password' : 'current-password'" :aria-invalid="authError ? 'true' : 'false'" />
+          </label>
+          <label v-if="authMode === 'signup'">
+            確認密碼
+            <input v-model="authPasswordConfirm" name="authPasswordConfirm" type="password" autocomplete="new-password" :aria-invalid="authError ? 'true' : 'false'" />
+          </label>
+          <p v-if="authError" class="field-error" role="alert">{{ authError }}</p>
+          <p v-else-if="authMessage" class="inline-note">{{ authMessage }}</p>
+          <p v-else class="auth-hint">密碼至少 8 個字元，可使用密碼管理器或貼上。</p>
+          <AppButton tone="primary" type="submit" :busy="authBusy">
+            {{ authMode === 'signup' ? '建立並進入 Johnny' : '登入 Johnny' }}
+          </AppButton>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <div v-else class="app-shell">
     <header class="top-bar">
       <div class="top-bar__inner">
         <div class="brand-lockup">
@@ -716,6 +976,10 @@ function sixMonthWindowEnd(anchorDate: string): string {
             {{ item.label }}
           </button>
         </nav>
+        <div v-if="isAuthenticated && currentUser" class="user-menu" aria-label="目前使用者">
+          <span>{{ currentUser.display_name || currentUser.email }}</span>
+          <button type="button" @click="handleSignOut">登出</button>
+        </div>
       </div>
     </header>
 
@@ -727,20 +991,20 @@ function sixMonthWindowEnd(anchorDate: string): string {
           <p>Johnny 會把課表、恢復訊號和建議放在同一個決策脈絡裡。</p>
         </div>
 
-        <article v-if="props.todayState === 'loading'" class="state-panel today-grid__wide" aria-live="polite">
+        <article v-if="effectiveTodayState === 'loading'" class="state-panel today-grid__wide" aria-live="polite">
           <p class="section-label">Loading</p>
           <h3>正在整理今天的訓練資料</h3>
           <p>Johnny 正在讀取課表、恢復訊號和推薦狀態。</p>
         </article>
 
-        <article v-else-if="props.todayState === 'error'" class="state-panel state-panel--danger today-grid__wide" role="alert">
+        <article v-else-if="effectiveTodayState === 'error'" class="state-panel state-panel--danger today-grid__wide" role="alert">
           <p class="section-label">Error</p>
           <h3>今天資料載入失敗</h3>
           <p>請稍後再試，或先前往資料來源檢查同步狀態。</p>
           <AppButton tone="neutral" @click="showView('sources')">檢查資料來源</AppButton>
         </article>
 
-        <article v-else-if="props.todayState === 'empty'" class="state-panel today-grid__wide">
+        <article v-else-if="effectiveTodayState === 'empty'" class="state-panel today-grid__wide">
           <p class="section-label">Empty</p>
           <h3>尚未有足夠資料建立今日建議</h3>
           <p>連接資料來源後，Johnny 會用近期訓練、睡眠與 HRV 判斷恢復狀態。</p>

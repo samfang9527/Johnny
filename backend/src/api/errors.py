@@ -20,6 +20,10 @@ class ApiConflictError(ValueError):
     pass
 
 
+class ApiUnauthorizedError(ValueError):
+    pass
+
+
 DOMAIN_ERRORS = (
     ActivityHealthValidationError,
     AthleteRaceValidationError,
@@ -46,6 +50,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiConflictError)
     async def conflict_exception_handler(request: Request, exc: ApiConflictError) -> JSONResponse:
         return _error_response(status_code=409, code="conflict", message=str(exc), details=[])
+
+    @app.exception_handler(ApiUnauthorizedError)
+    async def unauthorized_exception_handler(request: Request, exc: ApiUnauthorizedError) -> JSONResponse:
+        return _error_response(status_code=401, code="unauthorized", message=str(exc), details=[])
 
     for error_type in DOMAIN_ERRORS:
         app.add_exception_handler(error_type, domain_validation_exception_handler)

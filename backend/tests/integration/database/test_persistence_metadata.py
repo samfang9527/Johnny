@@ -6,6 +6,8 @@ from src.infrastructure.database.models import Base
 EXPECTED_TABLES = {
     "users",
     "auth_identities",
+    "password_credentials",
+    "auth_sessions",
     "athlete_profiles",
     "memory_items",
     "races",
@@ -36,6 +38,8 @@ def test_core_tables_expose_queryable_columns() -> None:
     expected_columns = {
         "users": {"id", "email", "display_name", "status", "created_at", "updated_at"},
         "auth_identities": {"id", "user_id", "provider", "issuer", "subject", "email", "created_at", "updated_at"},
+        "password_credentials": {"id", "user_id", "email", "password_hash", "created_at", "updated_at"},
+        "auth_sessions": {"id", "user_id", "token_hash", "expires_at", "revoked_at", "user_agent", "created_at", "updated_at"},
         "races": {"id", "user_id", "name", "race_date", "distance_meters", "status", "metadata_json"},
         "training_plans": {"id", "user_id", "race_id", "name", "status", "starts_on", "ends_on"},
         "workouts": {"id", "training_plan_id", "scheduled_for", "workout_type", "status"},

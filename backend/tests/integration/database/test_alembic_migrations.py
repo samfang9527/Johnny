@@ -19,3 +19,18 @@ def test_alembic_upgrade_creates_mvp_schema(tmp_path: Path, monkeypatch) -> None
 
     assert "alembic_version" in table_names
     assert {"users", "training_plans", "activities", "recommendations", "agent_runs"}.issubset(table_names)
+
+
+def test_root_alembic_config_supports_plain_upgrade_command(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "johnny_root_migration.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(database_url)
+    table_names = set(inspect(engine).get_table_names())
+
+    assert {"alembic_version", "users", "auth_sessions", "password_credentials"}.issubset(table_names)

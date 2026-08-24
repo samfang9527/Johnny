@@ -4,6 +4,7 @@ import App from './App.vue'
 
 describe('Johnny product shell', () => {
   beforeEach(() => {
+    window.location.hash = ''
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -11,6 +12,82 @@ describe('Johnny product shell', () => {
         json: () => Promise.resolve({ data: {} }),
       }),
     )
+  })
+
+  it('shows the login screen when the session is missing or expired', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ error: { code: 'unauthorized', message: 'Authentication required', details: [] } }),
+    } as Response)
+
+    const wrapper = mount(App, { props: { initialView: 'calendar', requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('登入 Johnny')
+    expect(wrapper.text()).toContain('使用 Google 登入')
+    expect(wrapper.text()).toContain('Email 登入')
+    expect(wrapper.find('nav').exists()).toBe(false)
+  })
+
+  it('lets a new user sign up with display name and enters the app without demo data', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ error: { code: 'unauthorized', message: 'Authentication required', details: [] } }),
+        } as Response)
+      }
+      if (url.endsWith('/api/v1/auth/signup') && init?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                user: {
+                  id: 'user-auth-1',
+                  email: 'runner@example.com',
+                  display_name: 'Johnny Chen',
+                  capabilities: ['today', 'races', 'training-plans', 'recommendations', 'integrations'],
+                },
+              },
+            }),
+        } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [] }),
+      } as Response)
+    })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    await wrapper.get('button[data-auth-mode="signup"]').trigger('click')
+    await wrapper.get('input[name="displayName"]').setValue('Johnny Chen')
+    await wrapper.get('input[name="authEmail"]').setValue('runner@example.com')
+    await wrapper.get('input[name="authPassword"]').setValue('password123')
+    await wrapper.get('input[name="authPasswordConfirm"]').setValue('password123')
+    await wrapper.get('form[data-testid="auth-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/auth/signup',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({
+          display_name: 'Johnny Chen',
+          email: 'runner@example.com',
+          password: 'password123',
+        }),
+      }),
+    )
+    expect(wrapper.text()).toContain('Johnny Chen')
+    expect(wrapper.text()).toContain('今天的訓練決策')
+    expect(wrapper.text()).not.toContain('Sydney Marathon')
+    expect(wrapper.text()).toContain('連接資料來源後')
   })
 
   it('shows the Chinese-first navigation and Today as the primary surface', () => {
@@ -139,7 +216,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Sub 1:45')
     expect(wrapper.text()).toContain('賽事已加入訓練安排')
     expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/races',
+      'http://127.0.0.1:8000/api/v1/races',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
@@ -184,7 +261,7 @@ describe('Johnny product shell', () => {
 
     expect(wrapper.text()).toContain('Garmin 連接已送出')
     expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/integrations/connections',
+      'http://127.0.0.1:8000/api/v1/integrations/connections',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
@@ -271,7 +348,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/conversations/messages',
+      'http://127.0.0.1:8000/api/v1/conversations/messages',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ content: '今天要不要改課表' }),
@@ -396,7 +473,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/recommendations/backend-rec-1/accept',
+      'http://127.0.0.1:8000/api/v1/recommendations/backend-rec-1/accept',
       expect.objectContaining({ method: 'POST' }),
     )
   })

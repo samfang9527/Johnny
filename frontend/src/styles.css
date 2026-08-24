@@ -157,6 +157,125 @@ button:disabled {
   padding: 2rem 0 4rem;
 }
 
+.auth-shell {
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.auth-surface {
+  display: grid;
+  width: min(30rem, 100%);
+  min-height: 100vh;
+  place-items: center;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid rgba(246, 239, 228, 0.16);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-rubber-gray) 78%, var(--color-pit-black));
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.22);
+}
+
+.auth-panel__header {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.auth-panel h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  letter-spacing: 0;
+}
+
+.auth-panel p {
+  margin: 0;
+  color: var(--color-muted-chalk);
+  line-height: 1.65;
+}
+
+.google-auth-button,
+.auth-mode-switch button,
+.user-menu button {
+  min-height: 2.5rem;
+  border: 1px solid rgba(246, 239, 228, 0.16);
+  border-radius: var(--radius-md);
+  color: var(--color-lane-chalk);
+  background: rgba(246, 239, 228, 0.055);
+}
+
+.google-auth-button:hover,
+.auth-mode-switch button:hover,
+.user-menu button:hover {
+  border-color: rgba(246, 239, 228, 0.28);
+  background: rgba(246, 239, 228, 0.085);
+}
+
+.google-auth-button {
+  width: 100%;
+  font-weight: 700;
+}
+
+.auth-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border: 1px solid rgba(246, 239, 228, 0.1);
+  border-radius: var(--radius-lg);
+  background: rgba(246, 239, 228, 0.045);
+}
+
+.auth-mode-switch__item--active {
+  border-color: rgba(232, 184, 109, 0.72) !important;
+  background: rgba(232, 184, 109, 0.13) !important;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 0.45rem;
+  color: var(--color-muted-chalk);
+  font-size: 0.9rem;
+}
+
+.auth-form input {
+  min-height: 2.75rem;
+  width: 100%;
+  border: 1px solid rgba(246, 239, 228, 0.16);
+  border-radius: var(--radius-md);
+  color: var(--color-lane-chalk);
+  background: rgba(17, 21, 20, 0.76);
+  padding: 0.7rem 0.8rem;
+}
+
+.auth-hint {
+  min-height: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--color-muted-chalk);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.user-menu button {
+  min-height: 2.25rem;
+  padding: 0 0.75rem;
+}
+
 .today-grid {
   display: grid;
   align-items: stretch;

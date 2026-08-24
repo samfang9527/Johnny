@@ -1,7 +1,25 @@
-import type { ConversationMessageResponse, IntegrationConnectionPayload, RaceGoalCreatePayload } from '../types'
+import type {
+  AuthResponse,
+  ConversationMessageResponse,
+  CurrentUser,
+  EmailPasswordLoginPayload,
+  EmailPasswordSignupPayload,
+  IntegrationConnectionPayload,
+  RaceGoalCreatePayload,
+} from '../types'
 
 export function getApiBaseUrl(): string {
-  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+  return import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+}
+
+export class ApiRequestError extends Error {
+  status: number
+
+  constructor(status: number, message = `Request failed: ${status}`) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = status
+  }
 }
 
 async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
@@ -9,10 +27,11 @@ async function requestJson<T>(path: string, init: RequestInit): Promise<T> {
     headers: {
       'Content-Type': 'application/json',
     },
+    credentials: 'include',
     ...init,
   })
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`)
+    throw new ApiRequestError(response.status)
   }
   return response.json() as Promise<T>
 }
@@ -30,6 +49,27 @@ async function postJson<T>(path: string, payload?: unknown): Promise<T> {
 
 export function getTodayContext(anchorDate: string): Promise<{ data: Record<string, unknown> }> {
   return getJson(`/today?anchor_date=${encodeURIComponent(anchorDate)}`)
+}
+
+export function getCurrentUser(): Promise<{ data: CurrentUser }> {
+  return getJson('/me')
+}
+
+export function signUpWithEmail(payload: EmailPasswordSignupPayload): Promise<AuthResponse> {
+  return postJson('/auth/signup', payload)
+}
+
+export function signInWithEmail(payload: EmailPasswordLoginPayload): Promise<AuthResponse> {
+  return postJson('/auth/login', payload)
+}
+
+export function signOut(): Promise<unknown> {
+  return postJson('/auth/logout')
+}
+
+export function startGoogleSignIn(callbackUrl: string, displayName?: string): Promise<{ data: { authorization_url: string } }> {
+  const displayNameQuery = displayName ? `&display_name=${encodeURIComponent(displayName)}` : ''
+  return getJson(`/auth/google/start?callback_url=${encodeURIComponent(callbackUrl)}${displayNameQuery}`)
 }
 
 export function listRecommendations(): Promise<{ data: Array<Record<string, unknown>> }> {

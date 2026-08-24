@@ -59,6 +59,11 @@ class UserModel(TimestampMixin, Base):
 
     athlete_profile: Mapped[AthleteProfileModel | None] = relationship(back_populates="user", uselist=False)
     auth_identities: Mapped[list[AuthIdentityModel]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    password_credentials: Mapped[list[PasswordCredentialModel]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    auth_sessions: Mapped[list[AuthSessionModel]] = relationship(back_populates="user", cascade="all, delete-orphan")
     races: Mapped[list[RaceModel]] = relationship(back_populates="user")
     training_plans: Mapped[list[TrainingPlanModel]] = relationship(back_populates="user")
 
@@ -76,6 +81,30 @@ class AuthIdentityModel(TimestampMixin, Base):
     provider_claims: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     user: Mapped[UserModel] = relationship(back_populates="auth_identities")
+
+
+class PasswordCredentialModel(TimestampMixin, Base):
+    __tablename__ = "password_credentials"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    user: Mapped[UserModel] = relationship(back_populates="password_credentials")
+
+
+class AuthSessionModel(TimestampMixin, Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    user_agent: Mapped[str | None] = mapped_column(String(500))
+
+    user: Mapped[UserModel] = relationship(back_populates="auth_sessions")
 
 
 class AthleteProfileModel(TimestampMixin, Base):

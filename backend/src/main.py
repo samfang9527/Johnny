@@ -9,6 +9,7 @@ import uvicorn
 from .api.errors import register_exception_handlers
 from .api.routes.activity_health import activity_router, health_router as health_metrics_router
 from .api.routes.athlete_profile import router as athlete_profile_router
+from .api.routes.auth import router as auth_router
 from .api.routes.conversations import router as conversations_router
 from .api.routes.health import router as health_router
 from .api.routes.integrations import router as integrations_router
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health_router)
     api_v1_router = APIRouter(prefix="/api/v1")
+    api_v1_router.include_router(auth_router)
     api_v1_router.include_router(athlete_profile_router)
     api_v1_router.include_router(activity_router)
     api_v1_router.include_router(conversations_router)
