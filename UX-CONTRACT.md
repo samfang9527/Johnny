@@ -5,6 +5,7 @@
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
 | Date | Native date input in `frontend/src/App.vue` race-entry form | `premium-ui.json` ownership and `DESIGN.md` layout/form guidance | native | component test, build, premium audit |
+| Select/Listbox | Native select in `frontend/src/App.vue` Garmin region form | `premium-ui.json` ownership and `DESIGN.md` layout/form guidance | native | component test, build, premium audit |
 | Form | App-owned Vue form markup with `novalidate` and inline validation | `frontend/src/App.vue`, `DESIGN.md` Forms and overlays | provider binding, race entry, hidden conversation composer | component test, premium audit |
 | Scrollbar | Global application stylesheet in `frontend/src/styles.css` | `DESIGN.md` token mapping and CSS custom properties | global baseline | token verifier, premium audit |
 

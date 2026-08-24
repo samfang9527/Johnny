@@ -4,6 +4,8 @@ import type {
   CurrentUser,
   EmailPasswordLoginPayload,
   EmailPasswordSignupPayload,
+  GarminConnectPayload,
+  IntegrationConnectionEnvelope,
   IntegrationConnectionPayload,
   RaceGoalCreatePayload,
 } from '../types'
@@ -102,6 +104,10 @@ export function discussRecommendation(recommendationId: string, content: string)
 
 export function connectIntegration(payload: IntegrationConnectionPayload): Promise<unknown> {
   return postJson('/integrations/connections', payload)
+}
+
+export function connectGarminIntegration(payload: GarminConnectPayload): Promise<IntegrationConnectionEnvelope> {
+  return postJson('/integrations/garmin/connect', payload)
 }
 
 export function submitConversationMessage(content: string): Promise<ConversationMessageResponse> {

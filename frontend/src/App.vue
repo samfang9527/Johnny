@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   acceptRecommendation,
   ApiRequestError,
-  connectIntegration,
+  connectGarminIntegration,
   createRaceGoal,
   discussRecommendation,
   getCurrentUser,
@@ -47,6 +47,8 @@ import type {
   ViewKey,
   WorkoutSummary,
   EvidenceItem,
+  IntegrationConnectionResponse,
+  SyncResourceSummary,
 } from './types'
 
 const props = withDefaults(
@@ -97,10 +99,13 @@ const apiRecoveryEvidence = ref<EvidenceItem[]>([])
 const apiUnavailableSignals = ref<string[]>([])
 const apiInboxItems = ref<InboxRecommendation[]>([])
 const selectedProvider = ref<ProviderOption>(providers[0])
-const providerAccountId = ref('')
-const credentialSecretRef = ref('')
+const garminEmail = ref('')
+const garminPassword = ref('')
+const garminRegion = ref<'global' | 'china'>('global')
+const garminConnection = ref<IntegrationConnectionResponse | null>(null)
 const providerMessage = ref('')
 const providerError = ref('')
+const providerBusy = ref(false)
 const conversationMessage = ref('')
 const conversationError = ref('')
 const conversationStatus = ref('')
@@ -325,26 +330,89 @@ function handleEdit() {
 
 function selectProvider(provider: ProviderOption) {
   selectedProvider.value = provider
+  providerError.value = ''
+  providerMessage.value = ''
 }
 
 async function submitProvider() {
   providerError.value = ''
-  if (!providerAccountId.value.trim()) {
-    providerError.value = '請輸入 Provider account ID'
+  providerMessage.value = ''
+  if (selectedProvider.value.id !== 'garmin_connect') {
+    providerError.value = '這個資料來源尚未開放連接。'
+    return
+  }
+  if (!garminEmail.value.trim()) {
+    providerError.value = '請輸入 Garmin 電子郵件'
+    return
+  }
+  if (!garminPassword.value) {
+    providerError.value = '請輸入 Garmin 密碼'
     return
   }
   try {
-    await connectIntegration({
-      provider: selectedProvider.value.id,
-      provider_account_id: providerAccountId.value.trim(),
-      credential_secret_ref: credentialSecretRef.value || undefined,
+    providerBusy.value = true
+    const response = await connectGarminIntegration({
+      email: garminEmail.value.trim(),
+      password: garminPassword.value,
+      region: garminRegion.value,
     })
-    providerMessage.value = `${selectedProvider.value.name} 連接已送出`
+    garminConnection.value = response.data
+    providerMessage.value = `${response.data.provider_display_name || 'Garmin'} 已連接`
   } catch (error) {
     if (!handleSessionExpiry(error)) {
-      providerError.value = '資料來源連接失敗，請稍後再試。'
+      providerError.value = 'Garmin 連接失敗。請檢查登入資料後再試一次。'
     }
+  } finally {
+    garminPassword.value = ''
+    providerBusy.value = false
   }
+}
+
+function garminStatus(connection: IntegrationConnectionResponse | null): {
+  label: string
+  tone: 'info' | 'warning' | 'danger' | 'success'
+} {
+  if (connection?.credential_status === 'requires_reauth') {
+    return { label: '已連接，需要重新登入', tone: 'warning' }
+  }
+  if (connection?.has_partial_failures) {
+    return { label: '部分資料同步失敗', tone: 'warning' }
+  }
+  if (connection) {
+    return { label: '初始同步完成', tone: 'success' }
+  }
+  return { label: '等待連接', tone: 'info' }
+}
+
+function garminSyncRows(connection: IntegrationConnectionResponse | null): string[] {
+  const resources = connection?.sync_summary?.resources
+  if (!resources) {
+    return []
+  }
+  return Object.entries(resources).map(([resource, summary]) => formatSyncResource(resource, summary))
+}
+
+function formatSyncResource(resource: string, summary: SyncResourceSummary): string {
+  const parts = [`取得 ${summary.fetched ?? 0}`, `新增 ${summary.stored ?? 0}`]
+  if (summary.duplicates) {
+    parts.push(`重複 ${summary.duplicates}`)
+  }
+  if (summary.failed) {
+    parts.push(`失敗 ${summary.failed}`)
+  }
+  return `${syncResourceLabel(resource)}：${parts.join('，')}`
+}
+
+function syncResourceLabel(resource: string): string {
+  const labels: Record<string, string> = {
+    activities: '活動',
+    sleep: '睡眠',
+    hrv: 'HRV',
+    resting_heart_rate: '靜息心率',
+    stress: '壓力',
+    body_battery: 'Body Battery',
+  }
+  return labels[resource] || resource
 }
 
 function statusTone(status: RecommendationStatus): 'info' | 'warning' | 'danger' | 'success' {
@@ -1399,29 +1467,55 @@ function shouldRequireAuth(): boolean {
         <form class="surface-card provider-form" data-testid="provider-form" novalidate @submit.prevent="submitProvider">
           <div class="section-heading">
             <div>
-              <p class="section-label">MVP Binding</p>
+              <p class="section-label">Garmin Connect experimental login</p>
               <h3>{{ selectedProvider.name }}</h3>
             </div>
-            <StatusBadge tone="info">credential reference</StatusBadge>
+            <StatusBadge :tone="garminStatus(garminConnection).tone">{{ garminStatus(garminConnection).label }}</StatusBadge>
           </div>
-          <p>Johnny 只保存 credential reference，不保存 Garmin 密碼、token 或 cookie。</p>
+          <p>Johnny 會用這組登入資料建立 Garmin 連線工作階段。密碼只用於這次連接，不會顯示在訊息中。</p>
           <label>
-            Provider account ID
+            Garmin 電子郵件
             <input
-              v-model="providerAccountId"
-              name="providerAccountId"
+              v-model="garminEmail"
+              name="garminEmail"
+              type="email"
               autocomplete="off"
               :aria-invalid="providerError ? 'true' : 'false'"
-              aria-describedby="provider-account-error"
+              aria-describedby="provider-form-error"
             />
           </label>
-          <p v-if="providerError" id="provider-account-error" class="field-error">{{ providerError }}</p>
           <label>
-            Credential secret ref
-            <input v-model="credentialSecretRef" name="credentialSecretRef" autocomplete="off" />
+            Garmin 密碼
+            <input
+              v-model="garminPassword"
+              name="garminPassword"
+              type="password"
+              autocomplete="off"
+              :aria-invalid="providerError ? 'true' : 'false'"
+              aria-describedby="provider-form-error"
+            />
           </label>
-          <AppButton tone="primary" type="submit">連接資料來源</AppButton>
+          <label>
+            Garmin 區域
+            <select v-model="garminRegion" name="garminRegion" autocomplete="off">
+              <option value="global">全球</option>
+              <option value="china">中國</option>
+            </select>
+          </label>
+          <p v-if="providerError" id="provider-form-error" class="field-error">{{ providerError }}</p>
+          <AppButton tone="primary" type="submit" :busy="providerBusy">連接 Garmin</AppButton>
           <p v-if="providerMessage" class="inline-note">{{ providerMessage }}</p>
+          <div v-if="garminConnection" class="sync-result" aria-live="polite">
+            <div class="sync-result__header">
+              <p class="section-label">初始同步</p>
+              <StatusBadge :tone="garminStatus(garminConnection).tone">{{ garminStatus(garminConnection).label }}</StatusBadge>
+            </div>
+            <p v-if="garminConnection.has_partial_failures" class="sync-result__warning">部分資料同步失敗</p>
+            <p v-if="garminConnection.sync_warning" class="sync-result__warning">{{ garminConnection.sync_warning }}</p>
+            <ul class="sync-result__list">
+              <li v-for="row in garminSyncRows(garminConnection)" :key="row">{{ row }}</li>
+            </ul>
+          </div>
         </form>
       </section>
 

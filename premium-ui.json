@@ -2,9 +2,10 @@
   "profile": "product-admin",
   "sourceRoots": ["frontend/src"],
   "locale": "zh-TW",
-  "requiredCapabilities": ["Date", "Form", "Scrollbar"],
+  "requiredCapabilities": ["Date", "Select/Listbox", "Form", "Scrollbar"],
   "ownership": {
-    "Date": "native"
+    "Date": "native",
+    "Select/Listbox": "native"
   },
   "requiredCommands": ["test", "build", "tokens"],
   "commands": {

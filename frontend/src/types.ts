@@ -142,6 +142,39 @@ export interface IntegrationConnectionPayload {
   credential_secret_ref?: string
 }
 
+export interface GarminConnectPayload {
+  email: string
+  password: string
+  region: 'global' | 'china'
+}
+
+export interface SyncResourceSummary {
+  fetched?: number
+  stored?: number
+  duplicates?: number
+  failed?: number
+  errors?: string[]
+}
+
+export interface IntegrationConnectionResponse {
+  id: string
+  provider: string
+  provider_account_id?: string
+  provider_display_name?: string | null
+  status: 'active' | 'replaced' | 'disconnected' | string
+  credential_status: 'active' | 'requires_reauth' | 'deleted' | string
+  sync_status: 'idle' | 'running' | 'failed' | string
+  sync_warning?: string | null
+  has_partial_failures?: boolean
+  sync_summary?: {
+    resources: Record<string, SyncResourceSummary>
+  } | null
+}
+
+export interface IntegrationConnectionEnvelope {
+  data: IntegrationConnectionResponse
+}
+
 export interface ConversationMessageResponse {
   data: {
     message: {

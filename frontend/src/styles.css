@@ -762,6 +762,7 @@ button:disabled {
 }
 
 .provider-form input,
+.provider-form select,
 .race-form input {
   width: 100%;
   min-height: 2.75rem;
@@ -770,6 +771,55 @@ button:disabled {
   border-radius: var(--radius-md);
   color: var(--color-lane-chalk);
   background: var(--color-pit-black);
+}
+
+.provider-form select {
+  cursor: pointer;
+}
+
+.provider-form select:hover,
+.provider-form select:focus-visible {
+  border-color: rgba(131, 183, 165, 0.7);
+}
+
+.provider-form select:active {
+  border-color: var(--color-primary);
+}
+
+.provider-form select:disabled {
+  color: var(--color-muted-chalk);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.sync-result {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid rgba(246, 239, 228, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(17, 21, 20, 0.72);
+}
+
+.sync-result__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sync-result__warning {
+  margin: 0;
+  color: var(--color-split-amber);
+}
+
+.sync-result__list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--color-muted-chalk);
+  font-family: var(--font-data);
 }
 
 .conversation-layout {

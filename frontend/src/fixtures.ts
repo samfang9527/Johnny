@@ -265,19 +265,19 @@ export const inboxRecommendations: InboxRecommendation[] = [
 
 export const providers: ProviderOption[] = [
   {
-    id: 'garmin',
-    name: 'Garmin',
+    id: 'garmin_connect',
+    name: 'Garmin Connect experimental login',
     status: 'available',
     statusLabel: '可連接',
-    coverage: ['Running activity', 'HRV', 'Sleep', 'Training Load'],
-    description: '適合提供跑步、恢復與訓練負荷資料。',
+    coverage: ['活動', '睡眠', 'HRV', 'Body Battery'],
+    description: '使用 Garmin 電子郵件與密碼建立實驗性連線，初次連接會自動同步 30 天資料。',
   },
   {
     id: 'apple-health',
     name: 'Apple Health',
     status: 'available',
     statusLabel: '可連接',
-    coverage: ['Sleep', 'Resting HR', 'Daily health metrics'],
+    coverage: ['睡眠', '靜息心率', '每日健康指標'],
     description: '補足日常健康與睡眠訊號。',
   },
   {
@@ -285,7 +285,7 @@ export const providers: ProviderOption[] = [
     name: 'Strava',
     status: 'future',
     statusLabel: '即將支援',
-    coverage: ['Running activity', 'Route history'],
+    coverage: ['跑步活動', '路線紀錄'],
     description: '未來用於活動紀錄與路線脈絡。',
   },
 ]

@@ -2,6 +2,35 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 
+function okJson(data: Record<string, unknown>): Response {
+  return {
+    ok: true,
+    json: () => Promise.resolve({ data }),
+  } as Response
+}
+
+function garminConnectionData(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'conn-garmin-1',
+    provider: 'garmin_connect',
+    provider_display_name: 'Garmin Runner',
+    status: 'active',
+    credential_status: 'active',
+    sync_status: 'idle',
+    sync_warning: null,
+    has_partial_failures: false,
+    sync_summary: {
+      resources: {
+        activities: { fetched: 2, stored: 1, duplicates: 1, failed: 0, errors: [] },
+        sleep: { fetched: 1, stored: 1, duplicates: 0, failed: 0, errors: [] },
+        hrv: { fetched: 1, stored: 1, duplicates: 0, failed: 0, errors: [] },
+        body_battery: { fetched: 1, stored: 1, duplicates: 0, failed: 0, errors: [] },
+      },
+    },
+    ...overrides,
+  }
+}
+
 describe('Johnny product shell', () => {
   beforeEach(() => {
     window.location.hash = ''
@@ -243,37 +272,55 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('目前沒有已排定課表')
   })
 
-  it('opens data sources and submits a provider connection request', async () => {
+  it('opens data sources and connects Garmin through experimental login without provider account id', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/integrations/garmin/connect') && init?.method === 'POST') {
+        return Promise.resolve(okJson(garminConnectionData()))
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: {} }),
+      } as Response)
+    })
     const wrapper = mount(App)
 
     await wrapper.get('button[data-view="sources"]').trigger('click')
 
     expect(wrapper.text()).toContain('資料來源')
-    expect(wrapper.text()).toContain('Garmin')
+    expect(wrapper.text()).toContain('Garmin Connect experimental login')
     expect(wrapper.text()).toContain('Apple Health')
     expect(wrapper.text()).toContain('Strava')
-    expect(wrapper.text()).toContain('Johnny 只保存 credential reference')
+    expect(wrapper.find('input[name="providerAccountId"]').exists()).toBe(false)
 
-    await wrapper.get('input[name="providerAccountId"]').setValue('runner-001')
-    await wrapper.get('input[name="credentialSecretRef"]').setValue('secret/garmin/runner-001')
+    await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
+    const password = wrapper.get('input[name="garminPassword"]')
+    expect(password.attributes('type')).toBe('password')
+    expect(password.attributes('autocomplete')).toBe('off')
+    await password.setValue('garmin-password')
+    await wrapper.get('select[name="garminRegion"]').setValue('china')
     await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Garmin 連接已送出')
+    expect(wrapper.text()).toContain('Garmin Runner 已連接')
+    expect(wrapper.text()).toContain('初始同步完成')
+    expect(wrapper.text()).toContain('活動：取得 2，新增 1，重複 1')
+    expect(wrapper.text()).toContain('Body Battery：取得 1，新增 1')
+    expect(wrapper.text()).not.toContain('garmin-password')
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/integrations/connections',
+      'http://127.0.0.1:8000/api/v1/integrations/garmin/connect',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
-          provider: 'garmin',
-          provider_account_id: 'runner-001',
-          credential_secret_ref: 'secret/garmin/runner-001',
+          email: 'runner@example.com',
+          password: 'garmin-password',
+          region: 'china',
         }),
       }),
     )
   })
 
-  it('keeps provider validation in the app instead of submitting an empty account id', async () => {
+  it('keeps Garmin validation in the app instead of submitting empty credentials', async () => {
     const wrapper = mount(App, {
       props: {
         initialView: 'sources',
@@ -282,8 +329,39 @@ describe('Johnny product shell', () => {
 
     await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
 
-    expect(wrapper.text()).toContain('請輸入 Provider account ID')
+    expect(wrapper.text()).toContain('請輸入 Garmin 電子郵件')
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+  })
+
+  it('shows Garmin partial failures and reauth-needed state without echoing the password', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      okJson(
+        garminConnectionData({
+          id: 'conn-garmin-reauth',
+          credential_status: 'requires_reauth',
+          sync_status: 'failed',
+          sync_warning: 'Garmin connection requires reauth',
+          has_partial_failures: true,
+          sync_summary: {
+            resources: {
+              activities: { fetched: 1, stored: 1, duplicates: 0, failed: 0, errors: [] },
+              body_battery: { fetched: 0, stored: 0, duplicates: 0, failed: 1, errors: ['Garmin connection requires reauth'] },
+            },
+          },
+        }),
+      ),
+    )
+    const wrapper = mount(App, { props: { initialView: 'sources' } })
+
+    await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
+    await wrapper.get('input[name="garminPassword"]').setValue('garmin-password')
+    await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已連接，需要重新登入')
+    expect(wrapper.text()).toContain('部分資料同步失敗')
+    expect(wrapper.text()).toContain('Body Battery：取得 0，新增 0，失敗 1')
+    expect(wrapper.text()).not.toContain('garmin-password')
   })
 
   it('renders Conversation as a support surface with threads, evidence, and proposed actions', () => {
