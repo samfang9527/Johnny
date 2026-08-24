@@ -97,6 +97,8 @@ class SqlAlchemyIntegrationRepository:
         credential_format: str | None = None,
         capabilities: dict[str, Any] | None = None,
         provider_metadata: dict[str, Any] | None = None,
+        provider_display_name: str | None = None,
+        auth_scheme: str | None = None,
     ) -> IntegrationConnectionRef:
         connection = self._require_connection(connection_id)
         connection.status = "active"
@@ -104,6 +106,10 @@ class SqlAlchemyIntegrationRepository:
         connection.sync_status = "idle"
         connection.credential_secret_ref = credential_secret_ref
         connection.credential_format = credential_format
+        if provider_display_name is not None:
+            connection.provider_display_name = provider_display_name
+        if auth_scheme is not None:
+            connection.auth_scheme = auth_scheme
         if capabilities is not None:
             connection.capabilities = capabilities
         if provider_metadata is not None:
@@ -264,11 +270,14 @@ def _connection_from_model(model: IntegrationConnectionModel) -> IntegrationConn
         user_id=model.user_id,
         provider=model.provider,
         provider_account_id=model.provider_account_id,
+        provider_display_name=model.provider_display_name,
+        auth_scheme=model.auth_scheme,
         credential_secret_ref=model.credential_secret_ref,
         credential_format=model.credential_format,
         credential_status=model.credential_status,
         status=model.status,
         capabilities=model.capabilities or {},
+        provider_metadata=model.provider_metadata or {},
     )
 
 

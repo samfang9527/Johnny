@@ -280,3 +280,159 @@ def test_garmin_credential_configuration_errors_are_redacted_http_errors() -> No
         "message": "Garmin credential encryption is not configured",
         "details": [],
     }
+
+
+def test_garmin_connect_endpoint_uses_discovered_identity_and_redacts_credentials() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+    from src.api.routes.integrations import get_garmin_credential_cipher, get_garmin_login_adapter
+    from src.application.integrations import GarminAccountProfile
+
+    client = create_sqlite_test_client()
+    garmin = _ApiFakeGarminLoginAdapter(
+        GarminAccountProfile(
+            provider_account_id="garmin-account-api",
+            display_name="Garmin Runner",
+            session_payload='{"oauth2_token":"secret-token"}',
+        )
+    )
+    client.app.dependency_overrides[get_garmin_login_adapter] = lambda: garmin
+    client.app.dependency_overrides[get_garmin_credential_cipher] = lambda: _ApiFakeCipher()
+
+    response = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "email": "runner@example.com",
+            "password": "garmin-password",
+            "region": "china",
+        },
+    )
+    reconnected = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "email": "runner@example.com",
+            "password": "new-garmin-password",
+            "region": "global",
+        },
+    )
+    cross_user = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-2"},
+        json={
+            "email": "other@example.com",
+            "password": "other-garmin-password",
+            "region": "global",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["provider"] == "garmin_connect"
+    assert data["provider_account_id"] == "garmin-account-api"
+    assert data["provider_display_name"] == "Garmin Runner"
+    assert data["credential_secret_ref"] is None
+    assert data["credential_format"] == "garminconnect-session-json"
+    assert "garmin-password" not in response.text
+    assert "runner@example.com" not in response.text
+    assert "secret-token" not in response.text
+    assert reconnected.status_code == 200
+    assert reconnected.json()["data"]["id"] == data["id"]
+    assert cross_user.status_code == 409
+    assert garmin.calls[0] == {"email": "runner@example.com", "password": "garmin-password", "region": "china"}
+
+
+def test_garmin_connect_endpoint_rejects_user_entered_provider_account_id(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    monkeypatch.setenv("GARMIN_CREDENTIAL_MASTER_KEY", Fernet.generate_key().decode("ascii"))
+    client = create_sqlite_test_client()
+
+    response = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "email": "runner@example.com",
+            "password": "garmin-password",
+            "region": "global",
+            "provider_account_id": "user-supplied-id",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert "user-supplied-id" not in response.text
+    assert "garmin-password" not in response.text
+
+
+def test_garmin_connect_validation_errors_do_not_echo_password(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    monkeypatch.setenv("GARMIN_CREDENTIAL_MASTER_KEY", Fernet.generate_key().decode("ascii"))
+    client = create_sqlite_test_client()
+
+    response = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "email": "runner@example.com",
+            "password": "",
+            "region": "global",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert "runner@example.com" not in response.text
+    assert "password" not in response.text
+    assert "garmin-password" not in response.text
+
+
+def test_garmin_connect_endpoint_reports_unconfigured_adapter_without_echoing_credentials(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    monkeypatch.setenv("GARMIN_CREDENTIAL_MASTER_KEY", Fernet.generate_key().decode("ascii"))
+    client = create_sqlite_test_client()
+
+    response = client.post(
+        "/api/v1/integrations/garmin/connect",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "email": "runner@example.com",
+            "password": "garmin-password",
+            "region": "global",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"] == {
+        "code": "configuration_error",
+        "message": "Garmin integration is not configured",
+        "details": [],
+    }
+    assert "runner@example.com" not in response.text
+    assert "garmin-password" not in response.text
+
+
+class _ApiFakeGarminLoginAdapter:
+    def __init__(self, profile) -> None:
+        self._profile = profile
+        self.calls: list[dict[str, str]] = []
+
+    def exchange_credentials(self, *, email: str, password: str, region: str):
+        self.calls.append({"email": email, "password": password, "region": region})
+        return self._profile
+
+
+class _ApiFakeCipher:
+    key_id = "local-fernet"
+
+    def encrypt(self, plaintext: str) -> str:
+        assert plaintext == '{"oauth2_token":"secret-token"}'
+        return "fernet:encrypted-session"
+
+    def decrypt(self, encrypted_payload: str) -> str:
+        raise AssertionError("connect should not decrypt credentials")

@@ -4,16 +4,30 @@ from dataclasses import dataclass
 from typing import Callable, Protocol
 
 from src.application.interfaces.integrations_notifications import (
+    IntegrationCredentialStore,
     IntegrationStore,
     OutboxStore,
     ProviderActivityStore,
     ProviderAdapter,
 )
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
-from src.domain.integrations_notifications import IntegrationConnectionRef, OutboxEvent, SyncSummary
+from src.domain.integrations_notifications import IntegrationConnectionRef, IntegrationCredential, OutboxEvent, SyncSummary
+
+
+GARMIN_PROVIDER = "garmin_connect"
+GARMIN_AUTH_SCHEME = "garminconnect_tokenstore"
+GARMIN_CREDENTIAL_FORMAT = "garminconnect-session-json"
 
 
 class ProviderAccountAlreadyConnectedError(ValueError):
+    pass
+
+
+class GarminAuthenticationError(ValueError):
+    pass
+
+
+class GarminIntegrationConfigurationError(RuntimeError):
     pass
 
 
@@ -28,7 +42,12 @@ class SyncConnectionLifecycleStore(Protocol):
         user_id: str,
         provider: str,
         provider_account_id: str | None = None,
+        provider_display_name: str | None = None,
+        auth_scheme: str = "oauth2",
         credential_secret_ref: str | None = None,
+        credential_format: str | None = None,
+        capabilities: dict | None = None,
+        provider_metadata: dict | None = None,
     ) -> IntegrationConnectionRef: ...
 
     def reactivate_connection(
@@ -36,9 +55,26 @@ class SyncConnectionLifecycleStore(Protocol):
         connection_id: str,
         *,
         credential_secret_ref: str | None = None,
+        credential_format: str | None = None,
+        capabilities: dict | None = None,
+        provider_metadata: dict | None = None,
+        provider_display_name: str | None = None,
+        auth_scheme: str | None = None,
     ) -> IntegrationConnectionRef: ...
 
     def reset_resource_cursors(self, integration_connection_id: str) -> None: ...
+
+
+class GarminLoginAdapter(Protocol):
+    def exchange_credentials(self, *, email: str, password: str, region: str) -> GarminAccountProfile:
+        ...
+
+
+class CredentialCipher(Protocol):
+    key_id: str
+
+    def encrypt(self, plaintext: str) -> str:
+        ...
 
 
 @dataclass(frozen=True)
@@ -48,11 +84,32 @@ class ProviderSyncCommand:
 
 
 @dataclass(frozen=True)
+class GarminAccountProfile:
+    provider_account_id: str
+    display_name: str | None
+    session_payload: str
+    timezone: str | None = None
+
+
+@dataclass(frozen=True)
+class ConnectGarminAccountCommand:
+    user_id: str
+    email: str
+    password: str
+    region: str
+
+
+@dataclass(frozen=True)
 class ConnectSyncProviderCommand:
     user_id: str
     provider: str
     provider_account_id: str
     credential_secret_ref: str | None = None
+    provider_display_name: str | None = None
+    auth_scheme: str = "oauth2"
+    credential_format: str | None = None
+    capabilities: dict | None = None
+    provider_metadata: dict | None = None
 
 
 class ConnectSyncProviderHandler:
@@ -69,6 +126,11 @@ class ConnectSyncProviderHandler:
             reactivated = self._integrations.reactivate_connection(
                 existing.id,
                 credential_secret_ref=command.credential_secret_ref,
+                credential_format=command.credential_format,
+                capabilities=command.capabilities,
+                provider_metadata=command.provider_metadata,
+                provider_display_name=command.provider_display_name,
+                auth_scheme=command.auth_scheme,
             )
             self._integrations.reset_resource_cursors(reactivated.id)
             return reactivated
@@ -78,8 +140,65 @@ class ConnectSyncProviderHandler:
             user_id=command.user_id,
             provider=command.provider,
             provider_account_id=command.provider_account_id,
+            provider_display_name=command.provider_display_name,
+            auth_scheme=command.auth_scheme,
             credential_secret_ref=command.credential_secret_ref,
+            credential_format=command.credential_format,
+            capabilities=command.capabilities,
+            provider_metadata=command.provider_metadata,
         )
+
+
+class ConnectGarminAccountHandler:
+    def __init__(
+        self,
+        *,
+        integrations: SyncConnectionLifecycleStore,
+        credentials: IntegrationCredentialStore,
+        garmin: GarminLoginAdapter,
+        cipher: CredentialCipher,
+    ) -> None:
+        self._integrations = integrations
+        self._credentials = credentials
+        self._garmin = garmin
+        self._cipher = cipher
+
+    def handle(self, command: ConnectGarminAccountCommand) -> IntegrationConnectionRef:
+        if command.region not in {"global", "china"}:
+            raise ValueError("Garmin region is not supported")
+
+        profile = self._garmin.exchange_credentials(
+            email=command.email,
+            password=command.password,
+            region=command.region,
+        )
+        encrypted_payload = self._cipher.encrypt(profile.session_payload)
+        connection = ConnectSyncProviderHandler(integrations=self._integrations).handle(
+            ConnectSyncProviderCommand(
+                user_id=command.user_id,
+                provider=GARMIN_PROVIDER,
+                provider_account_id=profile.provider_account_id,
+                provider_display_name=profile.display_name,
+                auth_scheme=GARMIN_AUTH_SCHEME,
+                credential_format=GARMIN_CREDENTIAL_FORMAT,
+                capabilities={"activities": True, "health": True},
+                provider_metadata=_garmin_provider_metadata(region=command.region, timezone=profile.timezone),
+            )
+        )
+        self._credentials.upsert_credential(
+            IntegrationCredential.create(
+                connection_id=connection.id,
+                credential_format=GARMIN_CREDENTIAL_FORMAT,
+                encrypted_payload=encrypted_payload,
+                key_id=self._cipher.key_id,
+                lifecycle_metadata=_garmin_credential_metadata(
+                    region=command.region,
+                    display_name=profile.display_name,
+                    timezone=profile.timezone,
+                ),
+            )
+        )
+        return connection
 
 
 class ProviderSyncHandler:
@@ -156,3 +275,19 @@ class ProviderSyncHandler:
             self._integrations.upsert_resource_cursor(connection.id, "sync", fetch_result.cursor)
         self._integrations.complete_sync_run(sync_run.id, summary)
         return summary
+
+
+def _garmin_provider_metadata(*, region: str, timezone: str | None) -> dict:
+    metadata = {"region": region}
+    if timezone:
+        metadata["timezone"] = timezone
+    return metadata
+
+
+def _garmin_credential_metadata(*, region: str, display_name: str | None, timezone: str | None) -> dict:
+    metadata = {"region": region}
+    if display_name:
+        metadata["display_name"] = display_name
+    if timezone:
+        metadata["timezone"] = timezone
+    return metadata

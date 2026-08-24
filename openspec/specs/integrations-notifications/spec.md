@@ -17,6 +17,24 @@ The system SHALL fetch external activity and health data through provider adapte
 - **THEN** the system normalizes supported metrics into `DailyHealthMetrics`
 - **AND** unsupported provider fields do not block supported metric persistence
 
+### Requirement: Garmin Experimental Connection
+The system SHALL provide a Garmin-specific experimental login endpoint that validates Garmin credentials through a provider adapter, discovers provider account identity from Garmin, and stores only encrypted session material.
+
+#### Scenario: Garmin connection discovers provider identity
+- **GIVEN** a Johnny user submits Garmin email, password, and `global` or `china` region to `POST /api/v1/integrations/garmin/connect`
+- **WHEN** the Garmin login adapter validates the credentials
+- **THEN** the connection uses the provider account identifier returned by Garmin
+- **AND** it stores the Garmin profile display name when available
+- **AND** it does not accept a user-entered provider account identifier
+- **AND** the Garmin password, email, raw session payload, cookies, and tokens are not returned in the API response
+
+#### Scenario: Garmin same-account reconnect
+- **GIVEN** a Johnny user already has a Garmin connection for a provider account
+- **WHEN** the same user reconnects that Garmin account
+- **THEN** the existing connection is reactivated or updated
+- **AND** the encrypted credential payload is replaced
+- **AND** another Johnny user cannot claim the same Garmin provider account
+
 ### Requirement: Provider Activity Deduplication
 The system SHALL avoid storing duplicate provider activities for the same integration connection and provider activity identifier.
 

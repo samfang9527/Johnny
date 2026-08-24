@@ -18,11 +18,14 @@ class IntegrationConnectionRef:
     user_id: str
     provider: str
     provider_account_id: str | None = None
+    provider_display_name: str | None = None
+    auth_scheme: str = "oauth2"
     credential_secret_ref: str | None = None
     credential_format: str | None = None
     credential_status: str = "active"
     status: str = "active"
     capabilities: dict[str, Any] | None = None
+    provider_metadata: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -36,6 +39,7 @@ class IntegrationConnectionRef:
         if self.credential_secret_ref and _looks_like_raw_secret(self.credential_secret_ref):
             raise DomainValidationError("credential_secret_ref must reference a secret, not contain credentials")
         object.__setattr__(self, "capabilities", dict(self.capabilities or {}))
+        object.__setattr__(self, "provider_metadata", _safe_lifecycle_metadata(self.provider_metadata or {}))
 
     @classmethod
     def create(
@@ -45,22 +49,28 @@ class IntegrationConnectionRef:
         user_id: str,
         provider: str,
         provider_account_id: str | None = None,
+        provider_display_name: str | None = None,
+        auth_scheme: str = "oauth2",
         credential_secret_ref: str | None = None,
         credential_format: str | None = None,
         credential_status: str = "active",
         status: str = "active",
         capabilities: dict[str, Any] | None = None,
+        provider_metadata: dict[str, Any] | None = None,
     ) -> IntegrationConnectionRef:
         return cls(
             id=id,
             user_id=user_id,
             provider=provider,
             provider_account_id=provider_account_id,
+            provider_display_name=provider_display_name,
+            auth_scheme=auth_scheme,
             credential_secret_ref=credential_secret_ref,
             credential_format=credential_format,
             credential_status=credential_status,
             status=status,
             capabilities=capabilities,
+            provider_metadata=provider_metadata,
         )
 
     def to_safe_summary(self) -> dict[str, Any]:
@@ -69,10 +79,13 @@ class IntegrationConnectionRef:
             "user_id": self.user_id,
             "provider": self.provider,
             "provider_account_id": self.provider_account_id,
+            "provider_display_name": self.provider_display_name,
+            "auth_scheme": self.auth_scheme,
             "credential_format": self.credential_format,
             "credential_status": self.credential_status,
             "status": self.status,
             "capabilities": dict(self.capabilities or {}),
+            "provider_metadata": dict(self.provider_metadata or {}),
         }
 
 

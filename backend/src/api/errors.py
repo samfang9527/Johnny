@@ -25,6 +25,10 @@ class ApiUnauthorizedError(ValueError):
     pass
 
 
+class ApiUnavailableError(ValueError):
+    pass
+
+
 DOMAIN_ERRORS = (
     ActivityHealthValidationError,
     AthleteRaceValidationError,
@@ -55,6 +59,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiUnauthorizedError)
     async def unauthorized_exception_handler(request: Request, exc: ApiUnauthorizedError) -> JSONResponse:
         return _error_response(status_code=401, code="unauthorized", message=str(exc), details=[])
+
+    @app.exception_handler(ApiUnavailableError)
+    async def unavailable_exception_handler(request: Request, exc: ApiUnavailableError) -> JSONResponse:
+        return _error_response(status_code=503, code="configuration_error", message=str(exc), details=[])
 
     @app.exception_handler(CredentialEncryptionConfigurationError)
     async def credential_encryption_configuration_exception_handler(
@@ -92,8 +100,17 @@ def _validation_details(exc: RequestValidationError) -> list:
     details = []
     for error in exc.errors():
         normalized = dict(error)
+        normalized.pop("input", None)
+        loc = normalized.get("loc")
+        if isinstance(loc, tuple | list):
+            normalized["loc"] = _redacted_location(loc)
         ctx = normalized.get("ctx")
         if isinstance(ctx, dict):
             normalized["ctx"] = {key: str(value) for key, value in ctx.items()}
         details.append(normalized)
     return jsonable_encoder(details)
+
+
+def _redacted_location(location: tuple | list) -> list:
+    sensitive_names = {"password", "email", "token", "secret", "cookie"}
+    return ["sensitive" if str(part).lower() in sensitive_names else part for part in location]

@@ -46,10 +46,13 @@ def test_connection_ref_preserves_secret_reference_without_raw_credentials() -> 
         "user_id": "user-1",
         "provider": "garmin_connect",
         "provider_account_id": None,
+        "provider_display_name": None,
+        "auth_scheme": "oauth2",
         "credential_format": "garminconnect-token-file",
         "credential_status": "active",
         "status": "active",
         "capabilities": {"activities": True},
+        "provider_metadata": {},
     }
 
 

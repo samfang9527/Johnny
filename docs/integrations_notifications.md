@@ -34,6 +34,12 @@ sequenceDiagram
     Job->>Integration: advance cursor and complete sync run
 ```
 
+## Garmin Connect Experimental Login
+
+`POST /api/v1/integrations/garmin/connect` is the Garmin-specific connection endpoint. It accepts Garmin email, password, and an explicit `global` or `china` region, then delegates credential validation and account discovery to a Garmin login adapter. The endpoint never accepts a user-entered Garmin provider account ID; it persists the provider account identity returned by Garmin and stores only the Garmin profile display name for account recognition.
+
+The password is used only during the in-memory exchange. Session/token material is encrypted through the integration credential cipher and stored in `integration_credentials`; `integration_connections` remains metadata and keeps `credential_secret_ref` empty for this mode. Normal tests override the Garmin login adapter and credential cipher so they remain network-free.
+
 ## Notification Flow
 
 ```mermaid
