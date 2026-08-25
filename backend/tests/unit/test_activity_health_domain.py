@@ -59,7 +59,7 @@ def test_provider_activity_requires_and_preserves_source_identity() -> None:
 
 def test_activity_rejects_invalid_values() -> None:
     with pytest.raises(DomainValidationError, match="distance"):
-        _activity(distance_meters=0)
+        _activity(distance_meters=-1)
 
     with pytest.raises(DomainValidationError, match="duration"):
         _activity(duration_seconds=0)
@@ -75,6 +75,21 @@ def test_activity_preserves_supplied_average_pace() -> None:
     activity = _activity(average_pace_seconds_per_km=355)
 
     assert activity.average_pace_seconds_per_km == 355
+
+
+def test_activity_allows_zero_distance_training_without_positive_pace() -> None:
+    activity = _activity(
+        source="garmin_connect",
+        source_activity_id="garmin-strength-1",
+        provider_connection_id="connection-1",
+        sport_type="strength_training",
+        distance_meters=0,
+        duration_seconds=1_800,
+    )
+
+    assert activity.distance_meters == 0
+    assert activity.duration_seconds == 1_800
+    assert activity.average_pace_seconds_per_km == 0
 
 
 def test_health_metrics_allow_full_and_sparse_daily_entries() -> None:

@@ -59,8 +59,9 @@ npm run dev
 
 Expected:
 
-- Vite runs at `http://localhost:5173`.
+- Vite runs at `http://localhost:5173`, or a nearby fallback port if `5173` is already in use.
 - The app loads without browser CORS errors.
+- Google sign-in uses the same local host spelling for the browser, API, and OAuth callback. For example, if the app is opened on `http://localhost:5173`, authorize `http://localhost:8000/api/v1/auth/google/callback` in Google Cloud and leave `VITE_API_BASE_URL` unset or set it to `http://localhost:8000`.
 
 ## 5. Verify Backend-Backed UI Hydration
 

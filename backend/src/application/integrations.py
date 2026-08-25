@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -14,9 +15,11 @@ from src.application.interfaces.integrations_notifications import (
     ProviderAdapter,
 )
 from src.application.interfaces.athlete_race_store import AthleteProfileStore
-from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
+from src.domain.activity_health import CompletedActivity, DailyHealthMetrics, DomainValidationError as ActivityHealthValidationError
 from src.domain.integrations_notifications import IntegrationConnectionRef, IntegrationCredential, OutboxEvent, SyncSummary
 
+
+logger = logging.getLogger(__name__)
 
 GARMIN_PROVIDER = "garmin_connect"
 GARMIN_AUTH_SCHEME = "garminconnect_tokenstore"
@@ -365,6 +368,13 @@ class GarminInitialSyncHandler:
             raise ValueError("integration connection not found")
         if connection.credential_status == "requires_reauth":
             summary = SyncSummary.empty().record_failed("sync", "Garmin connection requires reauth")
+            _log_garmin_sync_failure(
+                "Garmin sync skipped because connection requires reauth",
+                connection_id=connection.id,
+                sync_run_id=command.sync_run_id,
+                resource_type="sync",
+                error="Garmin connection requires reauth",
+            )
             if command.sync_run_id is not None:
                 self._integrations.complete_sync_run(command.sync_run_id, summary, status="failed")
             return summary
@@ -400,8 +410,15 @@ class GarminInitialSyncHandler:
                         sync_from=_start_of_day(start_date),
                         sync_until=_end_of_day(end_date),
                     )
-            except GarminCredentialBlockedError:
+            except GarminCredentialBlockedError as exc:
                 summary = summary.record_failed(resource_type, "Garmin connection requires reauth")
+                _log_garmin_sync_failure(
+                    "Garmin sync resource requires reauth",
+                    connection_id=connection.id,
+                    sync_run_id=sync_run_id,
+                    resource_type=resource_type,
+                    error=_safe_log_error(exc),
+                )
                 self._integrations.mark_connection_requires_reauth(
                     connection.id,
                     summary.to_payload()["resources"][resource_type]["errors"][-1],
@@ -410,6 +427,14 @@ class GarminInitialSyncHandler:
                 break
             except _GarminBackoffSyncError as exc:
                 summary = summary.record_failed(resource_type, exc.safe_summary, backoff=exc.backoff_metadata())
+                _log_garmin_sync_failure(
+                    "Garmin sync resource failed with backoff",
+                    connection_id=connection.id,
+                    sync_run_id=sync_run_id,
+                    resource_type=resource_type,
+                    error=_safe_log_error(exc),
+                    backoff=exc.backoff_metadata(),
+                )
                 sync_status = "failed"
                 break
             except GarminIntegrationConfigurationError:
@@ -418,6 +443,13 @@ class GarminInitialSyncHandler:
                 classified = _classify_garmin_sync_exception(exc)
                 if isinstance(classified, GarminCredentialBlockedError):
                     summary = summary.record_failed(resource_type, "Garmin connection requires reauth")
+                    _log_garmin_sync_failure(
+                        "Garmin sync resource classified as requiring reauth",
+                        connection_id=connection.id,
+                        sync_run_id=sync_run_id,
+                        resource_type=resource_type,
+                        error=_safe_log_error(exc),
+                    )
                     self._integrations.mark_connection_requires_reauth(
                         connection.id,
                         summary.to_payload()["resources"][resource_type]["errors"][-1],
@@ -426,9 +458,25 @@ class GarminInitialSyncHandler:
                     break
                 if isinstance(classified, _GarminBackoffSyncError):
                     summary = summary.record_failed(resource_type, classified.safe_summary, backoff=classified.backoff_metadata())
+                    _log_garmin_sync_failure(
+                        "Garmin sync resource classified as temporary failure",
+                        connection_id=connection.id,
+                        sync_run_id=sync_run_id,
+                        resource_type=resource_type,
+                        error=_safe_log_error(exc),
+                        backoff=classified.backoff_metadata(),
+                    )
                     sync_status = "failed"
                     break
                 summary = summary.record_failed(resource_type, "Garmin resource sync failed")
+                _log_garmin_sync_failure(
+                    "Garmin sync resource failed",
+                    connection_id=connection.id,
+                    sync_run_id=sync_run_id,
+                    resource_type=resource_type,
+                    error=_safe_log_error(exc),
+                    level="exception",
+                )
 
         self._integrations.complete_sync_run(sync_run_id, summary, status=sync_status)
         return summary
@@ -443,7 +491,7 @@ class GarminInitialSyncHandler:
     ) -> SyncSummary:
         if resource_type == "activities":
             return self._store_activities(user_id, connection_id, items, summary)
-        return self._store_health_resource(user_id, resource_type, items, summary)
+        return self._store_health_resource(user_id, connection_id, resource_type, items, summary)
 
     def _store_activities(
         self,
@@ -452,6 +500,7 @@ class GarminInitialSyncHandler:
         items: tuple[dict, ...],
         summary: SyncSummary,
     ) -> SyncSummary:
+        failures: dict[str, _ProviderRecordIssue] = {}
         for payload in items:
             try:
                 activity = self._normalize_activity(user_id, connection_id, payload)
@@ -476,24 +525,51 @@ class GarminInitialSyncHandler:
                         source_activity_id=activity.source_activity_id or "",
                     )
                 )
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 summary = summary.record_failed("activities", "Garmin activity import failed")
+                _record_provider_record_issue(
+                    failures,
+                    reason_code=_provider_record_error_code(exc),
+                    error=_safe_log_error(exc),
+                    sample=_activity_skip_sample(payload),
+                )
+        _log_provider_record_issues(connection_id=connection_id, resource_type="activities", issues=failures, skipped=False)
         return summary
 
     def _store_health_resource(
         self,
         user_id: str,
+        connection_id: str,
         resource_type: str,
         items: tuple[dict, ...],
         summary: SyncSummary,
     ) -> SyncSummary:
+        skipped: dict[str, _ProviderRecordIssue] = {}
+        failures: dict[str, _ProviderRecordIssue] = {}
         for payload in items:
             try:
                 metrics = self._normalize_health(user_id, payload)
                 self._activities.save_daily_health_metrics(user_id, metrics)
                 summary = summary.record_stored(resource_type)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                reason_code = _skippable_health_record_error_code(exc)
+                if reason_code is not None:
+                    _record_provider_record_issue(
+                        skipped,
+                        reason_code=reason_code,
+                        error=_safe_log_error(exc),
+                        sample=_health_skip_sample(payload),
+                    )
+                    continue
                 summary = summary.record_failed(resource_type, "Garmin health import failed")
+                _record_provider_record_issue(
+                    failures,
+                    reason_code=_provider_record_error_code(exc),
+                    error=_safe_log_error(exc),
+                    sample=_health_skip_sample(payload),
+                )
+        _log_provider_record_issues(connection_id=connection_id, resource_type=resource_type, issues=skipped, skipped=True)
+        _log_provider_record_issues(connection_id=connection_id, resource_type=resource_type, issues=failures, skipped=False)
         return summary
 
     def _timezone_name(self, user_id: str, connection: IntegrationConnectionRef) -> str:
@@ -620,6 +696,144 @@ def _valid_timezone(timezone_name: str) -> bool:
     except ZoneInfoNotFoundError:
         return False
     return True
+
+
+@dataclass
+class _ProviderRecordIssue:
+    reason_code: str
+    error: str
+    sample: dict[str, str]
+    count: int = 0
+
+
+def _record_provider_record_issue(
+    issues: dict[str, _ProviderRecordIssue],
+    *,
+    reason_code: str,
+    error: str,
+    sample: dict[str, str],
+) -> None:
+    if reason_code not in issues:
+        issues[reason_code] = _ProviderRecordIssue(reason_code=reason_code, error=error, sample=sample)
+    issues[reason_code].count += 1
+
+
+def _log_provider_record_issues(
+    *,
+    connection_id: str,
+    resource_type: str,
+    issues: dict[str, _ProviderRecordIssue],
+    skipped: bool,
+) -> None:
+    for issue in issues.values():
+        _log_garmin_sync_failure(
+            "Garmin sync skipped provider records" if skipped else "Garmin sync failed provider records",
+            connection_id=connection_id,
+            sync_run_id=None,
+            resource_type=resource_type,
+            error=issue.error,
+            reason_code=issue.reason_code,
+            count=issue.count,
+            sample=issue.sample,
+        )
+
+
+def _log_garmin_sync_failure(
+    message: str,
+    *,
+    connection_id: str | None,
+    sync_run_id: str | None,
+    resource_type: str,
+    error: str,
+    backoff: dict[str, int | str] | None = None,
+    reason_code: str | None = None,
+    count: int | None = None,
+    sample: dict[str, str] | None = None,
+    level: str = "warning",
+) -> None:
+    extra = {
+        "provider": GARMIN_PROVIDER,
+        "connection_id": connection_id,
+        "sync_run_id": sync_run_id,
+        "resource_type": resource_type,
+        "error": error,
+    }
+    if backoff:
+        extra["backoff"] = backoff
+    if reason_code:
+        extra["reason_code"] = reason_code
+    if count is not None:
+        extra["count"] = count
+    if sample:
+        extra["sample"] = sample
+    if level == "exception":
+        logger.exception(message, extra=extra)
+        return
+    logger.warning(message, extra=extra)
+
+
+def _safe_log_error(exc: Exception) -> str:
+    detail = f"{type(exc).__name__}: {exc}"
+    if _looks_sensitive(detail):
+        return f"{type(exc).__name__}: credential or token details redacted"
+    return detail[:500]
+
+
+def _looks_sensitive(value: str) -> bool:
+    normalized = value.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "access_token",
+            "refresh_token",
+            "oauth",
+            "cookie",
+            "session",
+            "sid",
+            "tokenstore",
+            "password",
+            "secret",
+            "jwt",
+        )
+    )
+
+
+def _skippable_health_record_error_code(exc: Exception) -> str | None:
+    if isinstance(exc, ActivityHealthValidationError) and str(exc) == "at least one health metric value is required":
+        return "empty_supported_health_metrics"
+    return None
+
+
+def _provider_record_error_code(exc: Exception) -> str:
+    if isinstance(exc, ActivityHealthValidationError):
+        return _reason_code_from_message(str(exc))
+    if isinstance(exc, KeyError):
+        return "missing_required_provider_field"
+    if isinstance(exc, ValueError):
+        return "invalid_provider_value"
+    return "provider_record_import_error"
+
+
+def _reason_code_from_message(message: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", message.lower()).strip("_")
+    return normalized or "provider_record_validation_error"
+
+
+def _activity_skip_sample(payload: dict) -> dict[str, str]:
+    return _safe_sample(payload, "activityId", "activityName")
+
+
+def _health_skip_sample(payload: dict) -> dict[str, str]:
+    return _safe_sample(payload, "calendarDate")
+
+
+def _safe_sample(payload: dict, *keys: str) -> dict[str, str]:
+    sample: dict[str, str] = {}
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            sample[key] = str(value)[:120]
+    return sample
 
 
 def _classify_garmin_sync_exception(exc: Exception) -> Exception | None:

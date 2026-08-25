@@ -9,6 +9,7 @@ import {
   discussRecommendation,
   getAthleteProfile,
   getCurrentUser,
+  getGoogleSignInRedirectUrl,
   getTodayContext,
   listIntegrationConnections,
   listRaceGoals,
@@ -18,7 +19,6 @@ import {
   signInWithEmail,
   signOut,
   signUpWithEmail,
-  startGoogleSignIn,
   syncIntegrationConnection,
   submitConversationMessage,
 } from './api/client'
@@ -107,6 +107,7 @@ const garminEmail = ref('')
 const garminPassword = ref('')
 const garminRegion = ref<'global' | 'china'>('global')
 const garminConnection = ref<IntegrationConnectionResponse | null>(null)
+const isProviderDialogOpen = ref(false)
 const providerMessage = ref('')
 const providerError = ref('')
 const providerBusy = ref<'' | 'connect' | 'sync' | 'disconnect'>('')
@@ -142,9 +143,15 @@ const hasBackendHydrated = ref(false)
 
 const activeTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label || '今日')
 const isAuthenticated = computed(() => authStatus.value === 'authenticated')
+const hasActiveDataProvider = computed(() =>
+  Boolean(garminConnection.value && garminConnection.value.status !== 'disconnected' && garminConnection.value.credential_status !== 'deleted'),
+)
 const effectiveTodayState = computed(() => {
   if (props.todayState !== 'full') {
     return props.todayState
+  }
+  if (hasBackendHydrated.value && shouldRequireAuth() && hasActiveDataProvider.value) {
+    return 'full'
   }
   return hasBackendHydrated.value && shouldRequireAuth() && !apiRaceSummary.value && !apiTodayWorkout.value ? 'empty' : 'full'
 })
@@ -251,16 +258,20 @@ async function submitAuth() {
 async function handleGoogleSignIn() {
   authError.value = ''
   authBusy.value = true
-  try {
-    const callbackUrl = typeof window !== 'undefined' ? window.location.hash || '#today' : '#today'
-    const response = await startGoogleSignIn(callbackUrl, authMode.value === 'signup' ? authDisplayName.value.trim() || undefined : undefined)
-    if (typeof window !== 'undefined') {
-      window.location.assign(response.data.authorization_url)
-    }
-  } catch {
-    authError.value = 'Google 登入尚未設定完成，請先使用 Email 登入。'
+  if (typeof window === 'undefined') {
     authBusy.value = false
+    return
   }
+  const callbackUrl = window.location.hash || '#today'
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  window.location.assign(
+    getGoogleSignInRedirectUrl(
+      callbackUrl,
+      authMode.value === 'signup' ? authDisplayName.value.trim() || undefined : undefined,
+      window.location.origin,
+      timezone,
+    ),
+  )
 }
 
 async function handleSignOut() {
@@ -340,9 +351,22 @@ function selectProvider(provider: ProviderOption) {
   pendingDisconnectConnectionId.value = ''
   if (provider.id === 'garmin_connect' && garminConnection.value?.credential_status === 'requires_reauth') {
     providerMessage.value = '請重新輸入 Garmin 電子郵件與密碼後連接。'
+    isProviderDialogOpen.value = true
     return
   }
+  if (provider.id === 'garmin_connect') {
+    isProviderDialogOpen.value = true
+  }
   providerMessage.value = ''
+}
+
+function closeProviderDialog() {
+  if (providerBusy.value === 'connect') {
+    return
+  }
+  isProviderDialogOpen.value = false
+  providerError.value = ''
+  garminPassword.value = ''
 }
 
 async function submitProvider() {
@@ -373,6 +397,7 @@ async function submitProvider() {
     })
     garminConnection.value = response.data
     providerMessage.value = `${response.data.provider_display_name || 'Garmin'} 已連接`
+    isProviderDialogOpen.value = false
   } catch (error) {
     if (!handleSessionExpiry(error)) {
       providerError.value = 'Garmin 連接失敗。請檢查登入資料後再試一次。'
@@ -1614,59 +1639,68 @@ function shouldRequireAuth(): boolean {
           />
         </div>
 
-        <form class="surface-card provider-form" data-testid="provider-form" novalidate @submit.prevent="submitProvider">
-          <div class="section-heading">
-            <div>
-              <p class="section-label">Garmin Connect experimental login</p>
-              <h3>{{ selectedProvider.name }}</h3>
-            </div>
-            <StatusBadge :tone="garminStatus(garminConnection).tone">{{ garminStatus(garminConnection).label }}</StatusBadge>
-          </div>
-          <p>Johnny 會用這組登入資料建立 Garmin 連線工作階段。密碼只用於這次連接，不會顯示在訊息中。</p>
-          <label>
-            Garmin 電子郵件
-            <input
-              v-model="garminEmail"
-              name="garminEmail"
-              type="email"
-              autocomplete="off"
-              :aria-invalid="providerError ? 'true' : 'false'"
-              aria-describedby="provider-form-error"
-            />
-          </label>
-          <label>
-            Garmin 密碼
-            <input
-              v-model="garminPassword"
-              name="garminPassword"
-              type="password"
-              autocomplete="off"
-              :aria-invalid="providerError ? 'true' : 'false'"
-              aria-describedby="provider-form-error"
-            />
-          </label>
-          <label>
-            Garmin 區域
-            <select v-model="garminRegion" name="garminRegion" autocomplete="off">
-              <option value="global">全球</option>
-              <option value="china">中國</option>
-            </select>
-          </label>
-          <p v-if="providerError" id="provider-form-error" class="field-error">{{ providerError }}</p>
-          <AppButton tone="primary" type="submit" :busy="providerBusy === 'connect'">連接 Garmin</AppButton>
-          <p v-if="providerMessage" class="inline-note">{{ providerMessage }}</p>
-          <div v-if="garminConnection" class="sync-result" aria-live="polite">
-            <div class="sync-result__header">
-              <p class="section-label">初始同步</p>
+        <p v-if="providerMessage" class="inline-note" aria-live="polite">{{ providerMessage }}</p>
+
+        <div
+          v-if="isProviderDialogOpen"
+          class="provider-dialog"
+          role="presentation"
+          @click.self="closeProviderDialog"
+          @keydown.esc="closeProviderDialog"
+        >
+          <form
+            class="provider-dialog__panel provider-form"
+            data-testid="provider-form"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provider-dialog-title"
+            novalidate
+            @submit.prevent="submitProvider"
+          >
+            <div class="section-heading">
+              <div>
+                <p class="section-label">Garmin Connect experimental login</p>
+                <h3 id="provider-dialog-title">{{ selectedProvider.name }}</h3>
+              </div>
               <StatusBadge :tone="garminStatus(garminConnection).tone">{{ garminStatus(garminConnection).label }}</StatusBadge>
             </div>
-            <p v-if="garminConnection.has_partial_failures" class="sync-result__warning">部分資料同步失敗</p>
-            <p v-if="garminConnection.sync_warning" class="sync-result__warning">{{ garminConnection.sync_warning }}</p>
-            <ul class="sync-result__list">
-              <li v-for="row in garminSyncRows(garminConnection)" :key="row">{{ row }}</li>
-            </ul>
-          </div>
-        </form>
+            <p>Johnny 會用這組登入資料建立 Garmin 連線工作階段。密碼只用於這次連接，不會顯示在訊息中。</p>
+            <label>
+              Garmin 電子郵件
+              <input
+                v-model="garminEmail"
+                name="garminEmail"
+                type="email"
+                autocomplete="off"
+                :aria-invalid="providerError ? 'true' : 'false'"
+                aria-describedby="provider-form-error"
+              />
+            </label>
+            <label>
+              Garmin 密碼
+              <input
+                v-model="garminPassword"
+                name="garminPassword"
+                type="password"
+                autocomplete="off"
+                :aria-invalid="providerError ? 'true' : 'false'"
+                aria-describedby="provider-form-error"
+              />
+            </label>
+            <label>
+              Garmin 區域
+              <select v-model="garminRegion" name="garminRegion" autocomplete="off">
+                <option value="global">全球</option>
+                <option value="china">中國</option>
+              </select>
+            </label>
+            <p v-if="providerError" id="provider-form-error" class="field-error">{{ providerError }}</p>
+            <div class="provider-dialog__actions">
+              <AppButton tone="primary" type="submit" :busy="providerBusy === 'connect'">連接 Garmin</AppButton>
+              <AppButton tone="neutral" type="button" :disabled="providerBusy === 'connect'" @click="closeProviderDialog">取消</AppButton>
+            </div>
+          </form>
+        </div>
       </section>
 
       <section v-else class="empty-panel" :aria-labelledby="`${activeView}-title`">

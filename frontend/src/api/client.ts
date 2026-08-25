@@ -13,7 +13,24 @@ import type {
 } from '../types'
 
 export function getApiBaseUrl(): string {
-  return import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+  return import.meta.env.VITE_API_BASE_URL || getLocalApiBaseUrl()
+}
+
+export function getLocalApiBaseUrl(frontendUrl?: string): string {
+  if (frontendUrl) {
+    return localApiBaseUrlFromLocation(new URL(frontendUrl))
+  }
+  if (typeof window !== 'undefined') {
+    return localApiBaseUrlFromLocation(window.location)
+  }
+  return 'http://127.0.0.1:8000'
+}
+
+function localApiBaseUrlFromLocation(location: Pick<Location, 'hostname' | 'protocol'>): string {
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    return `${location.protocol}//${location.hostname}:8000`
+  }
+  return 'http://127.0.0.1:8000'
 }
 
 export class ApiRequestError extends Error {
@@ -82,6 +99,23 @@ export function signOut(): Promise<unknown> {
 export function startGoogleSignIn(callbackUrl: string, displayName?: string): Promise<{ data: { authorization_url: string } }> {
   const displayNameQuery = displayName ? `&display_name=${encodeURIComponent(displayName)}` : ''
   return getJson(`/auth/google/start?callback_url=${encodeURIComponent(callbackUrl)}${displayNameQuery}`)
+}
+
+export function getGoogleSignInRedirectUrl(callbackUrl: string, displayName?: string, frontendOrigin?: string, timezone?: string): string {
+  const params = new URLSearchParams({
+    callback_url: callbackUrl,
+    redirect: 'true',
+  })
+  if (displayName) {
+    params.set('display_name', displayName)
+  }
+  if (frontendOrigin) {
+    params.set('frontend_origin', frontendOrigin)
+  }
+  if (timezone) {
+    params.set('timezone', timezone)
+  }
+  return `${getApiBaseUrl()}/api/v1/auth/google/start?${params.toString()}`
 }
 
 export function listRecommendations(): Promise<{ data: Array<Record<string, unknown>> }> {

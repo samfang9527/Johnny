@@ -34,12 +34,14 @@ class CompletedActivity:
             raise DomainValidationError("activity source is required")
         if not self.sport_type:
             raise DomainValidationError("sport type is required")
-        if self.distance_meters <= 0:
-            raise DomainValidationError("activity distance must be greater than zero")
+        if self.distance_meters < 0:
+            raise DomainValidationError("activity distance cannot be negative")
         if self.duration_seconds <= 0:
             raise DomainValidationError("activity duration must be greater than zero")
-        if self.average_pace_seconds_per_km <= 0:
+        if self.distance_meters > 0 and self.average_pace_seconds_per_km <= 0:
             raise DomainValidationError("average pace must be greater than zero")
+        if self.distance_meters == 0 and self.average_pace_seconds_per_km < 0:
+            raise DomainValidationError("average pace cannot be negative")
         if self.average_heart_rate is not None and self.average_heart_rate <= 0:
             raise DomainValidationError("average heart rate must be greater than zero")
         if self.source != "manual":

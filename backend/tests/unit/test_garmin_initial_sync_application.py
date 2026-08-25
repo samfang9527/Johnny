@@ -12,6 +12,7 @@ from src.application.integrations import (
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.athlete_race import AthleteProfile
 from src.domain.integrations_notifications import IntegrationConnectionRef, SyncRun, SyncSummary
+from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_daily_health
 
 
 def test_garmin_initial_sync_imports_each_resource_with_independent_cursors_and_partial_failure() -> None:
@@ -164,6 +165,58 @@ def test_garmin_initial_sync_does_not_advance_cursor_for_resource_with_item_fail
     assert "sleep" in integrations.advanced_cursors
 
 
+def test_garmin_initial_sync_skips_empty_supported_health_metric_records_and_logs_once(monkeypatch) -> None:
+    import src.application.integrations as integrations_module
+
+    log_calls: list[tuple[str, dict]] = []
+
+    def capture_warning(message: str, *, extra: dict) -> None:
+        log_calls.append((message, extra))
+
+    monkeypatch.setattr(integrations_module.logger, "warning", capture_warning)
+    integrations = _FakeIntegrationStore()
+    adapter = _FakeGarminResourceAdapter(
+        results={
+            "resting_heart_rate": GarminResourceFetchResult(
+                items=[
+                    {"calendarDate": "2027-01-01", "get_rhr_day": {"metricId": 60, "values": []}},
+                    {"calendarDate": "2027-01-02", "get_rhr_day": {"metricId": 60, "values": []}},
+                ],
+                cursor={"date": "2027-01-02"},
+            )
+        }
+    )
+
+    summary = GarminInitialSyncHandler(
+        integrations=integrations,
+        activities=_FakeActivityStore(),
+        outbox=_FakeOutboxStore(),
+        garmin=adapter,
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=lambda user_id, payload: normalize_garmin_daily_health(user_id=user_id, payload=payload),
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id="user-1",
+            connection_id="conn-1",
+            as_of=datetime(2027, 1, 31, tzinfo=timezone.utc),
+        )
+    )
+
+    payload = summary.to_payload()["resources"]["resting_heart_rate"]
+    assert payload["fetched"] == 2
+    assert payload["stored"] == 0
+    assert payload["failed"] == 0
+    assert integrations.advanced_cursors["resting_heart_rate"] == {"date": "2027-01-02"}
+    assert len(log_calls) == 1
+    message, extra = log_calls[0]
+    assert message == "Garmin sync skipped provider records"
+    assert extra["resource_type"] == "resting_heart_rate"
+    assert extra["reason_code"] == "empty_supported_health_metrics"
+    assert extra["count"] == 2
+    assert extra["sample"] == {"calendarDate": "2027-01-01"}
+
+
 def test_garmin_initial_sync_marks_requires_reauth_and_stops_fetching_after_credential_block() -> None:
     integrations = _FakeIntegrationStore()
     adapter = _FakeGarminResourceAdapter(
@@ -273,6 +326,48 @@ def test_garmin_initial_sync_classifies_raw_provider_auth_and_rate_limit_errors(
     assert rate_integrations.completed_status == "failed"
     assert rate_summary.to_payload()["resources"]["activities"]["backoff"] == {"retry_after_seconds": 120}
     assert rate_summary.to_payload()["resources"]["activities"]["errors"] == ["Garmin rate limit exceeded"]
+
+
+def test_garmin_initial_sync_logs_failed_resource_reason_without_sensitive_values(monkeypatch) -> None:
+    import src.application.integrations as integrations_module
+
+    log_calls: list[tuple[str, dict]] = []
+
+    def capture_warning(message: str, *, extra: dict) -> None:
+        log_calls.append((message, extra))
+
+    monkeypatch.setattr(integrations_module.logger, "warning", capture_warning)
+    integrations = _FakeIntegrationStore()
+
+    GarminInitialSyncHandler(
+        integrations=integrations,
+        activities=_FakeActivityStore(),
+        outbox=_FakeOutboxStore(),
+        garmin=_FakeGarminResourceAdapter(
+            results={},
+            failures={"activities": RuntimeError('MFA required for {"sid":"abc", "cookie":"session-secret"}')},
+        ),
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=_normalize_health,
+    ).handle(
+        GarminInitialSyncCommand(
+            user_id="user-1",
+            connection_id="conn-1",
+            as_of=datetime(2027, 1, 31, tzinfo=timezone.utc),
+        )
+    )
+
+    assert log_calls
+    message, extra = log_calls[-1]
+    assert message == "Garmin sync resource classified as requiring reauth"
+    assert extra["resource_type"] == "activities"
+    assert extra["connection_id"] == "conn-1"
+    assert extra["sync_run_id"] == "sync-1"
+    assert "RuntimeError" in extra["error"]
+    assert "redacted" in extra["error"]
+    assert "abc" not in extra["error"]
+    assert "session-secret" not in extra["error"]
 
 
 def test_garmin_initial_sync_classifies_temporary_403_block_as_failed_sync_not_reauth() -> None:

@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { getGoogleSignInRedirectUrl, getLocalApiBaseUrl } from './api/client'
 import App from './App.vue'
 
 function okJson(data: Record<string, unknown>): Response {
@@ -60,6 +61,17 @@ describe('Johnny product shell', () => {
     expect(wrapper.find('nav').exists()).toBe(false)
   })
 
+  it('derives the local API host from the active frontend host', () => {
+    expect(getLocalApiBaseUrl('http://localhost:5173/#today')).toBe('http://localhost:8000')
+    expect(getLocalApiBaseUrl('http://127.0.0.1:5173/#today')).toBe('http://127.0.0.1:8000')
+  })
+
+  it('builds Google login as a backend redirect with the active frontend origin', () => {
+    expect(getGoogleSignInRedirectUrl('#today', undefined, 'http://127.0.0.1:5175', 'Asia/Taipei')).toBe(
+      'http://localhost:8000/api/v1/auth/google/start?callback_url=%23today&redirect=true&frontend_origin=http%3A%2F%2F127.0.0.1%3A5175&timezone=Asia%2FTaipei',
+    )
+  })
+
   it('lets a new user sign up with display name and enters the app without demo data', async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -103,7 +115,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/auth/signup',
+      'http://localhost:8000/api/v1/auth/signup',
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
@@ -130,6 +142,38 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('nav').text()).not.toContain('對話')
     expect(wrapper.text()).toContain('今天的訓練決策')
     expect(wrapper.text()).toContain('Sydney Marathon')
+  })
+
+  it('does not show the connect-source empty block after a provider is connected', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) {
+        return Promise.resolve(
+          okJson({
+            id: 'user-auth-1',
+            email: 'runner@example.com',
+            display_name: 'Runner',
+            capabilities: ['today', 'races', 'training-plans', 'recommendations', 'integrations'],
+          }),
+        )
+      }
+      if (url.endsWith('/api/v1/integrations/connections') && init?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [garminConnectionData()] }) } as Response)
+      }
+      if (url.endsWith('/api/v1/athlete/profile') && init?.method === 'GET') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { timezone: 'Asia/Taipei' } }) } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [] }),
+      } as Response)
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('今天的訓練決策')
+    expect(wrapper.text()).not.toContain('尚未有足夠資料建立今日建議')
   })
 
   it('keeps recommendation cards out of Today and routes recommendation decisions to Agent Inbox', () => {
@@ -246,7 +290,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Sub 1:45')
     expect(wrapper.text()).toContain('賽事已加入訓練安排')
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/races',
+      'http://localhost:8000/api/v1/races',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
@@ -290,10 +334,12 @@ describe('Johnny product shell', () => {
 
     expect(wrapper.text()).toContain('資料來源')
     expect(wrapper.text()).toContain('Garmin Connect experimental login')
-    expect(wrapper.text()).toContain('Apple Health')
-    expect(wrapper.text()).toContain('Strava')
+    expect(wrapper.text()).not.toContain('Apple Health')
+    expect(wrapper.text()).not.toContain('Strava')
     expect(wrapper.find('input[name="providerAccountId"]').exists()).toBe(false)
+    expect(wrapper.find('form[data-testid="provider-form"]').exists()).toBe(false)
 
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
     const password = wrapper.get('input[name="garminPassword"]')
     expect(password.attributes('type')).toBe('password')
@@ -304,7 +350,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Garmin Runner 已連接')
-    expect(wrapper.text()).toContain('初始同步完成')
+    expect(wrapper.find('form[data-testid="provider-form"]').exists()).toBe(false)
     const garminCard = wrapper.get('[data-testid="provider-card-garmin_connect"]')
     expect(garminCard.text()).toContain('Garmin Runner')
     expect(garminCard.text()).toContain('已連接')
@@ -315,7 +361,7 @@ describe('Johnny product shell', () => {
     expect(garminCard.text()).toContain('中斷連接')
     expect(wrapper.text()).not.toContain('garmin-password')
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/integrations/garmin/connect',
+      'http://localhost:8000/api/v1/integrations/garmin/connect',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
@@ -334,6 +380,7 @@ describe('Johnny product shell', () => {
       },
     })
 
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
 
     expect(wrapper.text()).toContain('請輸入 Garmin 電子郵件')
@@ -397,6 +444,7 @@ describe('Johnny product shell', () => {
     })
     const wrapper = mount(App, { props: { initialView: 'sources' } })
 
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
     await wrapper.get('input[name="garminPassword"]').setValue('garmin-password')
     await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
@@ -411,7 +459,7 @@ describe('Johnny product shell', () => {
     expect(garminCard.text()).toContain('HRV：取得 0，新增 0，失敗 1')
     expect(wrapper.text()).toContain('Garmin 手動同步完成')
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/integrations/connections/conn-garmin-1/sync',
+      'http://localhost:8000/api/v1/integrations/connections/conn-garmin-1/sync',
       expect.objectContaining({ method: 'POST' }),
     )
     expect(wrapper.text()).not.toContain('garmin-password')
@@ -437,6 +485,7 @@ describe('Johnny product shell', () => {
     )
     const wrapper = mount(App, { props: { initialView: 'sources' } })
 
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
     await wrapper.get('input[name="garminPassword"]').setValue('garmin-password')
     await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
@@ -475,6 +524,7 @@ describe('Johnny product shell', () => {
     })
     const wrapper = mount(App, { props: { initialView: 'sources' } })
 
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
     await wrapper.get('input[name="garminPassword"]').setValue('garmin-password')
     await wrapper.get('form[data-testid="provider-form"]').trigger('submit')
@@ -491,7 +541,7 @@ describe('Johnny product shell', () => {
     expect(garminCard.text()).toContain('重新連接')
     expect(wrapper.text()).toContain('Garmin 已中斷連接；歷史匯入資料會保留。')
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/integrations/connections/conn-garmin-1',
+      'http://localhost:8000/api/v1/integrations/connections/conn-garmin-1',
       expect.objectContaining({ method: 'DELETE' }),
     )
   })
@@ -558,7 +608,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/conversations/messages',
+      'http://localhost:8000/api/v1/conversations/messages',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ content: '今天要不要改課表' }),
@@ -683,7 +733,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/recommendations/backend-rec-1/accept',
+      'http://localhost:8000/api/v1/recommendations/backend-rec-1/accept',
       expect.objectContaining({ method: 'POST' }),
     )
   })

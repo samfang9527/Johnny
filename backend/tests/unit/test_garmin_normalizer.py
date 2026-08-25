@@ -42,6 +42,24 @@ def test_garmin_activity_normalizer_accepts_missing_optional_fields() -> None:
     assert activity.elevation_gain_meters is None
 
 
+def test_garmin_activity_normalizer_accepts_zero_distance_training_activity() -> None:
+    payload = {
+        "activityId": "strength-1",
+        "activityType": {"typeKey": "strength_training"},
+        "startTimeGMT": "2027-01-02 01:30:00",
+        "distance": 0,
+        "duration": 1800,
+    }
+
+    activity = normalize_garmin_activity(user_id="user-1", provider_connection_id="conn-1", payload=payload)
+
+    assert activity.source_activity_id == "strength-1"
+    assert activity.sport_type == "strength_training"
+    assert activity.distance_meters == 0
+    assert activity.duration_seconds == 1800
+    assert activity.average_pace_seconds_per_km == 0
+
+
 def test_garmin_activity_normalizer_rejects_invalid_required_fields() -> None:
     with pytest.raises((KeyError, ValueError, DomainValidationError)):
         normalize_garmin_activity(

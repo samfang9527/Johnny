@@ -35,7 +35,7 @@ export const recoveryEvidence: EvidenceItem[] = [
     tone: 'warning',
   },
   {
-    source: 'Apple Health',
+    source: 'Garmin',
     metric: '睡眠',
     value: '5 小時 42 分',
     summary: '比平常少 1 小時 20 分',
@@ -134,7 +134,7 @@ const longRunEvidence: EvidenceItem[] = [
     tone: 'info',
   },
   {
-    source: 'Apple Health',
+    source: 'Garmin',
     metric: '睡眠',
     value: '5 小時 42 分',
     summary: '恢復不足',
@@ -233,7 +233,7 @@ export const inboxRecommendations: InboxRecommendation[] = [
     statusLabel: '已接受',
     evidence: [
       {
-        source: 'Apple Health',
+        source: 'Garmin',
         metric: '睡眠',
         value: '5 小時 42 分',
         summary: '連續兩晚偏低',
@@ -271,21 +271,5 @@ export const providers: ProviderOption[] = [
     statusLabel: '可連接',
     coverage: ['活動', '睡眠', 'HRV', 'Body Battery'],
     description: '使用 Garmin 電子郵件與密碼建立實驗性連線，初次連接會自動同步 30 天資料。',
-  },
-  {
-    id: 'apple-health',
-    name: 'Apple Health',
-    status: 'available',
-    statusLabel: '可連接',
-    coverage: ['睡眠', '靜息心率', '每日健康指標'],
-    description: '補足日常健康與睡眠訊號。',
-  },
-  {
-    id: 'strava',
-    name: 'Strava',
-    status: 'future',
-    statusLabel: '即將支援',
-    coverage: ['跑步活動', '路線紀錄'],
-    description: '未來用於活動紀錄與路線脈絡。',
   },
 ]

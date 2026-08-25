@@ -83,7 +83,9 @@ npm run build
 npm run preview
 ```
 
-The frontend dev server defaults to `http://localhost:5173` and reads `VITE_API_BASE_URL` from `frontend/.env`.
+The frontend dev server defaults to `http://localhost:5173` and reads `VITE_API_BASE_URL` from `frontend/.env`. If `VITE_API_BASE_URL` is unset in local development, the frontend derives the backend origin from the page host: `localhost` pages call `http://localhost:8000`, and `127.0.0.1` pages call `http://127.0.0.1:8000`.
+
+Google sign-in navigates through the backend OAuth start route so the backend can set OAuth state cookies before redirecting to Google. Google sees the exact `GOOGLE_OAUTH_REDIRECT_URI` value from `backend/.env`. In local loopback development, if the browser starts on the other loopback host spelling, Johnny first hops to the configured callback host so OAuth state and app session cookies stay on the same host. If Vite falls back to another local port, the backend's default local CORS/origin list covers `localhost` and `127.0.0.1` ports `5173` through `5179`; if you set `CORS_ALLOW_ORIGINS` or `FRONTEND_ORIGINS`, include the exact frontend origin you are using.
 
 ## Persistence
 

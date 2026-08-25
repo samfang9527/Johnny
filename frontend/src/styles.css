@@ -810,6 +810,33 @@ button:disabled {
   max-width: 42rem;
 }
 
+.provider-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 4vw, 2rem);
+  background: rgba(5, 8, 8, 0.72);
+}
+
+.provider-dialog__panel {
+  width: min(42rem, 100%);
+  max-height: min(42rem, calc(100vh - 2rem));
+  overflow: auto;
+  padding: var(--space-card-pad);
+  border: 1px solid rgba(246, 239, 228, 0.18);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-rubber-gray) 88%, var(--color-pit-black));
+  box-shadow: 0 1.25rem 3rem rgba(0, 0, 0, 0.38);
+}
+
+.provider-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
 .provider-form label {
   display: grid;
   gap: 0.4rem;
