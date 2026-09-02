@@ -176,6 +176,38 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).not.toContain('尚未有足夠資料建立今日建議')
   })
 
+  it('does not leak frontend demo races or workouts into an authenticated empty account', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) {
+        return Promise.resolve(
+          okJson({
+            id: 'user-auth-empty',
+            email: 'runner@example.com',
+            display_name: 'Runner',
+            capabilities: ['today', 'races', 'training-plans', 'recommendations', 'integrations'],
+          }),
+        )
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [] }),
+      } as Response)
+    })
+
+    const wrapper = mount(App, { props: { initialView: 'calendar', requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('訓練安排')
+    expect(wrapper.text()).not.toContain('Sydney Marathon')
+    expect(wrapper.text()).not.toContain('Taipei Half Tune-up')
+    expect(wrapper.text()).not.toContain('Tokyo Marathon Prep Race')
+    expect(wrapper.text()).not.toContain('Easy Run')
+    expect(wrapper.text()).not.toContain('8 km')
+    expect(wrapper.text()).toContain('尚未設定目標')
+    expect(wrapper.text()).toContain('目前沒有已排定課表')
+  })
+
   it('keeps recommendation cards out of Today and routes recommendation decisions to Agent Inbox', () => {
     const wrapper = mount(App)
 
@@ -241,7 +273,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('訓練安排')
     expect(wrapper.text()).toContain('未來六個月')
     expect(wrapper.findAll('[data-testid="race-month"]').length).toBe(6)
-    expect(wrapper.text()).toContain('Sydney Marathon')
+    expect(wrapper.text()).toContain('Taipei Half Tune-up')
     expect(wrapper.text()).toContain('週三')
     expect(wrapper.text()).toContain('Easy Run')
     expect(wrapper.text()).toContain('8 km')

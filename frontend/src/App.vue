@@ -122,7 +122,7 @@ const linkedRecommendation = ref<LinkedRecommendationContext | null>(null)
 const inboxBusyRecommendationId = ref('')
 const inboxBusyAction = ref('')
 const recommendationDecisions = ref<Record<string, RecommendationStatus>>({})
-const raceEntries = ref<RaceSummary[]>(fixtureFutureRaces)
+const raceEntries = ref<RaceSummary[]>(shouldRequireAuth() ? [] : fixtureFutureRaces)
 const raceName = ref('')
 const raceDate = ref('')
 const raceDistance = ref('')
@@ -155,25 +155,25 @@ const effectiveTodayState = computed(() => {
   }
   return hasBackendHydrated.value && shouldRequireAuth() && !apiRaceSummary.value && !apiTodayWorkout.value ? 'empty' : 'full'
 })
-const raceSummary = computed(() => apiRaceSummary.value ?? (hasBackendHydrated.value && shouldRequireAuth() ? emptyRaceSummary() : fixtureRaceSummary))
-const todayWorkout = computed(() => apiTodayWorkout.value ?? (hasBackendHydrated.value && shouldRequireAuth() ? emptyWorkoutSummary() : fixtureTodayWorkout))
+const raceSummary = computed(() => apiRaceSummary.value ?? (shouldRequireAuth() ? emptyRaceSummary() : fixtureRaceSummary))
+const todayWorkout = computed(() => apiTodayWorkout.value ?? (shouldRequireAuth() ? emptyWorkoutSummary() : fixtureTodayWorkout))
 const recoveryEvidence = computed(() => {
   if (apiRecoveryEvidence.value.length) {
     return apiRecoveryEvidence.value
   }
-  return hasBackendHydrated.value && shouldRequireAuth() ? [] : fixtureRecoveryEvidence
+  return shouldRequireAuth() ? [] : fixtureRecoveryEvidence
 })
 const unavailableSignals = computed(() => {
   if (apiUnavailableSignals.value.length) {
     return apiUnavailableSignals.value
   }
-  return hasBackendHydrated.value && shouldRequireAuth() ? [] : fixtureUnavailableSignals
+  return shouldRequireAuth() ? [] : fixtureUnavailableSignals
 })
 const recommendation = computed(() => apiRecommendation.value ?? fixtureRecommendation)
-const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : hasBackendHydrated.value && shouldRequireAuth() ? [] : fixtureWorkouts))
+const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : shouldRequireAuth() ? [] : fixtureWorkouts))
 const displayThreads = computed(() => props.conversationThreads ?? fixtureConversationThreads)
 const displayInboxItems = computed(() => {
-  const source = props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : hasBackendHydrated.value && shouldRequireAuth() ? [] : fixtureInboxRecommendations)
+  const source = props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : shouldRequireAuth() ? [] : fixtureInboxRecommendations)
   return source.map((item) => {
     const status = recommendationDecisions.value[item.id]
     return status ? { ...item, status, statusLabel: statusLabel(status) } : item
@@ -838,7 +838,7 @@ function applyTrainingPlansPayload(items: Array<Record<string, unknown>>) {
 
 function applyRaceGoalsPayload(items: Array<Record<string, unknown>>) {
   const mapped = items.map(mapRaceGoal).filter((race): race is RaceSummary => race !== null)
-  if (mapped.length) {
+  if (mapped.length || shouldRequireAuth()) {
     raceEntries.value = mapped
   }
 }
