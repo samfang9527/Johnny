@@ -54,6 +54,25 @@ class SqlAlchemyAgentRunRepository:
             return None
         return _run_from_model(model)
 
+    def list_runs_for_user(
+        self,
+        user_id: str,
+        *,
+        workflow_name: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[AgentRun]:
+        statement = select(AgentRunModel).where(AgentRunModel.user_id == user_id)
+        if workflow_name is not None:
+            statement = statement.where(AgentRunModel.workflow_name == workflow_name)
+        if status is not None:
+            statement = statement.where(AgentRunModel.status == status)
+        statement = statement.order_by(AgentRunModel.created_at.desc(), AgentRunModel.id.desc()).offset(offset)
+        if limit is not None:
+            statement = statement.limit(limit)
+        return [_run_from_model(model) for model in self._session.scalars(statement)]
+
     def record_step(self, step: AgentRunStep) -> AgentRunStep:
         model = AgentRunStepModel(
             agent_run_id=step.agent_run_id,
@@ -84,6 +103,19 @@ class SqlAlchemyAgentRunRepository:
             .order_by(AgentRunStepModel.sequence_number, AgentRunStepModel.id)
         )
         return [_step_from_model(model) for model in self._session.scalars(statement)]
+
+    def list_steps_for_user_run(self, user_id: str, agent_run_id: str | None) -> list[AgentRunStep]:
+        if agent_run_id is None:
+            return []
+        run = self._session.scalar(
+            select(AgentRunModel.id).where(
+                AgentRunModel.id == agent_run_id,
+                AgentRunModel.user_id == user_id,
+            )
+        )
+        if run is None:
+            return []
+        return self.list_steps_for_run(agent_run_id)
 
     def record_context_source(self, source: AgentContextSource) -> AgentContextSource:
         model = AgentContextSourceModel(

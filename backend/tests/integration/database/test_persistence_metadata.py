@@ -21,6 +21,7 @@ EXPECTED_TABLES = {
     "agent_runs",
     "agent_run_steps",
     "agent_context_sources",
+    "agent_tasks",
     "integration_connections",
     "integration_credentials",
     "integration_resource_cursors",
@@ -107,6 +108,24 @@ def test_core_tables_expose_queryable_columns() -> None:
             "relevance_score",
             "metadata_json",
         },
+        "agent_tasks": {
+            "id",
+            "task_type",
+            "status",
+            "correlation_id",
+            "idempotency_key",
+            "payload",
+            "available_at",
+            "claimed_at",
+            "completed_at",
+            "failed_at",
+            "retry_count",
+            "max_attempts",
+            "last_error_type",
+            "last_error_message",
+            "created_at",
+            "updated_at",
+        },
         "integration_connections": {
             "id",
             "user_id",
@@ -167,6 +186,7 @@ def test_flexible_payload_fields_are_json_columns() -> None:
         ("agent_runs", "metadata_json"),
         ("agent_run_steps", "payload"),
         ("agent_context_sources", "metadata_json"),
+        ("agent_tasks", "payload"),
         ("outbox_events", "payload"),
         ("integration_connections", "capabilities"),
         ("integration_connections", "provider_metadata"),
@@ -187,3 +207,14 @@ def test_metadata_can_create_all_tables(sqlite_engine) -> None:
     table_names = set(inspect(sqlite_engine).get_table_names())
 
     assert EXPECTED_TABLES.issubset(table_names)
+
+
+def test_async_agent_tables_define_status_and_idempotency_constraints() -> None:
+    agent_tasks = Base.metadata.tables["agent_tasks"]
+    agent_runs = Base.metadata.tables["agent_runs"]
+    training_plans = Base.metadata.tables["training_plans"]
+
+    assert "ck_agent_tasks_agent_task_status" in {constraint.name for constraint in agent_tasks.constraints}
+    assert "uq_agent_tasks_idempotency_key" in {constraint.name for constraint in agent_tasks.constraints}
+    assert "ck_agent_runs_agent_run_status" in {constraint.name for constraint in agent_runs.constraints}
+    assert "ck_training_plans_training_plan_status" in {constraint.name for constraint in training_plans.constraints}

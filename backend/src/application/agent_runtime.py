@@ -25,6 +25,7 @@ READ_TOOL_NAMES = frozenset(
 )
 DAILY_WRITE_TOOL_NAMES = frozenset({"createRecommendation", "proposeWorkoutAdjustment"})
 CONVERSATION_WRITE_TOOL_NAMES = frozenset({"createRecommendation", "storeMemoryCandidate"})
+TRAINING_PLAN_GENERATION_WRITE_TOOL_NAMES = frozenset({"createDraftTrainingPlan", "createRecommendation"})
 
 
 class FakeModelGateway:
@@ -57,12 +58,19 @@ class RunningCompanionAgent:
         self._provider = provider
         self._model = model
 
-    def run_daily_recommendation(self, *, user_id: str, anchor_date: date) -> AgentRun:
+    def run_daily_recommendation(
+        self,
+        *,
+        user_id: str,
+        anchor_date: date,
+        existing_run: AgentRun | None = None,
+    ) -> AgentRun:
         run = self._start_run(
             user_id=user_id,
             trigger_type="scheduled",
             workflow_name="daily_recommendation",
             input_summary=f"Daily recommendation for {anchor_date.isoformat()}",
+            existing_run=existing_run,
         )
         request = ModelRequest(
             user_id=user_id,
@@ -120,6 +128,91 @@ class RunningCompanionAgent:
             allowed_tools=set(request.tools),
         )
 
+    def run_training_plan_generation(
+        self,
+        *,
+        user_id: str,
+        race_id: str | None = None,
+        starts_on: date | None = None,
+        ends_on: date | None = None,
+        plan_horizon_weeks: int | None = None,
+        plan_type: str = "race",
+        goal_notes: str | None = None,
+        existing_run: AgentRun | None = None,
+    ) -> AgentRun:
+        selected_race_id = self._select_training_plan_race(
+            user_id=user_id,
+            explicit_race_id=race_id,
+            plan_type=plan_type,
+            starts_on=starts_on,
+        )
+        context = {
+            "race_id": race_id,
+            "selected_race_id": selected_race_id,
+            "starts_on": starts_on.isoformat() if starts_on is not None else None,
+            "ends_on": ends_on.isoformat() if ends_on is not None else None,
+            "plan_horizon_weeks": plan_horizon_weeks,
+            "plan_type": plan_type,
+            "goal_notes": goal_notes,
+        }
+        run = self._start_run(
+            user_id=user_id,
+            trigger_type="manual",
+            workflow_name="training_plan_generation",
+            input_summary="Training plan generation",
+            existing_run=existing_run,
+        )
+        request = ModelRequest(
+            user_id=user_id,
+            workflow_name="training_plan_generation",
+            prompt_version=self._prompt_version,
+            messages=(
+                {
+                    "role": "system",
+                    "content": (
+                        "Generate a validated draft training plan only. Store it with createDraftTrainingPlan, "
+                        "then create a pending training_plan_creation recommendation for user approval."
+                    ),
+                },
+                {"role": "user", "content": "Create a draft running training plan for review."},
+            ),
+            tools=_allowed_registered_tools(self._tools.names(), "training_plan_generation"),
+            context=context,
+            require_tool_call=True,
+        )
+        return self._run_model_workflow(
+            run=run,
+            request=request,
+            user_id=user_id,
+            allowed_tools=set(request.tools),
+            repair_validation_once=True,
+        )
+
+    def _select_training_plan_race(
+        self,
+        *,
+        user_id: str,
+        explicit_race_id: str | None,
+        plan_type: str,
+        starts_on: date | None,
+    ) -> str | None:
+        if plan_type == "base":
+            return None
+        if explicit_race_id:
+            return explicit_race_id
+        if "getAthleteContext" not in self._tools.names():
+            return None
+        payload = self._tools.get("getAthleteContext").run(user_id=user_id, arguments={"limit": 20})
+        race_goals = list(payload.get("race_goals", ()))
+        anchor = starts_on or date.today()
+        future_goals = [goal for goal in race_goals if _goal_date(goal) >= anchor]
+        primary = [goal for goal in future_goals if goal.get("priority") == "primary"]
+        selected = min(primary or future_goals, key=_goal_date, default=None)
+        if selected is None:
+            return None
+        value = selected.get("id")
+        return str(value) if value else None
+
     def _start_run(
         self,
         *,
@@ -127,18 +220,22 @@ class RunningCompanionAgent:
         trigger_type: str,
         workflow_name: str,
         input_summary: str,
+        existing_run: AgentRun | None = None,
     ) -> AgentRun:
-        run = self._run_store.create_run(
-            AgentRun.start(
-                user_id=user_id,
-                trigger_type=trigger_type,
-                workflow_name=workflow_name,
-                prompt_version=self._prompt_version,
-                provider=self._provider,
-                model=self._model,
-                input_summary=input_summary,
+        if existing_run is not None:
+            run = self._run_store.complete_run(existing_run.mark_started())
+        else:
+            run = self._run_store.create_run(
+                AgentRun.start(
+                    user_id=user_id,
+                    trigger_type=trigger_type,
+                    workflow_name=workflow_name,
+                    prompt_version=self._prompt_version,
+                    provider=self._provider,
+                    model=self._model,
+                    input_summary=input_summary,
+                )
             )
-        )
         self._run_store.record_context_source(
             AgentContextSource.create(
                 agent_run_id=run.id,
@@ -157,83 +254,123 @@ class RunningCompanionAgent:
         user_id: str,
         safety: SafetyDecision | None = None,
         allowed_tools: set[str] | None = None,
+        repair_validation_once: bool = False,
     ) -> AgentRun:
         sequence_number = len(self._run_store.list_steps_for_run(run.id)) + 1
         recommendation_id: str | None = None
         allowed_tools = set(allowed_tools or request.tools)
         token_usage = None
-        try:
-            response = self._model_gateway.complete(request)
-            run = _merge_model_metadata(run, response)
-            token_usage = response.token_usage
-            tool_results = []
-            recommendation_id, sequence_number, tool_results = self._run_tool_calls(
-                run=run,
-                user_id=user_id,
-                response=response,
-                safety=safety,
-                allowed_tools=allowed_tools,
-                sequence_number=sequence_number,
-                recommendation_id=recommendation_id,
-            )
-            follow_up_tools = _follow_up_write_tools(request.workflow_name, allowed_tools)
-            if recommendation_id is None and tool_results and follow_up_tools:
-                follow_up = ModelRequest(
-                    user_id=request.user_id,
-                    workflow_name=request.workflow_name,
-                    prompt_version=request.prompt_version,
-                    messages=request.messages
-                    + (
-                        {
-                            "role": "user",
-                            "content": (
-                                "Use the Johnny tool results in the structured context to create a pending "
-                                "recommendation now. Call one of the available write tools."
-                            ),
-                        },
-                    ),
-                    tools=follow_up_tools,
-                    context={**(request.context or {}), "tool_results": tool_results},
-                    require_tool_call=True,
-                )
-                response = self._model_gateway.complete(follow_up)
+        repair_attempted = False
+        draft_training_plan_id: str | None = None
+        training_plan_creation_recommendation_id: str | None = None
+        while True:
+            try:
+                response = self._model_gateway.complete(request)
                 run = _merge_model_metadata(run, response)
                 token_usage = _sum_token_usage(token_usage, response.token_usage)
-                recommendation_id, sequence_number, _ = self._run_tool_calls(
+                tool_results = []
+                (
+                    recommendation_id,
+                    draft_training_plan_id,
+                    training_plan_creation_recommendation_id,
+                    sequence_number,
+                    tool_results,
+                ) = self._run_tool_calls(
                     run=run,
                     user_id=user_id,
                     response=response,
                     safety=safety,
-                    allowed_tools=set(follow_up_tools),
+                    allowed_tools=allowed_tools,
                     sequence_number=sequence_number,
                     recommendation_id=recommendation_id,
+                    draft_training_plan_id=draft_training_plan_id,
+                    training_plan_creation_recommendation_id=training_plan_creation_recommendation_id,
                 )
+                follow_up_tools = _follow_up_write_tools(request.workflow_name, allowed_tools)
+                if (
+                    _needs_follow_up_write(
+                        request.workflow_name,
+                        recommendation_id=recommendation_id,
+                        training_plan_creation_recommendation_id=training_plan_creation_recommendation_id,
+                    )
+                    and tool_results
+                    and follow_up_tools
+                ):
+                    follow_up = ModelRequest(
+                        user_id=request.user_id,
+                        workflow_name=request.workflow_name,
+                        prompt_version=request.prompt_version,
+                        messages=request.messages
+                        + (
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Use the Johnny tool results in the structured context to create a pending "
+                                    "recommendation now. Call one of the available write tools."
+                                ),
+                            },
+                        ),
+                        tools=follow_up_tools,
+                        context={**(request.context or {}), "tool_results": tool_results},
+                        require_tool_call=True,
+                    )
+                    response = self._model_gateway.complete(follow_up)
+                    run = _merge_model_metadata(run, response)
+                    token_usage = _sum_token_usage(token_usage, response.token_usage)
+                    (
+                        recommendation_id,
+                        draft_training_plan_id,
+                        training_plan_creation_recommendation_id,
+                        sequence_number,
+                        _,
+                    ) = self._run_tool_calls(
+                        run=run,
+                        user_id=user_id,
+                        response=response,
+                        safety=safety,
+                        allowed_tools=set(follow_up_tools),
+                        sequence_number=sequence_number,
+                        recommendation_id=recommendation_id,
+                        draft_training_plan_id=draft_training_plan_id,
+                        training_plan_creation_recommendation_id=training_plan_creation_recommendation_id,
+                    )
 
-            output_summary = _run_output_summary(response.content, safety=safety, recommendation_id=recommendation_id)
-            return self._run_store.complete_run(
-                run.complete(
-                    output_summary=output_summary,
-                    token_usage=token_usage,
-                    recommendation_id=recommendation_id,
+                if required_error := _required_workflow_output_error(
+                    request.workflow_name,
+                    draft_training_plan_id=draft_training_plan_id,
+                    training_plan_creation_recommendation_id=training_plan_creation_recommendation_id,
+                ):
+                    raise ValueError(required_error)
+                output_summary = _run_output_summary(response.content, safety=safety, recommendation_id=recommendation_id)
+                return self._run_store.complete_run(
+                    run.complete(
+                        output_summary=output_summary,
+                        token_usage=token_usage,
+                        recommendation_id=recommendation_id,
+                    )
                 )
-            )
-        except Exception as exc:
-            self._run_store.record_step(
-                AgentRunStep.failed(
-                    agent_run_id=run.id,
-                    sequence_number=sequence_number,
-                    step_type="tool",
-                    name=exc.__class__.__name__,
-                    error_type=exc.__class__.__name__,
-                    error_message=str(exc),
+            except Exception as exc:
+                self._run_store.record_step(
+                    AgentRunStep.failed(
+                        agent_run_id=run.id,
+                        sequence_number=sequence_number,
+                        step_type="tool",
+                        name=exc.__class__.__name__,
+                        error_type=exc.__class__.__name__,
+                        error_message=str(exc),
+                    )
                 )
-            )
-            return self._run_store.fail_run(
-                run.fail(
-                    error_type=exc.__class__.__name__,
-                    error_message=str(exc),
+                sequence_number += 1
+                if repair_validation_once and not repair_attempted and isinstance(exc, ValueError):
+                    repair_attempted = True
+                    request = _repair_request(request, exc)
+                    continue
+                return self._run_store.fail_run(
+                    run.fail(
+                        error_type=exc.__class__.__name__,
+                        error_message=str(exc),
+                    )
                 )
-            )
 
     def _run_tool_calls(
         self,
@@ -245,7 +382,9 @@ class RunningCompanionAgent:
         allowed_tools: set[str],
         sequence_number: int,
         recommendation_id: str | None,
-    ) -> tuple[str | None, int, list[dict]]:
+        draft_training_plan_id: str | None = None,
+        training_plan_creation_recommendation_id: str | None = None,
+    ) -> tuple[str | None, str | None, str | None, int, list[dict]]:
         tool_results = []
         for tool_call in response.tool_calls:
             if tool_call.tool_name not in allowed_tools:
@@ -281,6 +420,7 @@ class RunningCompanionAgent:
 
             tool = self._tools.get(tool_call.tool_name)
             arguments = dict(tool_call.arguments)
+            _resolve_draft_training_plan_reference(arguments, draft_training_plan_id)
             arguments.setdefault("agent_run_id", run.id)
             payload = tool.run(user_id=user_id, arguments=arguments)
             tool_results.append(
@@ -290,7 +430,12 @@ class RunningCompanionAgent:
                     "output": payload,
                 }
             )
+            draft_training_plan_id = _draft_training_plan_id_from_payload(payload) or draft_training_plan_id
             recommendation_id = _recommendation_id_from_payload(payload) or recommendation_id
+            training_plan_creation_recommendation_id = (
+                _training_plan_creation_recommendation_id_from_payload(payload)
+                or training_plan_creation_recommendation_id
+            )
             self._run_store.record_step(
                 AgentRunStep.complete_tool_call(
                     agent_run_id=run.id,
@@ -302,7 +447,13 @@ class RunningCompanionAgent:
                 )
             )
             sequence_number += 1
-        return recommendation_id, sequence_number, tool_results
+        return (
+            recommendation_id,
+            draft_training_plan_id,
+            training_plan_creation_recommendation_id,
+            sequence_number,
+            tool_results,
+        )
 
 
 def _merge_model_metadata(run: AgentRun, response: ModelResponse) -> AgentRun:
@@ -352,6 +503,61 @@ def _recommendation_id_from_payload(payload: dict) -> str | None:
     return str(value) if value else None
 
 
+def _draft_training_plan_id_from_payload(payload: dict) -> str | None:
+    draft = payload.get("draft_training_plan")
+    if not isinstance(draft, dict):
+        return None
+    value = draft.get("id")
+    return str(value) if value else None
+
+
+def _training_plan_creation_recommendation_id_from_payload(payload: dict) -> str | None:
+    recommendation = payload.get("recommendation")
+    if not isinstance(recommendation, dict):
+        return None
+    action = recommendation.get("proposed_action")
+    if recommendation.get("recommendation_type") != "training_plan_creation":
+        return None
+    if not isinstance(action, dict) or action.get("type") != "create_training_plan":
+        return None
+    value = recommendation.get("id")
+    return str(value) if value else None
+
+
+def _resolve_draft_training_plan_reference(arguments: dict, draft_training_plan_id: str | None) -> None:
+    action = arguments.get("action")
+    if not isinstance(action, dict) or action.get("type") != "create_training_plan":
+        return
+    if action.get("draft_training_plan_id") == "__last_draft_training_plan_id__" and draft_training_plan_id:
+        action["draft_training_plan_id"] = draft_training_plan_id
+
+
+def _required_workflow_output_error(
+    workflow_name: str,
+    *,
+    draft_training_plan_id: str | None,
+    training_plan_creation_recommendation_id: str | None,
+) -> str | None:
+    if workflow_name != "training_plan_generation":
+        return None
+    if not draft_training_plan_id:
+        return "training plan generation did not create a draft training plan"
+    if not training_plan_creation_recommendation_id:
+        return "training plan generation did not create a training plan creation recommendation"
+    return None
+
+
+def _needs_follow_up_write(
+    workflow_name: str,
+    *,
+    recommendation_id: str | None,
+    training_plan_creation_recommendation_id: str | None,
+) -> bool:
+    if workflow_name == "training_plan_generation":
+        return training_plan_creation_recommendation_id is None
+    return recommendation_id is None
+
+
 def _summary_arguments(arguments: dict) -> str:
     return ", ".join(sorted(arguments.keys()))
 
@@ -396,6 +602,8 @@ def _follow_up_write_tools(workflow_name: str, allowed_tools: set[str]) -> tuple
         candidates = DAILY_WRITE_TOOL_NAMES
     elif workflow_name == "coach_conversation":
         candidates = {"createRecommendation"}
+    elif workflow_name == "training_plan_generation":
+        candidates = {"createRecommendation"}
     else:
         candidates = frozenset()
     return tuple(sorted(allowed_tools & candidates))
@@ -407,6 +615,36 @@ def _allowed_registered_tools(tool_names: tuple[str, ...], workflow_name: str) -
         allowed = READ_TOOL_NAMES | DAILY_WRITE_TOOL_NAMES
     elif workflow_name == "coach_conversation":
         allowed = READ_TOOL_NAMES | CONVERSATION_WRITE_TOOL_NAMES
+    elif workflow_name == "training_plan_generation":
+        allowed = READ_TOOL_NAMES | TRAINING_PLAN_GENERATION_WRITE_TOOL_NAMES
     else:
         allowed = READ_TOOL_NAMES
     return tuple(sorted(registered & allowed))
+
+
+def _goal_date(goal: dict) -> date:
+    value = goal.get("race_date")
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _repair_request(request: ModelRequest, exc: Exception) -> ModelRequest:
+    return ModelRequest(
+        user_id=request.user_id,
+        workflow_name=request.workflow_name,
+        prompt_version=request.prompt_version,
+        messages=request.messages
+        + (
+            {
+                "role": "user",
+                "content": (
+                    "Repair the draft training plan once using the original request and these validation errors: "
+                    f"{exc.__class__.__name__}: {str(exc)}"
+                ),
+            },
+        ),
+        tools=request.tools,
+        context=request.context,
+        require_tool_call=True,
+    )

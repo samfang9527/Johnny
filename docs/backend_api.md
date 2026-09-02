@@ -81,6 +81,11 @@ Users can have only one active sync provider connection at a time. `POST /api/v1
 - `POST /api/v1/recommendations/{recommendation_id}/edit`
 - `POST /api/v1/recommendations/{recommendation_id}/discuss`
 - `POST /api/v1/conversations/messages`
+- `POST /api/v1/agent-runs/daily-recommendation`
+- `POST /api/v1/agent-runs/training-plan-generation`
+- `GET /api/v1/agent-runs`
+- `GET /api/v1/agent-runs/{run_id}`
+- `GET /api/v1/agent-runs/{run_id}/steps`
 - `POST /api/v1/integrations/connections`
 - `DELETE /api/v1/integrations/connections/{connection_id}`
 - `POST /api/v1/integrations/connections/{connection_id}/admin-token-import`

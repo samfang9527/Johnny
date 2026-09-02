@@ -64,6 +64,7 @@ def test_openai_gateway_maps_request_tools_and_context() -> None:
         "informational",
         "recovery_warning",
         "workout_adjustment",
+        "training_plan_creation",
     ]
     assert create_schema["properties"]["evidence"]["items"]["properties"]["value"]["type"] == [
         "string",
@@ -83,7 +84,7 @@ def test_openai_gateway_maps_request_tools_and_context() -> None:
         {
             "type": "function",
             "name": "createRecommendation",
-            "description": "Create a pending informational recommendation for user approval. Does not apply plan changes.",
+            "description": "Create a pending recommendation for user approval. Does not apply plan changes.",
             "parameters": create_schema,
             "strict": True,
         },
@@ -127,6 +128,7 @@ def test_openai_gateway_all_tool_schemas_are_strict_for_openai() -> None:
         "getRecentActivities",
         "getRecoveryState",
         "getTrainingMetrics",
+        "createDraftTrainingPlan",
         "createRecommendation",
         "proposeWorkoutAdjustment",
         "storeMemoryCandidate",
@@ -137,6 +139,46 @@ def test_openai_gateway_all_tool_schemas_are_strict_for_openai() -> None:
     gateway.complete(_request_with_tools(all_tool_names))
 
     created = client.responses.calls[0]
+    for tool in created["tools"]:
+        _assert_strict_schema(tool["parameters"])
+
+
+def test_openai_gateway_exposes_training_plan_generation_write_contract() -> None:
+    client = FakeOpenAIClient(response=_response())
+    gateway = OpenAIModelGateway(client=client, model="gpt-5")
+
+    gateway.complete(_request_with_tools(("createDraftTrainingPlan", "createRecommendation")))
+
+    created = client.responses.calls[0]
+    tools_by_name = {tool["name"]: tool for tool in created["tools"]}
+    draft_schema = tools_by_name["createDraftTrainingPlan"]["parameters"]
+    recommendation_schema = tools_by_name["createRecommendation"]["parameters"]
+    assert draft_schema["properties"]["name"]["type"] == "string"
+    assert draft_schema["properties"]["race_id"]["type"] == ["string", "null"]
+    assert draft_schema["properties"]["workouts"]["items"]["properties"]["workout_type"]["enum"] == [
+        "easy_run",
+        "long_run",
+        "tempo",
+        "interval",
+        "recovery",
+        "rest",
+        "strength",
+        "cross_training",
+    ]
+    assert recommendation_schema["properties"]["recommendation_type"]["enum"] == [
+        "informational",
+        "recovery_warning",
+        "workout_adjustment",
+        "training_plan_creation",
+    ]
+    assert recommendation_schema["properties"]["action"]["properties"]["type"]["enum"] == [
+        "no_plan_change",
+        "create_training_plan",
+    ]
+    assert recommendation_schema["properties"]["action"]["properties"]["draft_training_plan_id"]["type"] == [
+        "string",
+        "null",
+    ]
     for tool in created["tools"]:
         _assert_strict_schema(tool["parameters"])
 
@@ -153,7 +195,8 @@ def test_openai_gateway_parses_content_tool_calls_and_token_usage() -> None:
                     '"recommendation_type": "informational", '
                     '"priority": "medium", '
                     '"evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}], '
-                    '"action": {"type": "no_plan_change", "reason": "Rest today."}}'
+                    '"action": {"type": "no_plan_change", "reason": "Rest today.", '
+                    '"draft_training_plan_id": null, "summary": null}}'
                 ),
             )
         ],
@@ -177,7 +220,12 @@ def test_openai_gateway_parses_content_tool_calls_and_token_usage() -> None:
         "recommendation_type": "informational",
         "priority": "medium",
         "evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}],
-        "action": {"type": "no_plan_change", "reason": "Rest today."},
+        "action": {
+            "type": "no_plan_change",
+            "reason": "Rest today.",
+            "draft_training_plan_id": None,
+            "summary": None,
+        },
     }
 
 
@@ -263,7 +311,8 @@ def test_openai_gateway_rejects_extra_tool_arguments() -> None:
                     '"recommendation_type": "informational", '
                     '"priority": "medium", '
                     '"evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}], '
-                    '"action": {"type": "no_plan_change", "reason": "Rest"}, '
+                    '"action": {"type": "no_plan_change", "reason": "Rest", '
+                    '"draft_training_plan_id": null, "summary": null}, '
                     '"agent_run_id": "model-controlled"}'
                 ),
             )

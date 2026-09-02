@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout
 
-from .models import PlanAdjustmentModel, TrainingPlanModel, WorkoutModel
+from .models import PlanAdjustmentModel, RaceModel, TrainingPlanModel, WorkoutModel
 
 
 class SqlAlchemyTrainingPlanRepository:
@@ -64,6 +64,44 @@ class SqlAlchemyTrainingPlanRepository:
         if model is None:
             return None
         return _plan_from_model(model)
+
+    def create_draft_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+        if plan.status != "draft":
+            raise ValueError("draft plan must have draft status")
+        return self.save_plan(user_id, plan)
+
+    def activate_draft_plan(
+        self,
+        user_id: str,
+        plan_id: str | None,
+        *,
+        accepted_at: date,
+        conflict_created_after: datetime | None = None,
+    ) -> TrainingPlan | None:
+        if plan_id is None:
+            return None
+        draft = self._session.scalar(
+            select(TrainingPlanModel)
+            .options(selectinload(TrainingPlanModel.workouts))
+            .where(
+                TrainingPlanModel.id == plan_id,
+                TrainingPlanModel.user_id == user_id,
+                TrainingPlanModel.status == "draft",
+            )
+        )
+        if draft is None:
+            return None
+        if draft.race_id is not None and self._race_is_expired(draft.race_id, accepted_at):
+            return None
+
+        conflicts = self._active_conflicts_for_draft(user_id, draft)
+        if conflict_created_after is not None and any(conflict.created_at > conflict_created_after for conflict in conflicts):
+            return None
+        for conflict in conflicts:
+            conflict.status = "superseded"
+        draft.status = "active"
+        self._session.flush()
+        return _plan_from_model(draft)
 
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
         _ensure_matching_user_id(user_id, plan.user_id)
@@ -188,6 +226,26 @@ class SqlAlchemyTrainingPlanRepository:
         )
         self._session.add(model)
         return model
+
+    def _race_is_expired(self, race_id: str, accepted_at: date) -> bool:
+        race = self._session.get(RaceModel, race_id)
+        return race is not None and race.race_date < accepted_at
+
+    def _active_conflicts_for_draft(self, user_id: str, draft: TrainingPlanModel) -> list[TrainingPlanModel]:
+        statement = select(TrainingPlanModel).where(
+            TrainingPlanModel.user_id == user_id,
+            TrainingPlanModel.id != draft.id,
+            TrainingPlanModel.status == "active",
+        )
+        if draft.race_id is not None:
+            statement = statement.where(TrainingPlanModel.race_id == draft.race_id)
+        else:
+            statement = statement.where(
+                TrainingPlanModel.race_id.is_(None),
+                TrainingPlanModel.starts_on <= draft.ends_on,
+                TrainingPlanModel.ends_on >= draft.starts_on,
+            )
+        return list(self._session.scalars(statement))
 
 
 def _ensure_matching_user_id(trusted_user_id: str, payload_user_id: str) -> None:

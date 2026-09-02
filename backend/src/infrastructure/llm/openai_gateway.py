@@ -138,7 +138,8 @@ def _tool_description(tool_name: str) -> str:
         "getRecentActivities": "Read user-scoped recent activity history within a date window.",
         "getRecoveryState": "Read deterministic recovery state for a user-scoped date.",
         "getTrainingMetrics": "Read deterministic training-load metrics for a user-scoped date.",
-        "createRecommendation": "Create a pending informational recommendation for user approval. Does not apply plan changes.",
+        "createDraftTrainingPlan": "Create a draft training plan for user review. Does not activate the plan.",
+        "createRecommendation": "Create a pending recommendation for user approval. Does not apply plan changes.",
         "proposeWorkoutAdjustment": "Create a pending workout-adjustment proposal for user approval. Does not apply plan changes.",
         "storeMemoryCandidate": "Store a pending memory candidate for later approval. Does not create durable memory.",
     }
@@ -170,23 +171,27 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
         ),
         "getRecoveryState": _date_schema(),
         "getTrainingMetrics": _date_schema(),
+        "createDraftTrainingPlan": _object_schema(
+            properties={
+                "name": {"type": "string"},
+                "race_id": {"type": ["string", "null"]},
+                "starts_on": {"type": "string"},
+                "ends_on": {"type": "string"},
+                "workouts": {"type": "array", "items": _workout_payload_schema()},
+            },
+            required=["name", "race_id", "starts_on", "ends_on", "workouts"],
+        ),
         "createRecommendation": _object_schema(
             properties={
                 "title": {"type": "string"},
                 "rationale": {"type": "string"},
                 "recommendation_type": {
                     "type": "string",
-                    "enum": ["informational", "recovery_warning", "workout_adjustment"],
+                    "enum": ["informational", "recovery_warning", "workout_adjustment", "training_plan_creation"],
                 },
                 "priority": {"type": "string", "enum": ["low", "medium", "high"]},
                 "evidence": _evidence_array_schema(),
-                "action": _object_schema(
-                    properties={
-                        "type": {"type": "string", "enum": ["no_plan_change"]},
-                        "reason": {"type": "string"},
-                    },
-                    required=["type", "reason"],
-                ),
+                "action": _recommendation_action_schema(),
             },
             required=["title", "rationale", "recommendation_type", "priority", "evidence", "action"],
         ),
@@ -240,6 +245,18 @@ def _object_schema(*, properties: dict[str, Any], required: list[str]) -> dict[s
 
 def _date_schema() -> dict[str, Any]:
     return _object_schema(properties={"anchor_date": {"type": "string"}}, required=["anchor_date"])
+
+
+def _recommendation_action_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "type": {"type": "string", "enum": ["no_plan_change", "create_training_plan"]},
+            "reason": {"type": "string"},
+            "draft_training_plan_id": {"type": ["string", "null"]},
+            "summary": {"type": ["string", "null"]},
+        },
+        required=["type", "reason", "draft_training_plan_id", "summary"],
+    )
 
 
 def _evidence_array_schema() -> dict[str, Any]:

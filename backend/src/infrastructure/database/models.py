@@ -147,6 +147,12 @@ class RaceModel(TimestampMixin, Base):
 
 class TrainingPlanModel(TimestampMixin, Base):
     __tablename__ = "training_plans"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'completed', 'archived', 'draft', 'superseded')",
+            name="training_plan_status",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -331,6 +337,12 @@ class RecommendationModel(TimestampMixin, Base):
 
 class AgentRunModel(TimestampMixin, Base):
     __tablename__ = "agent_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'started', 'completed', 'failed')",
+            name="agent_run_status",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
@@ -342,7 +354,7 @@ class AgentRunModel(TimestampMixin, Base):
     workflow_name: Mapped[str | None] = mapped_column(String(120))
     prompt_version: Mapped[str | None] = mapped_column(String(120))
     correlation_id: Mapped[str | None] = mapped_column(String(120))
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     input_tokens: Mapped[int | None] = mapped_column(Integer)
@@ -356,6 +368,32 @@ class AgentRunModel(TimestampMixin, Base):
     trace_ref: Mapped[str | None] = mapped_column(String(500))
     trace: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class AgentTaskModel(TimestampMixin, Base):
+    __tablename__ = "agent_tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'failed', 'dead_lettered')",
+            name="agent_task_status",
+        ),
+        UniqueConstraint("idempotency_key", name="uq_agent_tasks_idempotency_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    task_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    last_error_type: Mapped[str | None] = mapped_column(String(120))
+    last_error_message: Mapped[str | None] = mapped_column(String(2000))
 
 
 class AgentRunStepModel(TimestampMixin, Base):

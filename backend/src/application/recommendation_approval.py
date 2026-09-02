@@ -19,12 +19,22 @@ class AcceptRecommendationHandler:
         self._recommendations = recommendations
         self._training_plans = training_plans
 
-    def handle(self, *, user_id: str, recommendation_id: str | None) -> Recommendation | None:
+    def handle(
+        self,
+        *,
+        user_id: str,
+        recommendation_id: str | None,
+        accepted_at: date | None = None,
+    ) -> Recommendation | None:
         recommendation = self._recommendations.get_recommendation_for_user(user_id, recommendation_id)
         if recommendation is None:
             return None
         accepted = recommendation.accept()
         if recommendation.proposed_action.action_type == "no_plan_change":
+            return self._recommendations.save_recommendation(user_id, accepted)
+        if recommendation.proposed_action.action_type == "create_training_plan":
+            if not _activate_draft_plan(user_id, accepted, self._training_plans, accepted_at=accepted_at or date.today()):
+                return None
             return self._recommendations.save_recommendation(user_id, accepted)
         if not _apply_workout_adjustment(user_id, accepted, self._training_plans):
             return None
@@ -137,6 +147,25 @@ def _apply_workout_adjustment(
         return False
     training_plans.save_plan(user_id, updated_plan)
     return True
+
+
+def _activate_draft_plan(
+    user_id: str,
+    recommendation: Recommendation,
+    training_plans: TrainingPlanStore,
+    *,
+    accepted_at: date,
+) -> bool:
+    plan_id = recommendation.proposed_action.payload.get("draft_training_plan_id")
+    return (
+        training_plans.activate_draft_plan(
+            user_id,
+            plan_id,
+            accepted_at=accepted_at,
+            conflict_created_after=recommendation.created_at,
+        )
+        is not None
+    )
 
 
 def _replace_workout(plan: TrainingPlan, updated_workout: Workout) -> TrainingPlan:

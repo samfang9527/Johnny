@@ -57,6 +57,23 @@ def test_agent_run_records_completion_failure_and_recommendation_link() -> None:
     assert failed.recommendation_id is None
 
 
+def test_agent_run_can_be_queued_before_worker_start() -> None:
+    queued = AgentRun.queue(
+        id="run-1",
+        user_id="user-1",
+        trigger_type="manual",
+        workflow_name="daily_recommendation",
+        prompt_version="running-companion-v1",
+    )
+
+    started = queued.mark_started(started_at=datetime(2027, 1, 28, 8, 0, tzinfo=timezone.utc))
+
+    assert queued.status == "queued"
+    assert queued.started_at is None
+    assert started.status == "started"
+    assert started.started_at == datetime(2027, 1, 28, 8, 0, tzinfo=timezone.utc)
+
+
 def test_tool_step_and_context_source_serialize_safe_summaries() -> None:
     step = AgentRunStep.complete_tool_call(
         agent_run_id="run-1",

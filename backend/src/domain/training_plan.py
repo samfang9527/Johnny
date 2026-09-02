@@ -17,7 +17,7 @@ SUPPORTED_WORKOUT_TYPES = frozenset(
         "cross_training",
     }
 )
-VALID_PLAN_STATUSES = frozenset({"active", "completed", "archived"})
+VALID_PLAN_STATUSES = frozenset({"active", "completed", "archived", "draft", "superseded"})
 VALID_WORKOUT_STATUSES = frozenset({"planned", "adjusted", "completed", "skipped"})
 WORKOUT_STATUS_TRANSITIONS = {
     "planned": frozenset({"adjusted", "completed", "skipped"}),

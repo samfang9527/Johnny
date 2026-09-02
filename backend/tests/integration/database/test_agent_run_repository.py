@@ -153,3 +153,81 @@ def test_agent_run_repository_records_ordered_steps_and_context_sources(sqlite_s
         assert steps[0].payload["readiness_label"] == "rest"
         assert sources[0].id == source.id
         assert sources[0].metadata["anchor_date"] == "2027-01-28"
+
+
+def test_agent_run_repository_lists_user_runs_and_filters_by_workflow_and_status(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="run-list-owner@example.com", display_name="Run List Owner")
+        other = UserModel(email="run-list-other@example.com", display_name="Run List Other")
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        runs = SqlAlchemyAgentRunRepository(uow.session)
+        daily = runs.create_run(
+            AgentRun.queue(
+                user_id=owner.id,
+                trigger_type="manual",
+                workflow_name="daily_recommendation",
+                prompt_version="running-companion-v1",
+            )
+        )
+        conversation = runs.create_run(
+            AgentRun.start(
+                user_id=owner.id,
+                trigger_type="manual",
+                workflow_name="coach_conversation",
+                prompt_version="running-companion-v1",
+            )
+        )
+        runs.create_run(
+            AgentRun.queue(
+                user_id=other.id,
+                trigger_type="manual",
+                workflow_name="daily_recommendation",
+                prompt_version="running-companion-v1",
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        runs = SqlAlchemyAgentRunRepository(uow.session)
+
+        assert [run.id for run in runs.list_runs_for_user(owner.id)] == [conversation.id, daily.id]
+        assert [run.id for run in runs.list_runs_for_user(owner.id, workflow_name="daily_recommendation")] == [daily.id]
+        assert [run.id for run in runs.list_runs_for_user(owner.id, status="queued")] == [daily.id]
+
+
+def test_agent_run_repository_loads_steps_only_through_owner_run(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        owner = UserModel(email="run-step-owner@example.com", display_name="Run Step Owner")
+        other = UserModel(email="run-step-other@example.com", display_name="Run Step Other")
+        uow.session.add_all([owner, other])
+        uow.session.flush()
+        runs = SqlAlchemyAgentRunRepository(uow.session)
+        run = runs.create_run(
+            AgentRun.start(
+                user_id=owner.id,
+                trigger_type="manual",
+                workflow_name="daily_recommendation",
+                prompt_version="running-companion-v1",
+            )
+        )
+        step = runs.record_step(
+            AgentRunStep.complete_tool_call(
+                agent_run_id=run.id,
+                sequence_number=1,
+                tool_name="getTodayContext",
+                input_summary="today context",
+                output_summary="context loaded",
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        runs = SqlAlchemyAgentRunRepository(uow.session)
+
+        assert [loaded.id for loaded in runs.list_steps_for_user_run(owner.id, run.id)] == [step.id]
+        assert runs.list_steps_for_user_run(other.id, run.id) == []

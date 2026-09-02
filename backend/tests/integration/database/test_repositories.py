@@ -17,6 +17,7 @@ from src.infrastructure.database.models import (
     HealthMetricModel,
     IntegrationResourceCursorModel,
     RaceModel,
+    TrainingPlanModel,
     UserModel,
 )
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
@@ -168,6 +169,202 @@ def test_training_plan_repository_persists_workout_statuses(sqlite_session_facto
         assert loaded is not None
         assert loaded.workouts[0].status == "completed"
         assert loaded.workouts[0].purpose == "Aerobic base"
+
+
+def test_training_plan_repository_creates_draft_and_activates_it_for_race(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="draft-plan-race@example.com", display_name="Draft Plan Race")
+        uow.session.add(user)
+        uow.session.flush()
+        race = RaceModel(
+            user_id=user.id,
+            name="Taipei Half",
+            race_date=date(2027, 3, 1),
+            distance_meters=21_097,
+        )
+        uow.session.add(race)
+        uow.session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        active = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=race.id,
+                name="Current Race Plan",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 3, 1),
+                workouts=(Workout.create(
+                    scheduled_for=date(2027, 1, 3),
+                    workout_type="easy_run",
+                    purpose="Aerobic base",
+                    planned_duration_minutes=45,
+                ),),
+            ),
+        )
+        draft = repository.create_draft_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=race.id,
+                name="Generated Draft",
+                starts_on=date(2027, 1, 15),
+                ends_on=date(2027, 3, 1),
+                status="draft",
+                workouts=(Workout.create(
+                    scheduled_for=date(2027, 1, 16),
+                    workout_type="easy_run",
+                    purpose="Aerobic base",
+                    planned_duration_minutes=40,
+                ),),
+            ),
+        )
+        activated = repository.activate_draft_plan(
+            user.id,
+            draft.id,
+            accepted_at=date(2027, 1, 20),
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        old_plan = repository.get_plan_for_user(user.id, active.id)
+        new_plan = repository.get_plan_for_user(user.id, draft.id)
+
+        assert activated is not None
+        assert new_plan is not None
+        assert new_plan.status == "active"
+        assert old_plan is not None
+        assert old_plan.status == "superseded"
+
+
+def test_training_plan_repository_rejects_expired_or_stale_draft_activation(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="draft-plan-stale@example.com", display_name="Draft Plan Stale")
+        uow.session.add(user)
+        uow.session.flush()
+        race = RaceModel(
+            user_id=user.id,
+            name="Taipei Half",
+            race_date=date(2027, 3, 1),
+            distance_meters=21_097,
+        )
+        uow.session.add(race)
+        uow.session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        expired = repository.create_draft_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=race.id,
+                name="Expired Draft",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 3, 1),
+                status="draft",
+            ),
+        )
+        stale = repository.create_draft_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=race.id,
+                name="Stale Draft",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 3, 1),
+                status="draft",
+            ),
+        )
+        active = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=race.id,
+                name="Newer Active Plan",
+                starts_on=date(2027, 1, 15),
+                ends_on=date(2027, 3, 1),
+            ),
+        )
+        active_model = uow.session.get(TrainingPlanModel, active.id)
+        active_model.created_at = datetime(2027, 1, 20, tzinfo=timezone.utc)
+
+        expired_result = repository.activate_draft_plan(user.id, expired.id, accepted_at=date(2027, 3, 2))
+        stale_result = repository.activate_draft_plan(
+            user.id,
+            stale.id,
+            accepted_at=date(2027, 1, 21),
+            conflict_created_after=datetime(2027, 1, 19, tzinfo=timezone.utc),
+        )
+        uow.commit()
+
+    assert expired_result is None
+    assert stale_result is None
+def test_training_plan_repository_activates_base_plan_and_supersedes_overlaps(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="draft-plan-base@example.com", display_name="Draft Plan Base")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        overlapping = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                name="Current Base Plan",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 2, 28),
+                workouts=(Workout.create(
+                    scheduled_for=date(2027, 1, 3),
+                    workout_type="easy_run",
+                    purpose="Aerobic base",
+                    planned_duration_minutes=45,
+                ),),
+            ),
+        )
+        separate = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                name="Later Base Plan",
+                starts_on=date(2027, 5, 1),
+                ends_on=date(2027, 6, 1),
+                workouts=(Workout.create(
+                    scheduled_for=date(2027, 5, 3),
+                    workout_type="easy_run",
+                    purpose="Aerobic base",
+                    planned_duration_minutes=45,
+                ),),
+            ),
+        )
+        draft = repository.create_draft_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                name="Generated Base Draft",
+                starts_on=date(2027, 2, 1),
+                ends_on=date(2027, 3, 31),
+                status="draft",
+                workouts=(Workout.create(
+                    scheduled_for=date(2027, 2, 3),
+                    workout_type="easy_run",
+                    purpose="Aerobic base",
+                    planned_duration_minutes=35,
+                ),),
+            ),
+        )
+
+        assert repository.activate_draft_plan(user.id, draft.id, accepted_at=date(2027, 2, 1)) is not None
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+
+        assert repository.get_plan_for_user(user.id, draft.id).status == "active"
+        assert repository.get_plan_for_user(user.id, overlapping.id).status == "superseded"
+        assert repository.get_plan_for_user(user.id, separate.id).status == "active"
 
 
 def test_training_plan_repository_round_trips_adjustment_proposals_and_ownership(sqlite_session_factory) -> None:

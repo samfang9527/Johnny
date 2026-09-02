@@ -132,6 +132,106 @@ def test_conversation_route_rejects_empty_and_returns_run_reference() -> None:
     assert recommendations.json()["data"][0]["title"] == "Review today's training context"
 
 
+def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_poll_user_runs() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "user-1"}
+
+    daily = client.post(
+        "/api/v1/agent-runs/daily-recommendation",
+        headers=headers,
+        json={"anchor_date": "2027-01-28"},
+    )
+    duplicate = client.post(
+        "/api/v1/agent-runs/daily-recommendation",
+        headers=headers,
+        json={"anchor_date": "2027-01-28"},
+    )
+    forced = client.post(
+        "/api/v1/agent-runs/daily-recommendation",
+        headers=headers,
+        json={"anchor_date": "2027-01-28", "force": True},
+    )
+    training = client.post(
+        "/api/v1/agent-runs/training-plan-generation",
+        headers=headers,
+        json={"plan_type": "base", "starts_on": "2027-02-01", "plan_horizon_weeks": 4},
+    )
+    polled = client.get(daily.json()["data"]["poll_url"], headers=headers)
+    steps = client.get(f"/api/v1/agent-runs/{daily.json()['data']['run_id']}/steps", headers=headers)
+    listed = client.get("/api/v1/agent-runs?status=queued", headers=headers)
+    hidden = client.get(daily.json()["data"]["poll_url"], headers={"X-Johnny-User-Id": "user-2"})
+
+    assert daily.status_code == 200
+    assert daily.json()["data"]["status"] == "queued"
+    assert daily.json()["data"]["workflow_name"] == "daily_recommendation"
+    assert daily.json()["data"]["poll_url"] == f"/api/v1/agent-runs/{daily.json()['data']['run_id']}"
+    assert duplicate.json()["data"]["run_id"] == daily.json()["data"]["run_id"]
+    assert forced.json()["data"]["run_id"] != daily.json()["data"]["run_id"]
+    assert training.status_code == 200
+    assert training.json()["data"]["workflow_name"] == "training_plan_generation"
+    assert polled.json()["data"]["id"] == daily.json()["data"]["run_id"]
+    assert polled.json()["data"]["started_at"] is None
+    assert steps.json()["data"] == []
+    assert {run["workflow_name"] for run in listed.json()["data"]} == {
+        "daily_recommendation",
+        "training_plan_generation",
+    }
+    assert hidden.status_code == 404
+
+
+def test_generated_plan_recommendation_api_blocks_cross_user_accept_and_inspection() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    owner_headers = {"X-Johnny-User-Id": "user-1"}
+    other_headers = {"X-Johnny-User-Id": "user-2"}
+    draft = client.post(
+        "/api/v1/training-plans",
+        headers=owner_headers,
+        json={
+            "name": "Generated Draft",
+            "starts_on": "2027-01-01",
+            "ends_on": "2027-01-28",
+            "status": "draft",
+            "workouts": [
+                {
+                    "scheduled_for": "2027-01-03",
+                    "workout_type": "easy_run",
+                    "purpose": "Aerobic base",
+                    "planned_duration_minutes": 40,
+                }
+            ],
+        },
+    ).json()["data"]
+    recommendation = client.post(
+        "/api/v1/recommendations",
+        headers=owner_headers,
+        json={
+            "recommendation_type": "training_plan_creation",
+            "priority": "medium",
+            "title": "Review generated plan",
+            "rationale": "A draft plan is ready.",
+            "evidence": [{"source": "agent", "metric": "plan_weeks", "value": 4}],
+            "proposed_action": {
+                "type": "create_training_plan",
+                "draft_training_plan_id": draft["id"],
+                "reason": "A plan is needed.",
+                "summary": "Four-week plan.",
+            },
+        },
+    ).json()["data"]
+
+    other_accept = client.post(f"/api/v1/recommendations/{recommendation['id']}/accept", headers=other_headers)
+    other_plan = client.get(f"/api/v1/training-plans/{draft['id']}", headers=other_headers)
+    owner_plan = client.get(f"/api/v1/training-plans/{draft['id']}", headers=owner_headers)
+
+    assert other_accept.status_code == 404
+    assert other_plan.status_code == 404
+    assert owner_plan.json()["data"]["status"] == "draft"
+
+
 def test_api_allows_local_vite_origin_for_browser_requests() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 

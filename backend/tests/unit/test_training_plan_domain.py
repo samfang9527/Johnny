@@ -42,6 +42,30 @@ def test_manual_training_plan_orders_workouts_and_validates_boundaries() -> None
     assert [workout.scheduled_for for workout in plan.workouts] == [date(2027, 1, 3), date(2027, 1, 5)]
 
 
+def test_generated_training_plan_can_remain_draft_or_be_superseded() -> None:
+    draft = TrainingPlan.create(
+        user_id="user-1",
+        race_id="race-1",
+        name="Generated Half Marathon Draft",
+        starts_on=date(2027, 1, 1),
+        ends_on=date(2027, 1, 31),
+        status="draft",
+        workouts=(_easy_workout(scheduled_for=date(2027, 1, 3)),),
+    )
+    superseded = TrainingPlan.create(
+        user_id="user-1",
+        race_id="race-1",
+        name="Older Half Marathon Plan",
+        starts_on=date(2027, 1, 1),
+        ends_on=date(2027, 1, 31),
+        status="superseded",
+        workouts=(_easy_workout(scheduled_for=date(2027, 1, 3)),),
+    )
+
+    assert draft.status == "draft"
+    assert superseded.status == "superseded"
+
+
 def test_training_plan_rejects_invalid_date_range() -> None:
     with pytest.raises(DomainValidationError, match="end date"):
         TrainingPlan.create(

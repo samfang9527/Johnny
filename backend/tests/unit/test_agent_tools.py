@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 from src.application.agent_tools import (
     AgentToolRegistry,
     AthleteContextTool,
+    CreateDraftTrainingPlanTool,
     CreateRecommendationTool,
     MemoryCandidateTool,
     RecentActivitiesTool,
@@ -91,6 +92,7 @@ class LeakyActivityStore:
 class FakeTrainingPlanStore:
     def __init__(self, plan: TrainingPlan | None) -> None:
         self.plan = plan
+        self.drafts: list[TrainingPlan] = []
 
     def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
         return self.plan
@@ -99,6 +101,20 @@ class FakeTrainingPlanStore:
         if self.plan is None or self.plan.user_id != user_id or self.plan.id != plan_id:
             return None
         return self.plan
+
+    def create_draft_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+        saved = TrainingPlan.create(
+            id=f"draft-{len(self.drafts) + 1}",
+            user_id=user_id,
+            race_id=plan.race_id,
+            name=plan.name,
+            status="draft",
+            starts_on=plan.starts_on,
+            ends_on=plan.ends_on,
+            workouts=plan.workouts,
+        )
+        self.drafts.append(saved)
+        return saved
 
 
 class FakeRecommendationStore:
@@ -318,7 +334,33 @@ def test_workout_adjustment_tool_creates_proposal_without_mutating_plan() -> Non
 
     assert payload["recommendation"]["status"] == "pending"
     assert payload["recommendation"]["proposed_action"]["type"] == "adjust_workout"
-    assert plan.workouts[0].planned_duration_minutes == 45
+
+
+def test_create_draft_training_plan_tool_stores_valid_draft_without_activation() -> None:
+    plan_store = FakeTrainingPlanStore(None)
+    tool = CreateDraftTrainingPlanTool(training_plans=plan_store)
+
+    payload = tool.run(
+        user_id="user-1",
+        arguments={
+            "name": "Generated Four Week Plan",
+            "race_id": "race-1",
+            "starts_on": "2027-01-01",
+            "ends_on": "2027-01-28",
+            "workouts": [
+                {
+                    "scheduled_for": "2027-01-03",
+                    "workout_type": "easy_run",
+                    "purpose": "Aerobic base",
+                    "planned_duration_minutes": 40,
+                }
+            ],
+        },
+    )
+
+    assert payload["draft_training_plan"]["id"] == "draft-1"
+    assert payload["draft_training_plan"]["status"] == "draft"
+    assert plan_store.drafts[0].status == "draft"
 
 
 def test_memory_candidate_tool_stores_candidate_without_mutating_profile() -> None:

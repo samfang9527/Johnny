@@ -96,7 +96,8 @@ def test_build_running_companion_agent_uses_openai_gateway_and_persists_metadata
                             '"recommendation_type": "informational", '
                             '"priority": "medium", '
                             '"evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}], '
-                            '"action": {"type": "no_plan_change", "reason": "Rest"}}'
+                            '"action": {"type": "no_plan_change", "reason": "Rest", '
+                            '"draft_training_plan_id": null, "summary": null}}'
                         ),
                     )
                 ],

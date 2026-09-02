@@ -136,4 +136,5 @@ def _recommendation_from_model(model: RecommendationModel) -> Recommendation:
         decision=model.decision,
         evidence_payload=model.evidence or {},
         training_plan_id=model.training_plan_id,
+        created_at=model.created_at,
     )

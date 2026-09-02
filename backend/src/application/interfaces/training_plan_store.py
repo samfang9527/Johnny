@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol
 
 from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan
@@ -25,6 +25,19 @@ class TrainingPlanStore(Protocol):
         ...
 
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+        ...
+
+    def create_draft_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+        ...
+
+    def activate_draft_plan(
+        self,
+        user_id: str,
+        plan_id: str | None,
+        *,
+        accepted_at: date,
+        conflict_created_after: datetime | None = None,
+    ) -> TrainingPlan | None:
         ...
 
     def create_adjustment_proposal(

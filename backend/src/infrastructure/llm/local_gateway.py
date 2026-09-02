@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from src.domain.agent_runtime import ModelRequest, ModelResponse, TokenUsage, ToolCallRequest
 
 
@@ -17,6 +19,44 @@ class LocalCompanionModelGateway:
                             title="Review today's training context",
                             rationale="Local companion mode reviewed the available context. Connect OpenAI for model-backed analysis.",
                         ),
+                    ),
+                ),
+                token_usage=TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0),
+                provider="local",
+                model="deterministic-local-companion",
+            )
+
+        if request.workflow_name == "training_plan_generation":
+            draft_arguments = _draft_plan_arguments(request.context or {})
+            return ModelResponse(
+                content="Johnny generated a local deterministic draft training plan for review.",
+                tool_calls=(
+                    ToolCallRequest(
+                        tool_name="createDraftTrainingPlan",
+                        arguments=draft_arguments,
+                    ),
+                    ToolCallRequest(
+                        tool_name="createRecommendation",
+                        arguments={
+                            "title": "Review generated training plan",
+                            "rationale": "Local companion mode generated a draft plan for approval testing.",
+                            "recommendation_type": "training_plan_creation",
+                            "priority": "medium",
+                            "evidence": [
+                                {
+                                    "source": "local_companion",
+                                    "metric": "generated_plan_weeks",
+                                    "value": 4,
+                                    "summary": "Network-free local training plan generation",
+                                }
+                            ],
+                            "action": {
+                                "type": "create_training_plan",
+                                "draft_training_plan_id": "__last_draft_training_plan_id__",
+                                "reason": "A structured draft plan is ready for review.",
+                                "summary": "Four-week generated plan with three to five workouts per week.",
+                            },
+                        },
                     ),
                 ),
                 token_usage=TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0),
@@ -60,3 +100,48 @@ def _recommendation_arguments(*, title: str, rationale: str) -> dict:
             "reason": "Local mode does not apply training changes.",
         },
     }
+
+
+def _draft_plan_arguments(context: dict) -> dict:
+    starts_on = _date_from_context(context.get("starts_on")) or date.today()
+    ends_on = starts_on + timedelta(days=27)
+    workouts = []
+    workout_types = ("easy_run", "strength", "tempo", "long_run")
+    for week in range(4):
+        week_start = starts_on + timedelta(days=week * 7)
+        for offset, workout_type in zip((1, 3, 5, 6), workout_types):
+            scheduled_for = week_start + timedelta(days=offset)
+            if scheduled_for > ends_on:
+                continue
+            workouts.append(
+                {
+                    "scheduled_for": scheduled_for.isoformat(),
+                    "workout_type": workout_type,
+                    "purpose": _workout_purpose(workout_type),
+                    "planned_duration_minutes": 30 + week * 5 + offset * 3,
+                }
+            )
+    return {
+        "name": "Local Generated Four Week Plan",
+        "race_id": context.get("selected_race_id"),
+        "starts_on": starts_on.isoformat(),
+        "ends_on": ends_on.isoformat(),
+        "workouts": workouts,
+    }
+
+
+def _date_from_context(value) -> date | None:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        return date.fromisoformat(value)
+    return None
+
+
+def _workout_purpose(workout_type: str) -> str:
+    return {
+        "easy_run": "Aerobic base",
+        "strength": "Durability and injury resistance",
+        "tempo": "Sustained threshold development",
+        "long_run": "Endurance progression",
+    }[workout_type]

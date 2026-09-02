@@ -89,6 +89,19 @@ class FailingTool:
         raise RuntimeError("tool unavailable")
 
 
+class FailingOnceDraftTool:
+    name = "createDraftTrainingPlan"
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def run(self, *, user_id: str, arguments: dict) -> dict:
+        self.calls.append({"user_id": user_id, "arguments": arguments})
+        if len(self.calls) == 1:
+            raise ValueError("training plan end date cannot be before start date")
+        return {"draft_training_plan": {"id": "draft-plan-1", "status": "draft"}}
+
+
 def test_running_companion_agent_records_daily_recommendation_run_and_tool_steps() -> None:
     run_store = FakeRunStore()
     today_tool = StaticTool(
@@ -350,3 +363,289 @@ def test_agent_skips_model_requested_tool_outside_workflow_policy() -> None:
     assert write_tool.calls == []
     assert run_store.steps[0].step_type == "safety"
     assert run_store.steps[0].name == "blockUnauthorizedTool"
+
+
+def test_training_plan_generation_allows_draft_plan_and_recommendation_tools() -> None:
+    run_store = FakeRunStore()
+    draft_tool = StaticTool(
+        "createDraftTrainingPlan",
+        {
+            "draft_training_plan": {
+                "id": "draft-plan-1",
+                "status": "draft",
+                "starts_on": "2027-01-01",
+                "ends_on": "2027-01-28",
+            }
+        },
+    )
+    recommendation_tool = StaticTool(
+        "createRecommendation",
+        {
+            "recommendation": {
+                "id": "recommendation-1",
+                "status": "pending",
+                "recommendation_type": "training_plan_creation",
+                "proposed_action": {
+                    "type": "create_training_plan",
+                    "draft_training_plan_id": "draft-plan-1",
+                    "reason": "A race plan is needed.",
+                    "summary": "Four-week race build.",
+                },
+            },
+            "applied": False,
+        },
+    )
+    model = FakeModelGateway(
+        ModelResponse(
+            content="Create a draft plan for review.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createDraftTrainingPlan",
+                    arguments={
+                        "name": "Generated Four Week Plan",
+                        "race_id": "race-1",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [],
+                    },
+                ),
+                ToolCallRequest(
+                    tool_name="createRecommendation",
+                    arguments={
+                        "title": "Review generated plan",
+                        "rationale": "The generated plan matches the race target.",
+                        "recommendation_type": "training_plan_creation",
+                        "priority": "medium",
+                        "evidence": [{"source": "agent", "metric": "plan_weeks", "value": 4}],
+                        "action": {
+                            "type": "create_training_plan",
+                            "draft_training_plan_id": "draft-plan-1",
+                            "reason": "A race plan is needed.",
+                            "summary": "Four-week race build.",
+                        },
+                    },
+                ),
+            ),
+            token_usage=TokenUsage(input_tokens=20, output_tokens=30),
+        )
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((draft_tool, recommendation_tool)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_training_plan_generation(
+        user_id="user-1",
+        race_id="race-1",
+        starts_on=date(2027, 1, 1),
+        ends_on=date(2027, 1, 28),
+        plan_type="race",
+    )
+
+    assert result.status == "completed"
+    assert result.workflow_name == "training_plan_generation"
+    assert result.recommendation_id == "recommendation-1"
+    assert model.requests[0].tools == ("createDraftTrainingPlan", "createRecommendation")
+    assert [step.tool_name for step in run_store.steps] == ["createDraftTrainingPlan", "createRecommendation"]
+    assert draft_tool.calls[0]["arguments"]["agent_run_id"] == "run-1"
+
+
+def test_training_plan_generation_repairs_invalid_draft_once() -> None:
+    run_store = FakeRunStore()
+    draft_tool = FailingOnceDraftTool()
+    recommendation_tool = StaticTool(
+        "createRecommendation",
+        {
+            "recommendation": {
+                "id": "recommendation-1",
+                "status": "pending",
+                "recommendation_type": "training_plan_creation",
+                "proposed_action": {
+                    "type": "create_training_plan",
+                    "draft_training_plan_id": "draft-plan-1",
+                    "reason": "A base plan is needed.",
+                    "summary": "Four-week base plan.",
+                },
+            },
+            "applied": False,
+        },
+    )
+    model = FakeModelGateway(
+        ModelResponse(
+            content="Invalid draft.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createDraftTrainingPlan",
+                    arguments={
+                        "name": "Broken",
+                        "starts_on": "2027-01-28",
+                        "ends_on": "2027-01-01",
+                        "workouts": [],
+                    },
+                ),
+            ),
+        ),
+        ModelResponse(
+            content="Repaired draft.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createDraftTrainingPlan",
+                    arguments={
+                        "name": "Generated Four Week Plan",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [],
+                    },
+                ),
+                ToolCallRequest(
+                    tool_name="createRecommendation",
+                    arguments={
+                        "title": "Review generated plan",
+                        "rationale": "The repaired plan is valid.",
+                        "recommendation_type": "training_plan_creation",
+                        "priority": "medium",
+                        "evidence": [{"source": "agent", "metric": "repair", "value": "valid"}],
+                        "action": {
+                            "type": "create_training_plan",
+                            "draft_training_plan_id": "draft-plan-1",
+                            "reason": "A base plan is needed.",
+                            "summary": "Four-week base plan.",
+                        },
+                    },
+                ),
+            ),
+        ),
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((draft_tool, recommendation_tool)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_training_plan_generation(user_id="user-1", plan_type="base")
+
+    assert result.status == "completed"
+    assert result.recommendation_id == "recommendation-1"
+    assert len(model.requests) == 2
+    assert "repair" in model.requests[1].messages[-1]["content"].lower()
+
+
+def test_training_plan_generation_fails_when_model_never_creates_required_artifacts() -> None:
+    run_store = FakeRunStore()
+    draft_tool = StaticTool("createDraftTrainingPlan", {"draft_training_plan": {"id": "draft-plan-1"}})
+    recommendation_tool = StaticTool(
+        "createRecommendation",
+        {"recommendation": {"id": "recommendation-1", "status": "pending"}, "applied": False},
+    )
+    model = FakeModelGateway(
+        ModelResponse(content="I drafted a plan in prose only."),
+        ModelResponse(content="I still did not call the required tools."),
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((draft_tool, recommendation_tool)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_training_plan_generation(user_id="user-1", plan_type="base")
+
+    assert result.status == "failed"
+    assert result.recommendation_id is None
+    assert result.error_type == "ValueError"
+    assert "draft training plan" in result.error_message
+    assert [step.status for step in run_store.steps[-2:]] == ["failed", "failed"]
+    assert draft_tool.calls == []
+    assert recommendation_tool.calls == []
+
+
+def test_training_plan_generation_requires_training_plan_creation_recommendation() -> None:
+    run_store = FakeRunStore()
+    draft_tool = StaticTool("createDraftTrainingPlan", {"draft_training_plan": {"id": "draft-plan-1"}})
+    recommendation_tool = StaticTool(
+        "createRecommendation",
+        {
+            "recommendation": {
+                "id": "recommendation-1",
+                "status": "pending",
+                "recommendation_type": "informational",
+                "proposed_action": {"type": "no_plan_change", "reason": "No change."},
+            },
+            "applied": False,
+        },
+    )
+    model = FakeModelGateway(
+        ModelResponse(
+            content="Created an informational recommendation.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createDraftTrainingPlan",
+                    arguments={
+                        "name": "Generated Four Week Plan",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [],
+                    },
+                ),
+                ToolCallRequest(
+                    tool_name="createRecommendation",
+                    arguments={
+                        "title": "FYI",
+                        "rationale": "This is informational.",
+                        "recommendation_type": "informational",
+                        "priority": "medium",
+                        "evidence": [{"source": "agent", "metric": "plan_weeks", "value": 4}],
+                        "action": {"type": "no_plan_change", "reason": "No change."},
+                    },
+                ),
+            ),
+        ),
+        ModelResponse(content="Still no training plan creation recommendation."),
+        ModelResponse(content="Repair also omitted the required recommendation."),
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((draft_tool, recommendation_tool)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_training_plan_generation(user_id="user-1", plan_type="base")
+
+    assert result.status == "failed"
+    assert result.error_type == "ValueError"
+    assert "training plan creation recommendation" in result.error_message
+
+
+def test_training_plan_generation_selects_explicit_primary_future_or_base_target() -> None:
+    race_goals = [
+        {"id": "past-primary", "race_date": "2026-12-01", "priority": "primary"},
+        {"id": "future-secondary", "race_date": "2027-02-01", "priority": "secondary"},
+        {"id": "future-primary", "race_date": "2027-03-01", "priority": "primary"},
+    ]
+
+    def run_case(**kwargs) -> dict:
+        run_store = FakeRunStore()
+        athlete_tool = StaticTool(
+            "getAthleteContext",
+            {"profile": {"id": "profile-1"}, "race_goals": race_goals},
+        )
+        model = FakeModelGateway(ModelResponse(content="Context selected."))
+        agent = RunningCompanionAgent(
+            run_store=run_store,
+            model_gateway=model,
+            tools=AgentToolRegistry((athlete_tool,)),
+            prompt_version="running-companion-v1",
+        )
+        agent.run_training_plan_generation(user_id="user-1", starts_on=date(2027, 1, 1), **kwargs)
+        return model.requests[0].context
+
+    assert run_case(race_id="explicit-race", plan_type="race")["selected_race_id"] == "explicit-race"
+    assert run_case(plan_type="race")["selected_race_id"] == "future-primary"
+    assert run_case(plan_type="base")["selected_race_id"] is None
+
+    race_goals[2]["race_date"] = "2026-12-15"
+    assert run_case(plan_type="race")["selected_race_id"] == "future-secondary"

@@ -124,7 +124,58 @@ Expected:
 - Prints a non-empty `run_id`.
 - Prints a `recommendation_id`.
 
-## 9. Optional Live OpenAI Smoke
+## 9. Verify Async Agent Runtime
+
+Queue async runs through the API:
+
+```bash
+curl -s -H "Content-Type: application/json" \
+  -H "X-Johnny-User-Id: local-user" \
+  -d '{"anchor_date":"2027-01-28"}' \
+  http://127.0.0.1:8000/api/v1/agent-runs/daily-recommendation
+
+curl -s -H "Content-Type: application/json" \
+  -H "X-Johnny-User-Id: local-user" \
+  -d '{"plan_type":"base","starts_on":"2027-01-01"}' \
+  http://127.0.0.1:8000/api/v1/agent-runs/training-plan-generation
+```
+
+Expected:
+
+- Each response returns `status: queued`, a `workflow_name`, and a `poll_url`.
+- Repeating the same daily recommendation request without `force` returns the same queued run.
+- Sending `force: true` creates a distinct daily rerun.
+
+Drain local work:
+
+```bash
+make agent-work-drain
+```
+
+Poll the returned run URLs:
+
+```bash
+curl -s -H "X-Johnny-User-Id: local-user" \
+  http://127.0.0.1:8000/api/v1/agent-runs/<run-id>
+
+curl -s -H "X-Johnny-User-Id: local-user" \
+  http://127.0.0.1:8000/api/v1/agent-runs/<run-id>/steps
+```
+
+Expected:
+
+- Run status becomes `completed`.
+- Run steps show ordered tool calls.
+- `GET /api/v1/recommendations` includes a daily recommendation and a generated-plan recommendation.
+- `GET /api/v1/training-plans` includes a generated `draft` plan that remains inactive until its recommendation is accepted.
+
+Run the deterministic end-to-end async smoke:
+
+```bash
+make smoke-agent-local
+```
+
+## 10. Optional Live OpenAI Smoke
 
 Set live model variables in your shell or `backend/.env`:
 
@@ -140,6 +191,12 @@ Then run:
 make smoke-openai
 ```
 
+For the async runtime command, use:
+
+```bash
+make smoke-agent-openai
+```
+
 Expected:
 
 - Prints `status=completed`.
@@ -148,7 +205,7 @@ Expected:
 
 If the command exits with code `2`, required OpenAI settings are missing.
 
-## 10. Cleanup
+## 11. Cleanup
 
 Stop app processes with `Ctrl+C`.
 
@@ -168,5 +225,6 @@ docker volume rm johnny_johnny-postgres-data
 
 - Local mode is deterministic and network-free; it proves runtime wiring, not model quality.
 - Live OpenAI smoke is opt-in and depends on the configured model and API key.
+- The local queue is database-backed and AWS-shaped, but it is not SQS.
 - Notification delivery still verifies at application/unit-test level only; no production LINE delivery worker is part of this runbook.
 - Conversation history is currently client-local after submit; persisted conversation threads remain future work.

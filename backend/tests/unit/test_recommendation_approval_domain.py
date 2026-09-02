@@ -104,6 +104,44 @@ def test_informational_recommendation_allows_no_plan_change_action() -> None:
     assert recommendation.proposed_action.action_type == "no_plan_change"
 
 
+def test_training_plan_creation_recommendation_references_draft_plan() -> None:
+    recommendation = Recommendation.create(
+        user_id="user-1",
+        recommendation_type="training_plan_creation",
+        priority="medium",
+        title="Review generated plan",
+        rationale="The generated plan matches the target race.",
+        evidence=_evidence(),
+        proposed_action=ProposedAction.create_training_plan(
+            draft_training_plan_id="plan-draft-1",
+            reason="A structured plan is needed.",
+            summary="Four-week race build.",
+        ),
+    )
+
+    payload = recommendation.to_payload()
+
+    assert recommendation.training_plan_id == "plan-draft-1"
+    assert payload["proposed_action"]["type"] == "create_training_plan"
+    assert payload["proposed_action"]["draft_training_plan_id"] == "plan-draft-1"
+
+
+def test_training_plan_creation_action_requires_draft_plan_reason_and_summary() -> None:
+    with pytest.raises(DomainValidationError, match="draft training plan"):
+        ProposedAction.create_training_plan(
+            draft_training_plan_id="",
+            reason="A plan is needed.",
+            summary="Four-week race build.",
+        )
+
+    with pytest.raises(DomainValidationError, match="summary"):
+        ProposedAction.create_training_plan(
+            draft_training_plan_id="plan-draft-1",
+            reason="A plan is needed.",
+            summary="",
+        )
+
+
 def test_recommendation_lifecycle_accepts_rejects_and_blocks_final_decisions() -> None:
     accepted = _recommendation().accept()
     rejected = _recommendation().reject()

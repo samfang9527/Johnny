@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-RUN_STATUSES = frozenset({"started", "completed", "failed"})
+RUN_STATUSES = frozenset({"queued", "started", "completed", "failed"})
 STEP_STATUSES = frozenset({"started", "completed", "failed"})
 STEP_TYPES = frozenset({"model", "tool", "safety"})
 INJURY_TERMS = frozenset(
@@ -91,7 +91,8 @@ class AgentRun:
             raise ValueError("prompt version is required")
         if self.status not in RUN_STATUSES:
             raise ValueError("run status is not supported")
-        object.__setattr__(self, "started_at", self.started_at or _utc_now())
+        if self.status != "queued":
+            object.__setattr__(self, "started_at", self.started_at or _utc_now())
         object.__setattr__(self, "trace", dict(self.trace or {}))
         object.__setattr__(self, "metadata", dict(self.metadata or {}))
 
@@ -126,6 +127,43 @@ class AgentRun:
             metadata=metadata,
             started_at=started_at,
         )
+
+    @classmethod
+    def queue(
+        cls,
+        *,
+        user_id: str,
+        trigger_type: str,
+        workflow_name: str,
+        prompt_version: str,
+        provider: str | None = None,
+        model: str | None = None,
+        correlation_id: str | None = None,
+        input_summary: str | None = None,
+        trace_ref: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        id: str | None = None,
+    ) -> AgentRun:
+        return cls(
+            id=id,
+            user_id=user_id,
+            trigger_type=trigger_type,
+            workflow_name=workflow_name,
+            prompt_version=prompt_version,
+            status="queued",
+            provider=provider,
+            model=model,
+            correlation_id=correlation_id,
+            input_summary=input_summary,
+            trace_ref=trace_ref,
+            metadata=metadata,
+            started_at=None,
+        )
+
+    def mark_started(self, *, started_at: datetime | None = None) -> AgentRun:
+        if self.status != "queued":
+            raise ValueError("only queued runs can be started")
+        return replace(self, status="started", started_at=started_at or _utc_now())
 
     def complete(
         self,

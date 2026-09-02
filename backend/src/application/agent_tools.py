@@ -5,6 +5,7 @@ from typing import Iterable
 
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
+from src.domain.training_plan import TrainingPlan, Workout
 
 
 class AgentToolRegistry:
@@ -169,6 +170,27 @@ class WorkoutAdjustmentProposalTool:
         return {"recommendation": saved.to_payload(), "applied": False}
 
 
+class CreateDraftTrainingPlanTool:
+    name = "createDraftTrainingPlan"
+
+    def __init__(self, *, training_plans) -> None:
+        self._training_plans = training_plans
+
+    def run(self, *, user_id: str, arguments: dict) -> dict:
+        workouts = tuple(_workout_from_payload(payload) for payload in arguments.get("workouts", ()))
+        plan = TrainingPlan.create(
+            user_id=user_id,
+            race_id=arguments.get("race_id"),
+            name=arguments["name"],
+            status="draft",
+            starts_on=_date_arg(arguments, "starts_on"),
+            ends_on=_date_arg(arguments, "ends_on"),
+            workouts=workouts,
+        )
+        saved = self._training_plans.create_draft_plan(user_id, plan)
+        return {"draft_training_plan": _plan_payload(saved), "applied": False}
+
+
 class MemoryCandidateTool:
     name = "storeMemoryCandidate"
 
@@ -212,6 +234,21 @@ def _proposed_action(payload: dict) -> ProposedAction:
     if action_type == "no_plan_change":
         return ProposedAction.no_plan_change(reason=payload["reason"])
     return ProposedAction.from_payload(payload)
+
+
+def _workout_from_payload(payload: dict) -> Workout:
+    pace_range = payload.get("pace_range_seconds_per_km")
+    return Workout.create(
+        id=payload.get("id"),
+        scheduled_for=_date_arg(payload, "scheduled_for"),
+        workout_type=payload["workout_type"],
+        purpose=payload["purpose"],
+        planned_duration_minutes=payload.get("planned_duration_minutes"),
+        planned_distance_meters=payload.get("planned_distance_meters"),
+        pace_range_seconds_per_km=tuple(pace_range) if pace_range is not None else None,
+        heart_rate_zone=payload.get("heart_rate_zone"),
+        status=payload.get("status", "planned"),
+    )
 
 
 def _profile_payload(profile) -> dict | None:

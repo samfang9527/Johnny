@@ -115,10 +115,49 @@ Run the deterministic local companion smoke:
 make smoke-local
 ```
 
+Run the async local agent runtime:
+
+```bash
+make agent-schedule-once
+make agent-work-drain
+```
+
+The async runtime stores queued work in the local database `agent_tasks` table. API triggers create a queued `agent_runs` row and a queued task in one transaction, then return a poll URL. The local worker drains tasks and updates the linked run status:
+
+```bash
+curl -s -H "Content-Type: application/json" \
+  -H "X-Johnny-User-Id: local-user" \
+  -d '{"anchor_date":"2027-01-28"}' \
+  http://127.0.0.1:8000/api/v1/agent-runs/daily-recommendation
+
+curl -s -H "Content-Type: application/json" \
+  -H "X-Johnny-User-Id: local-user" \
+  -d '{"plan_type":"base","starts_on":"2027-01-01"}' \
+  http://127.0.0.1:8000/api/v1/agent-runs/training-plan-generation
+```
+
+Useful local runtime targets:
+
+```bash
+make agent-schedule-loop
+make agent-work-one
+make agent-work-loop
+make smoke-agent-local
+```
+
 Run the optional live OpenAI smoke after configuring OpenAI settings:
 
 ```bash
 make smoke-openai
+```
+
+The async smoke defaults to deterministic local model behavior. Live OpenAI smoke is opt-in:
+
+```bash
+export LLM_PROVIDER=openai
+export LLM_MODEL=gpt-5-nano
+export OPENAI_API_KEY=...
+make smoke-agent-openai
 ```
 
 Check the current migration revision:
