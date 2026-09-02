@@ -72,7 +72,7 @@ def test_race_goal_can_be_created_with_or_without_target_finish_time() -> None:
         race_date=date(2027, 3, 1),
         distance_meters=21097,
         target_finish_seconds=7200,
-        priority="a",
+        priority="primary",
         status="planned",
     )
     without_target = RaceGoal.create(

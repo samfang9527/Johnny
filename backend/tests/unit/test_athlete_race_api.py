@@ -72,7 +72,14 @@ def test_race_routes_create_update_detail_and_list_with_tenant_scope_and_filters
     updated = client.put(
         f"/api/v1/races/{first['id']}",
         headers={"X-Johnny-User-Id": "user-1"},
-        json={**first, "name": "Spring Half Updated", "status": "active"},
+        json={
+            "name": "Spring Half Updated",
+            "race_date": first["race_date"],
+            "distance_meters": first["distance_meters"],
+            "target_finish_seconds": first["target_finish_seconds"],
+            "priority": first["priority"],
+            "status": "active",
+        },
     )
     listed = client.get(
         "/api/v1/races?race_date_from=2027-03-01&race_date_to=2027-04-01&limit=1&offset=0",
@@ -94,6 +101,80 @@ def test_race_routes_create_update_detail_and_list_with_tenant_scope_and_filters
     assert invalid_page.json()["error"]["code"] == "validation_error"
     assert hidden.status_code == 404
     assert hidden.json()["error"]["code"] == "not_found"
+
+
+def test_race_create_rejects_status_and_unexpected_fields() -> None:
+    client = _client()
+
+    with_status = client.post(
+        "/api/v1/races",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "name": "Spring Half",
+            "race_date": "2027-04-12",
+            "distance_meters": 21097,
+            "priority": "primary",
+            "status": "active",
+        },
+    )
+    with_extra = client.post(
+        "/api/v1/races",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "name": "Spring Half",
+            "race_date": "2027-04-12",
+            "distance_meters": 21097,
+            "priority": "primary",
+            "distance_kilometers": 21.097,
+        },
+    )
+
+    assert with_status.status_code == 422
+    assert with_extra.status_code == 422
+
+
+def test_race_update_accepts_status_but_rejects_unexpected_fields() -> None:
+    client = _client()
+    race = client.post(
+        "/api/v1/races",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "name": "Spring Half",
+            "race_date": "2027-04-12",
+            "distance_meters": 21097,
+            "priority": "primary",
+        },
+    ).json()["data"]
+
+    updated = client.put(
+        f"/api/v1/races/{race['id']}",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "name": race["name"],
+            "race_date": race["race_date"],
+            "distance_meters": race["distance_meters"],
+            "target_finish_seconds": race["target_finish_seconds"],
+            "priority": race["priority"],
+            "status": "active",
+        },
+    )
+    with_extra = client.put(
+        f"/api/v1/races/{race['id']}",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "name": race["name"],
+            "race_date": race["race_date"],
+            "distance_meters": race["distance_meters"],
+            "target_finish_seconds": race["target_finish_seconds"],
+            "priority": race["priority"],
+            "status": "active",
+            "distance_kilometers": 21.097,
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["data"]["status"] == "active"
+    assert with_extra.status_code == 422
 
 
 def _client() -> TestClient:

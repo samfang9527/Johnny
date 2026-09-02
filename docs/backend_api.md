@@ -86,3 +86,11 @@ Users can have only one active sync provider connection at a time. `POST /api/v1
 - `POST /api/v1/integrations/connections/{connection_id}/admin-token-import`
 - `POST /api/v1/integrations/connections/{connection_id}/sync`
 - `POST /api/v1/integrations/webhooks/{provider}/{connection_id}`
+
+## Race Goals
+
+`POST /api/v1/races` creates a race goal for the current user. The create payload accepts `name`, `race_date`, `distance_meters`, optional `target_finish_seconds`, and `priority`. It rejects unexpected fields, including `status`; new race goals always start as `planned` server-side.
+
+`PUT /api/v1/races/{race_id}` uses a separate update payload with the same editable race fields plus `status`, and also rejects unexpected fields.
+
+Race goal priority values are `primary`, `secondary`, and `tune_up`.

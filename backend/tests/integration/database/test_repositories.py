@@ -619,7 +619,7 @@ def test_race_goal_repository_round_trips_goals_and_enforces_user_ownership(sqli
                 race_date=date(2027, 3, 1),
                 distance_meters=21_097,
                 target_finish_seconds=7_200,
-                priority="a",
+                priority="primary",
             )
         )
         repository.create_race_goal(
@@ -644,7 +644,7 @@ def test_race_goal_repository_round_trips_goals_and_enforces_user_ownership(sqli
         assert loaded.race_date == date(2027, 3, 1)
         assert loaded.distance_meters == 21_097
         assert loaded.target_finish_seconds == 7_200
-        assert loaded.priority == "a"
+        assert loaded.priority == "primary"
         assert loaded.status == "planned"
         assert loaded.target_pace_seconds_per_km == pytest.approx(341.28, abs=0.01)
         assert hidden is None
@@ -692,7 +692,7 @@ def test_race_goal_repository_updates_only_user_owned_goals(sqlite_session_facto
                 race_date=date(2027, 5, 2),
                 distance_meters=10_000,
                 target_finish_seconds=3_600,
-                priority="b",
+                priority="secondary",
                 status="active",
             )
         )
@@ -707,7 +707,7 @@ def test_race_goal_repository_updates_only_user_owned_goals(sqlite_session_facto
         assert loaded.name == "Updated 10K"
         assert loaded.race_date == date(2027, 5, 2)
         assert loaded.target_finish_seconds == 3_600
-        assert loaded.priority == "b"
+        assert loaded.priority == "secondary"
         assert loaded.status == "active"
 
 

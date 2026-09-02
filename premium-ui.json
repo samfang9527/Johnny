@@ -4,7 +4,7 @@
   "locale": "zh-TW",
   "requiredCapabilities": ["Date", "Select/Listbox", "Form", "Scrollbar"],
   "ownership": {
-    "Date": "native",
+    "Date": "authored",
     "Select/Listbox": "native"
   },
   "requiredCommands": ["test", "build", "tokens"],

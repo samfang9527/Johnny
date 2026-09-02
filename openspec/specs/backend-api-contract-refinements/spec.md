@@ -73,6 +73,15 @@ The system SHALL expose routes for reading and saving athlete profile data and m
 - **WHEN** a race creation request omits required date or distance fields
 - **THEN** the API rejects it with a structured validation error
 
+#### Scenario: Creating race goals without client-owned status
+- **WHEN** the current user submits a valid race creation request
+- **THEN** the API creates the race goal with server-owned `planned` status
+- **AND** the create request rejects unexpected fields such as `status`
+
+#### Scenario: Updating race goal status
+- **WHEN** the current user updates an owned race goal
+- **THEN** the API accepts the update status field while rejecting unexpected fields
+
 ### Requirement: Training Plan and Workout Routes
 The system SHALL expose routes for creating, reading, listing, and updating training plans and workouts for the current user.
 

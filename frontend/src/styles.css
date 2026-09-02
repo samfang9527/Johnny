@@ -310,6 +310,18 @@ button:disabled {
   max-width: 44rem;
 }
 
+.page-heading--with-action {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-shell-gap);
+  max-width: none;
+}
+
+.page-heading--with-action > div {
+  max-width: 44rem;
+}
+
 .page-heading p,
 .surface-card p,
 .provider-card p,
@@ -708,7 +720,8 @@ button:disabled {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.form-grid label {
+.form-grid label,
+.race-form label {
   display: grid;
   gap: 0.4rem;
   color: var(--color-muted-chalk);
@@ -810,7 +823,8 @@ button:disabled {
   max-width: 42rem;
 }
 
-.provider-dialog {
+.provider-dialog,
+.app-dialog {
   position: fixed;
   inset: 0;
   z-index: 40;
@@ -820,7 +834,12 @@ button:disabled {
   background: rgba(5, 8, 8, 0.72);
 }
 
-.provider-dialog__panel {
+.app-dialog--alert {
+  z-index: 50;
+}
+
+.provider-dialog__panel,
+.app-dialog__panel {
   width: min(42rem, 100%);
   max-height: min(42rem, calc(100vh - 2rem));
   overflow: auto;
@@ -831,7 +850,12 @@ button:disabled {
   box-shadow: 0 1.25rem 3rem rgba(0, 0, 0, 0.38);
 }
 
-.provider-dialog__actions {
+.app-dialog__panel h3 {
+  margin: 0;
+}
+
+.provider-dialog__actions,
+.app-dialog__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
@@ -845,7 +869,8 @@ button:disabled {
 
 .provider-form input,
 .provider-form select,
-.race-form input {
+.race-form input,
+.race-form select {
   width: 100%;
   min-height: 2.75rem;
   padding: 0.7rem 0.8rem;
@@ -855,23 +880,150 @@ button:disabled {
   background: var(--color-pit-black);
 }
 
-.provider-form select {
+.provider-form select,
+.race-form select {
   cursor: pointer;
 }
 
 .provider-form select:hover,
-.provider-form select:focus-visible {
+.provider-form select:focus-visible,
+.race-form select:hover,
+.race-form select:focus-visible {
   border-color: rgba(131, 183, 165, 0.7);
 }
 
-.provider-form select:active {
+.provider-form select:active,
+.race-form select:active {
   border-color: var(--color-primary);
 }
 
-.provider-form select:disabled {
+.provider-form select:disabled,
+.race-form select:disabled {
   color: var(--color-muted-chalk);
   cursor: not-allowed;
   opacity: 0.7;
+}
+
+.race-goal-modal {
+  display: grid;
+  gap: 1rem;
+}
+
+.race-goal-modal__grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.race-goal-modal__date {
+  grid-row: span 2;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 2.5rem;
+  min-width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid rgba(246, 239, 228, 0.16);
+  border-radius: var(--radius-md);
+  color: var(--color-lane-chalk);
+  background: rgba(246, 239, 228, 0.055);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.icon-button:hover {
+  border-color: rgba(246, 239, 228, 0.28);
+  background: rgba(246, 239, 228, 0.085);
+}
+
+.date-picker {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.date-picker__calendar {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(246, 239, 228, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(17, 21, 20, 0.72);
+}
+
+.date-picker__header,
+.date-picker__weekdays,
+.date-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.date-picker__header {
+  grid-template-columns: 2rem 1fr 2rem;
+  align-items: center;
+}
+
+.date-picker__header strong {
+  text-align: center;
+}
+
+.date-picker__header button,
+.date-picker__grid button {
+  min-height: 2rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-lane-chalk);
+  background: rgba(246, 239, 228, 0.055);
+}
+
+.date-picker__header button:hover:not(:disabled),
+.date-picker__grid button:hover:not(:disabled) {
+  border-color: rgba(131, 183, 165, 0.7);
+}
+
+.date-picker__grid button:disabled {
+  color: rgba(200, 192, 179, 0.45);
+  cursor: not-allowed;
+  background: rgba(246, 239, 228, 0.025);
+}
+
+.date-picker__day--selected {
+  color: var(--color-pit-black) !important;
+  background: var(--color-primary) !important;
+}
+
+.date-picker__weekdays span {
+  color: var(--color-muted-chalk);
+  font-family: var(--font-data);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.target-time-fieldset {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid rgba(246, 239, 228, 0.12);
+  border-radius: var(--radius-md);
+}
+
+.target-time-fieldset legend {
+  padding: 0 0.35rem;
+  color: var(--color-muted-chalk);
+}
+
+.target-time-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.confirm-dialog {
+  display: grid;
+  gap: 1rem;
+  width: min(28rem, 100%);
 }
 
 .sync-result {

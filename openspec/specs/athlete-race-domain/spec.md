@@ -23,9 +23,11 @@ The system SHALL represent a runner's baseline training context for training dec
 ### Requirement: Race Goal
 The system SHALL represent a target race with date, distance, optional target finish time, priority, and status.
 
+Race priority SHALL be one of `primary`, `secondary`, or `tune_up`.
+
 #### Scenario: Creating a race goal
 - **WHEN** a user with an athlete profile creates a race goal with name, future date, distance, and optional target finish time
-- **THEN** the system stores the race goal for that user
+- **THEN** the system stores the race goal for that user with planned status
 
 #### Scenario: Deriving target average pace
 - **WHEN** a race goal has distance and target finish time

@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiNotFoundError
 from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
-from src.api.schemas.races import RaceGoalCreateRequest, RaceGoalResponse
+from src.api.schemas.races import RaceGoalCreateRequest, RaceGoalResponse, RaceGoalUpdateRequest
 from src.domain.athlete_race import RaceGoal
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 
@@ -61,7 +61,7 @@ def get_race_goal(
 @router.put("/{race_id}", response_model=DataEnvelope[RaceGoalResponse])
 def update_race_goal(
     race_id: str,
-    payload: RaceGoalCreateRequest,
+    payload: RaceGoalUpdateRequest,
     current_user: CurrentUserDependency,
     session: SessionDependency,
 ) -> DataEnvelope[RaceGoalResponse]:

@@ -42,7 +42,6 @@ export interface RaceGoalCreatePayload {
   distance_meters: number
   target_finish_seconds?: number
   priority: string
-  status: string
 }
 
 export interface EvidenceItem {

@@ -18,7 +18,7 @@ VALID_DAYS = frozenset(
 )
 VALID_EXPERIENCE_LEVELS = frozenset({"unknown", "beginner", "intermediate", "advanced"})
 VALID_UNIT_PREFERENCES = frozenset({"metric", "imperial"})
-VALID_RACE_PRIORITIES = frozenset({"a", "b", "c", "primary", "secondary", "tune_up"})
+VALID_RACE_PRIORITIES = frozenset({"primary", "secondary", "tune_up"})
 VALID_RACE_STATUSES = frozenset({"planned", "active", "completed", "cancelled"})
 
 

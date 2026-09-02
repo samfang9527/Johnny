@@ -36,6 +36,7 @@ function garminConnectionData(overrides: Record<string, unknown> = {}): Record<s
 describe('Johnny product shell', () => {
   beforeEach(() => {
     window.location.hash = ''
+    document.body.innerHTML = ''
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -279,10 +280,17 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('8 km')
   })
 
-  it('lets the user add a race entry to the six-month calendar', async () => {
+  it('lets the user add a race entry from a modal with priority, kilometers, and calendar date picking', async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/api/v1/races') && init?.method === 'POST') {
+        expect(JSON.parse(String(init.body))).toEqual({
+          name: 'Taipei Half',
+          race_date: '2026-11-15',
+          distance_meters: 21100,
+          target_finish_seconds: 6300,
+          priority: 'secondary',
+        })
         return Promise.resolve({
           ok: true,
           json: () =>
@@ -291,9 +299,9 @@ describe('Johnny product shell', () => {
                 id: 'backend-created-race',
                 name: 'Taipei Half',
                 race_date: '2026-11-15',
-                distance_meters: 21097,
+                distance_meters: 21100,
                 target_finish_seconds: 6300,
-                priority: 'primary',
+                priority: 'secondary',
                 status: 'planned',
               },
             }),
@@ -310,17 +318,24 @@ describe('Johnny product shell', () => {
       },
     })
 
+    expect(wrapper.find('form[data-testid="race-form"]').exists()).toBe(false)
+    await wrapper.get('button[data-testid="open-race-goal-modal"]').trigger('click')
     await wrapper.get('input[name="raceName"]').setValue('Taipei Half')
-    await wrapper.get('input[name="raceDate"]').setValue('2026-11-15')
-    await wrapper.get('input[name="raceDistance"]').setValue('Half Marathon')
-    await wrapper.get('input[name="raceGoal"]').setValue('Sub 1:45')
+    await wrapper.get('select[name="racePriority"]').setValue('secondary')
+    await wrapper.get('input[name="raceDistanceKilometers"]').setValue('21.1')
+    await wrapper.get('button[data-testid="date-picker-next-month"]').trigger('click')
+    await wrapper.get('button[data-testid="date-picker-next-month"]').trigger('click')
+    await wrapper.get('button[data-testid="date-picker-day-2026-11-15"]').trigger('click')
+    await wrapper.get('input[name="targetFinishHours"]').setValue('1')
+    await wrapper.get('input[name="targetFinishMinutes"]').setValue('45')
     await wrapper.get('form[data-testid="race-form"]').trigger('submit')
     await flushPromises()
 
     expect(wrapper.text()).toContain('Taipei Half')
-    expect(wrapper.text()).toContain('Half Marathon')
-    expect(wrapper.text()).toContain('Sub 1:45')
+    expect(wrapper.text()).toContain('21.1 km')
+    expect(wrapper.text()).toContain('1:45:00')
     expect(wrapper.text()).toContain('賽事已加入訓練安排')
+    expect(wrapper.find('[data-testid="race-goal-modal"]').exists()).toBe(false)
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/races',
       expect.objectContaining({
@@ -328,13 +343,43 @@ describe('Johnny product shell', () => {
         body: JSON.stringify({
           name: 'Taipei Half',
           race_date: '2026-11-15',
-          distance_meters: 21097,
+          distance_meters: 21100,
           target_finish_seconds: 6300,
-          priority: 'primary',
-          status: 'planned',
+          priority: 'secondary',
         }),
       }),
     )
+  })
+
+  it('requires race priority and confirms before discarding dirty modal changes', async () => {
+    const wrapper = mount(App, { attachTo: document.body, props: { initialView: 'calendar' } })
+
+    await wrapper.get('button[data-testid="open-race-goal-modal"]').trigger('click')
+    await wrapper.get('input[name="raceName"]').setValue('Taipei Half')
+    await wrapper.get('form[data-testid="race-form"]').trigger('submit')
+
+    expect(wrapper.text()).toContain('請選擇目標優先度')
+    expect(document.activeElement).toBe(wrapper.get('select[name="racePriority"]').element)
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+
+    await wrapper.get('button[data-testid="race-modal-close"]').trigger('click')
+    expect(wrapper.get('[data-testid="confirm-dialog"]').text()).toContain('放棄新增目標')
+    await wrapper.get('button[data-testid="confirm-dialog-cancel"]').trigger('click')
+    expect(wrapper.find('[data-testid="race-goal-modal"]').exists()).toBe(true)
+
+    await wrapper.get('button[data-testid="race-modal-close"]').trigger('click')
+    await wrapper.get('button[data-testid="confirm-dialog-confirm"]').trigger('click')
+    expect(wrapper.find('[data-testid="race-goal-modal"]').exists()).toBe(false)
+  })
+
+  it('validates manually typed race dates on blur', async () => {
+    const wrapper = mount(App, { props: { initialView: 'calendar' } })
+
+    await wrapper.get('button[data-testid="open-race-goal-modal"]').trigger('click')
+    await wrapper.get('input[name="raceDate"]').setValue('2026/11/15')
+    await wrapper.get('input[name="raceDate"]').trigger('blur')
+
+    expect(wrapper.text()).toContain('請輸入 YYYY-MM-DD 格式的日期')
   })
 
   it('shows an empty workout state without losing the training arrangements surface', () => {
@@ -758,7 +803,7 @@ describe('Johnny product shell', () => {
 
     await wrapper.get('button[data-view="calendar"]').trigger('click')
     expect(wrapper.text()).toContain('Backend Calendar 10K')
-    expect(wrapper.text()).toContain('Sub 50:00')
+    expect(wrapper.text()).toContain('50:00')
 
     await wrapper.get('button[data-view="inbox"]').trigger('click')
     await wrapper.get('[data-testid="inbox-card-backend-rec-1"] [data-action="accept"]').trigger('click')

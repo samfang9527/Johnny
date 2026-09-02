@@ -24,9 +24,12 @@ import {
 } from './api/client'
 import AppButton from './components/AppButton.vue'
 import EvidenceList from './components/EvidenceList.vue'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import ProviderCard from './components/ProviderCard.vue'
+import RaceGoalModal from './components/RaceGoalModal.vue'
 import RecommendationActions from './components/RecommendationActions.vue'
 import StatusBadge from './components/StatusBadge.vue'
+import { formatRaceDistance, formatRacePriority } from './raceGoalForm'
 import {
   conversationThreads as fixtureConversationThreads,
   futureRaces as fixtureFutureRaces,
@@ -53,6 +56,7 @@ import type {
   EvidenceItem,
   IntegrationConnectionResponse,
   SyncResourceSummary,
+  RaceGoalCreatePayload,
 } from './types'
 
 const props = withDefaults(
@@ -123,12 +127,13 @@ const inboxBusyRecommendationId = ref('')
 const inboxBusyAction = ref('')
 const recommendationDecisions = ref<Record<string, RecommendationStatus>>({})
 const raceEntries = ref<RaceSummary[]>(shouldRequireAuth() ? [] : fixtureFutureRaces)
-const raceName = ref('')
-const raceDate = ref('')
-const raceDistance = ref('')
-const raceGoal = ref('')
 const raceFormError = ref('')
 const raceFormMessage = ref('')
+const isRaceGoalModalOpen = ref(false)
+const isRaceGoalConfirmOpen = ref(false)
+const raceGoalModalRef = ref<InstanceType<typeof RaceGoalModal> | null>(null)
+const raceGoalBusy = ref(false)
+let raceSuccessTimer: ReturnType<typeof setTimeout> | undefined
 const authStatus = ref<'checking' | 'anonymous' | 'authenticated'>(shouldRequireAuth() ? 'checking' : 'authenticated')
 const currentUser = ref<CurrentUser | null>(null)
 const authMode = ref<'login' | 'signup'>('login')
@@ -184,6 +189,7 @@ const activeThread = computed(() => displayThreads.value.find((thread) => thread
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
 const historicalInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status !== 'pending'))
 const raceCalendarMonths = computed(() => buildRaceCalendarMonths(raceEntries.value))
+const todayIsoDate = computed(() => new Date().toISOString().slice(0, 10))
 
 async function initializeAuth() {
   if (!shouldRequireAuth()) {
@@ -655,42 +661,51 @@ function handleActionPlaceholder() {
   providerMessage.value = '這個決策會在下一階段同步到訓練安排。'
 }
 
-async function submitRaceEntry() {
+function openRaceGoalModal() {
   raceFormError.value = ''
-  raceFormMessage.value = ''
-  if (!raceName.value.trim() || !raceDate.value) {
-    raceFormError.value = '請輸入名稱與日期'
+  isRaceGoalModalOpen.value = true
+}
+
+function requestCloseRaceGoalModal() {
+  if (raceGoalModalRef.value?.isDirty) {
+    isRaceGoalConfirmOpen.value = true
     return
   }
+  isRaceGoalModalOpen.value = false
+}
 
-  const distanceMeters = parseDistanceMeters(raceDistance.value)
-  if (!distanceMeters) {
-    raceFormError.value = '請輸入距離，例如 Half Marathon、Marathon 或 10 km'
-    return
-  }
+function cancelRaceGoalDiscard() {
+  isRaceGoalConfirmOpen.value = false
+}
 
+function confirmRaceGoalDiscard() {
+  isRaceGoalConfirmOpen.value = false
+  isRaceGoalModalOpen.value = false
+}
+
+async function submitRaceEntry(payload: RaceGoalCreatePayload) {
+  raceFormError.value = ''
+  raceGoalBusy.value = true
   try {
-    const response = await createRaceGoal({
-      name: raceName.value.trim(),
-      race_date: raceDate.value,
-      distance_meters: distanceMeters,
-      target_finish_seconds: parseTargetFinishSeconds(raceGoal.value),
-      priority: 'primary',
-      status: 'planned',
-    })
+    const response = await createRaceGoal(payload)
     const created = mapRaceGoal(response.data)
     if (created) {
       raceEntries.value = [...raceEntries.value.filter((race) => `${race.name}-${race.date}` !== `${created.name}-${created.date}`), created]
     }
-    raceName.value = ''
-    raceDate.value = ''
-    raceDistance.value = ''
-    raceGoal.value = ''
+    isRaceGoalModalOpen.value = false
     raceFormMessage.value = '賽事已加入訓練安排'
+    if (raceSuccessTimer) {
+      clearTimeout(raceSuccessTimer)
+    }
+    raceSuccessTimer = setTimeout(() => {
+      raceFormMessage.value = ''
+    }, 3500)
   } catch (error) {
     if (!handleSessionExpiry(error)) {
       raceFormError.value = '訓練安排儲存失敗，請稍後再試。'
     }
+  } finally {
+    raceGoalBusy.value = false
   }
 }
 
@@ -858,7 +873,7 @@ function mapRaceGoal(raw: unknown): RaceSummary | null {
     name,
     date: raceDateValue,
     distance: formatDistance(distanceMeters),
-    goal: formatTargetFinish(race.target_finish_seconds) || String(race.priority || race.status || 'planned'),
+    goal: formatTargetFinish(race.target_finish_seconds) || formatRacePriority(race.priority) || String(race.status || 'planned'),
     daysRemaining: daysUntil(raceDateValue),
   }
 }
@@ -998,55 +1013,7 @@ function formatWorkoutType(value: string): string {
 }
 
 function formatDistance(meters: number): string {
-  if (!Number.isFinite(meters) || meters <= 0) {
-    return 'N/A'
-  }
-  if (meters === 21097) {
-    return 'Half Marathon'
-  }
-  if (meters === 42195) {
-    return 'Marathon'
-  }
-  return `${Number((meters / 1000).toFixed(1)).toString()} km`
-}
-
-function parseDistanceMeters(value: string): number | null {
-  const normalized = value.trim().toLowerCase()
-  if (!normalized) {
-    return null
-  }
-  if (normalized.includes('half') || normalized.includes('半馬')) {
-    return 21097
-  }
-  if (normalized.includes('marathon') || normalized.includes('全馬')) {
-    return 42195
-  }
-  const kmMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(?:k|km|公里)/)
-  if (kmMatch) {
-    return Math.round(Number(kmMatch[1]) * 1000)
-  }
-  const meters = Number(normalized)
-  return Number.isFinite(meters) && meters > 0 ? Math.round(meters) : null
-}
-
-function parseTargetFinishSeconds(value: string): number | undefined {
-  const normalized = value.trim().replace(/^sub\s*/i, '')
-  if (!normalized) {
-    return undefined
-  }
-  const parts = normalized.split(':').map((part) => Number(part))
-  if (parts.some((part) => !Number.isFinite(part) || part < 0)) {
-    return undefined
-  }
-  if (parts.length === 2) {
-    const [hoursOrMinutes, minutesOrSeconds] = parts
-    return hoursOrMinutes >= 10 ? hoursOrMinutes * 60 + minutesOrSeconds : hoursOrMinutes * 3600 + minutesOrSeconds * 60
-  }
-  if (parts.length === 3) {
-    const [hours, minutes, seconds] = parts
-    return hours * 3600 + minutes * 60 + seconds
-  }
-  return undefined
+  return formatRaceDistance(meters)
 }
 
 function formatTargetFinish(value: unknown): string {
@@ -1058,11 +1025,9 @@ function formatTargetFinish(value: unknown): string {
   const minutes = Math.floor((seconds % 3600) / 60)
   const remainingSeconds = Math.floor(seconds % 60)
   if (hours > 0) {
-    return remainingSeconds > 0
-      ? `Sub ${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
-      : `Sub ${hours}:${String(minutes).padStart(2, '0')}`
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
   }
-  return `Sub ${minutes}:${String(remainingSeconds).padStart(2, '0')}`
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`
 }
 
 function formatWeekday(value: string): string {
@@ -1297,10 +1262,15 @@ function shouldRequireAuth(): boolean {
       </section>
 
       <section v-else-if="activeView === 'calendar'" class="page-stack" aria-labelledby="calendar-title">
-        <div class="page-heading">
-          <p class="section-label">訓練安排</p>
-          <h2 id="calendar-title">未來六個月</h2>
-          <p>把未來目標、重要活動與接下來的課表放在同一個時間脈絡裡。</p>
+        <div class="page-heading page-heading--with-action">
+          <div>
+            <p class="section-label">訓練安排</p>
+            <h2 id="calendar-title">未來六個月</h2>
+            <p>把未來目標、重要活動與接下來的課表放在同一個時間脈絡裡。</p>
+            <p v-if="raceFormError" class="field-error" role="alert">{{ raceFormError }}</p>
+            <p v-else-if="raceFormMessage" class="inline-note" role="status">{{ raceFormMessage }}</p>
+          </div>
+          <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
         </div>
 
         <section class="race-calendar" aria-label="未來六個月訓練安排">
@@ -1325,39 +1295,24 @@ function shouldRequireAuth(): boolean {
           </article>
         </section>
 
-        <form class="surface-card race-form" data-testid="race-form" novalidate @submit.prevent="submitRaceEntry">
-          <div class="section-heading">
-            <div>
-              <p class="section-label">新增目標</p>
-              <h3>設定訓練安排</h3>
-            </div>
-            <StatusBadge tone="info">六個月視窗</StatusBadge>
-          </div>
-          <div class="form-grid">
-            <label>
-              名稱
-              <input v-model="raceName" name="raceName" autocomplete="off" :aria-invalid="raceFormError ? 'true' : 'false'" />
-            </label>
-            <label>
-              日期
-              <input v-model="raceDate" name="raceDate" type="date" :aria-invalid="raceFormError ? 'true' : 'false'" />
-            </label>
-            <label>
-              距離
-              <input v-model="raceDistance" name="raceDistance" autocomplete="off" />
-            </label>
-            <label>
-              目標
-              <input v-model="raceGoal" name="raceGoal" autocomplete="off" />
-            </label>
-          </div>
-          <div class="form-footer">
-            <p v-if="raceFormError" class="field-error">{{ raceFormError }}</p>
-            <p v-else-if="raceFormMessage" class="inline-note">{{ raceFormMessage }}</p>
-            <p v-else>名稱與日期必填，其餘可以之後補上。</p>
-            <AppButton tone="primary" type="submit">加入安排</AppButton>
-          </div>
-        </form>
+        <RaceGoalModal
+          v-if="isRaceGoalModalOpen"
+          ref="raceGoalModalRef"
+          :error="raceFormError"
+          :busy="raceGoalBusy"
+          :min-date="todayIsoDate"
+          @close="requestCloseRaceGoalModal"
+          @submit="submitRaceEntry"
+        />
+
+        <ConfirmDialog
+          v-if="isRaceGoalConfirmOpen"
+          title="放棄新增目標"
+          description="目前輸入的比賽名稱、日期、距離或目標時間會被清除。"
+          confirm-label="放棄新增"
+          @cancel="cancelRaceGoalDiscard"
+          @confirm="confirmRaceGoalDiscard"
+        />
 
         <div class="section-heading">
           <div>
