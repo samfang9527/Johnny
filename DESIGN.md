@@ -164,7 +164,7 @@ Copy 原則：
 
 Desktop shell 使用頂部 navigation 搭配狀態列，品牌與導覽要在同一個 constrained shell 裡，不要各走各的路徑。內容最大寬度使用 `page-max`，核心 Today 區塊採 12 欄 grid：今日課表是主要卡片，desktop 使用 workout 7 欄、race 5 欄的第一列；Johnny compact recommendation strip 全寬置於課表與恢復之間；恢復證據全寬呈現；窄螢幕改為單欄，順序固定為 workout -> recommendation -> recovery -> race -> inbox nudge。
 
-Today must read as a workout-first control panel, not an equal-card dashboard. The workout card carries the largest card-level hierarchy; race explains how today's session supports the target; recovery uses a compact summary with three signal chips and may show missing-signal count plus one named missing signal. Full evidence rows and full unavailable-signal lists belong in Agent Inbox recommendation cards or other detailed decision contexts.
+Today must read as a workout-first control panel, not an equal-card dashboard. The workout card carries the largest card-level hierarchy; race explains how today's session supports the target. Recovery uses a compact summary with up to three actual metric signal chips, prioritized HRV -> sleep -> resting heart rate with body battery, stress, or training load as fallbacks. Recovery chips do not show facts or status fields such as `user_id`, `anchor_date`, or readiness labels; each chip uses label, current value, and short context. The recovery footer may show missing-signal count plus one named missing signal, or a quiet connected-source sync line such as `Garmin 已同步`. Full evidence rows and full unavailable-signal lists belong in Agent Inbox recommendation cards or other detailed decision contexts.
 
 `decision strip` 在 desktop 可以橫向呈現，在 mobile 必須垂直堆疊且每一步保留同樣標籤。`訓練安排` 使用六個月卡片式時間視窗，顯示使用者設定的未來目標；課表列表作為時間脈絡，而不是主要頁面名稱。
 

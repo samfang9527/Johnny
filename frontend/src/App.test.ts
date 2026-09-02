@@ -280,7 +280,11 @@ describe('Johnny product shell', () => {
             status: 'planned',
           },
         ],
-        recovery: { readiness_label: 'ready' },
+        recovery: {
+          readiness_label: 'ready',
+          hrv_ms: 52,
+          hrv_delta_percentage: 2,
+        },
         unavailable_signals: [],
       },
     })
@@ -290,7 +294,6 @@ describe('Johnny product shell', () => {
     const noRecommendationStrip = noRecommendation.get('[data-testid="today-recommendation-strip"]')
     expect(noRecommendationStrip.text()).toContain('目前可以照課表執行')
     expect(noRecommendationStrip.text()).toContain('查看 Agent 收件匣')
-    expect(noRecommendation.text()).toContain('恢復狀態')
     expect(noRecommendation.text()).not.toContain('readiness_label')
 
     mockAuthenticatedToday({
@@ -298,7 +301,7 @@ describe('Johnny product shell', () => {
       todayData: {
         scheduled_workouts: [],
         recovery: {},
-        unavailable_signals: ['缺少睡眠資料'],
+        unavailable_signals: ['sleep_debt_minutes'],
       },
     })
 
@@ -306,7 +309,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
     const insufficientDataStrip = insufficientData.get('[data-testid="today-recommendation-strip"]')
     expect(insufficientDataStrip.text()).toContain('目前資料不足')
-    expect(insufficientDataStrip.text()).toContain('連接資料來源')
+    expect(insufficientDataStrip.text()).not.toContain('連接資料來源')
   })
 
   it('keeps missing signals in recovery when Today has enough data and no recommendation', async () => {
@@ -324,16 +327,107 @@ describe('Johnny product shell', () => {
             status: 'planned',
           },
         ],
-        recovery: { readiness_label: 'ready' },
-        unavailable_signals: ['缺少睡眠資料'],
+        recovery: {
+          readiness_label: 'ready',
+          hrv_ms: 52,
+          hrv_delta_percentage: 2,
+        },
+        unavailable_signals: ['sleep_debt_minutes'],
       },
     })
 
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('目前沒有新的待決定調整')
-    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('1 個訊號待補，包含缺少睡眠資料')
+    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('Johnny 沒有新的待決定調整')
+    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('1 個訊號待補，包含睡眠資料')
+  })
+
+  it('shows formatted recovery metrics instead of Today facts when a data source is connected', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-recovery-metrics',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-today',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            heart_rate_zone: 'Zone 2',
+            status: 'planned',
+          },
+        ],
+        recovery: {
+          user_id: 'user-auth-recovery-metrics',
+          anchor_date: '2026-09-02',
+          readiness_label: 'caution',
+          hrv_ms: 52,
+          hrv_delta_percentage: -18,
+          sleep_minutes: 342,
+          sleep_debt_minutes: 78,
+          resting_heart_rate: 53,
+          resting_heart_rate_delta_bpm: 6,
+          body_battery_score: 62,
+        },
+        unavailable_signals: [],
+      },
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    const card = wrapper.get('[data-testid="today-recovery-card"]')
+    const chips = card.findAll('[data-testid="recovery-signal-chip"]')
+
+    expect(chips).toHaveLength(3)
+    expect(chips[0].text()).toContain('HRV')
+    expect(chips[0].text()).toContain('52 ms')
+    expect(chips[0].text()).toContain('低於基準 18%')
+    expect(chips[1].text()).toContain('睡眠')
+    expect(chips[1].text()).toContain('5 小時 42 分')
+    expect(chips[1].text()).toContain('少 1 小時 18 分')
+    expect(chips[2].text()).toContain('靜息心率')
+    expect(chips[2].text()).toContain('53 bpm')
+    expect(chips[2].text()).toContain('高於基準 6 bpm')
+    expect(card.text()).not.toContain('user-auth-recovery-metrics')
+    expect(card.text()).not.toContain('2026-09-02')
+    expect(card.text()).not.toContain('readiness_label')
+    expect(card.find('[data-testid="today-recovery-source-action"]').exists()).toBe(false)
+    expect(card.text()).toContain('Garmin 已同步')
+  })
+
+  it('shows Today source action only when the connected source needs attention', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) {
+        return Promise.resolve(
+          okJson({
+            id: 'user-auth-source-attention',
+            email: 'runner@example.com',
+            display_name: 'Runner',
+            capabilities: ['today', 'races', 'training-plans', 'recommendations', 'integrations'],
+          }),
+        )
+      }
+      if (url.endsWith('/api/v1/integrations/connections') && init?.method === 'GET') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: [garminConnectionData({ credential_status: 'requires_reauth' })] }),
+        } as Response)
+      }
+      if (url.includes('/api/v1/today')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: { recovery: {}, unavailable_signals: [] } }) } as Response)
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) } as Response)
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('檢查資料來源')
+    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('檢查資料來源')
+    await wrapper.get('[data-testid="today-recovery-source-action"]').trigger('click')
+    expect(wrapper.text()).toContain('連接資料來源')
   })
 
   it('shows only accept and keep buttons on Agent Inbox recommendation cards', () => {

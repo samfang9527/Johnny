@@ -190,11 +190,32 @@ const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) =
 const historicalInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status !== 'pending'))
 const raceCalendarMonths = computed(() => buildRaceCalendarMonths(raceEntries.value))
 const todayIsoDate = computed(() => new Date().toISOString().slice(0, 10))
-const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value, unavailableSignals.value))
-const todayRecommendationStrip = computed(() =>
-  buildTodayRecommendationStrip(recommendation.value, recoveryDecision.value.label, recoveryEvidence.value, todayWorkout.value, unavailableSignals.value),
+const dataSourceNeedsAttention = computed(() =>
+  Boolean(
+    garminConnection.value &&
+      (garminConnection.value.credential_status === 'requires_reauth' || garminConnection.value.sync_status === 'failed'),
+  ),
 )
-const primaryMissingSignal = computed(() => unavailableSignals.value[0] || '')
+const recoveryFooterText = computed(() => {
+  if (unavailableSignals.value.length) {
+    return `${unavailableSignals.value.length} 個訊號待補，包含${formatUnavailableSignal(unavailableSignals.value[0])}`
+  }
+  if (hasActiveDataProvider.value && !dataSourceNeedsAttention.value) {
+    return 'Garmin 已同步'
+  }
+  return ''
+})
+const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
+const todayRecommendationStrip = computed(() =>
+  buildTodayRecommendationStrip(
+    recommendation.value,
+    recoveryDecision.value.label,
+    recoveryEvidence.value,
+    todayWorkout.value,
+    hasActiveDataProvider.value,
+    dataSourceNeedsAttention.value,
+  ),
+)
 const raceTrainingRationale = computed(() => buildRaceTrainingRationale(todayWorkout.value))
 
 type RecoveryDecision = {
@@ -204,15 +225,14 @@ type RecoveryDecision = {
 
 type TodayRecommendationStrip = {
   summary: string
-  actionLabel: string
-  actionView: ViewKey
-  actionTone: 'primary' | 'neutral'
+  actionLabel?: string
+  actionView?: ViewKey
+  actionTone?: 'primary' | 'neutral'
 }
 
 function buildRecoveryDecision(
   currentRecommendation: RecommendationSummary | null,
   evidence: EvidenceItem[],
-  missingSignals: string[],
 ): RecoveryDecision {
   if (currentRecommendation?.priority === 'danger') {
     return { label: '建議休息', tone: 'danger' }
@@ -223,7 +243,7 @@ function buildRecoveryDecision(
   if (evidence.some((item) => item.tone === 'danger')) {
     return { label: '建議休息', tone: 'danger' }
   }
-  if (evidence.some((item) => item.tone === 'warning') || missingSignals.length) {
+  if (evidence.some((item) => item.tone === 'warning')) {
     return { label: '建議保守', tone: 'warning' }
   }
   return { label: '可以照課表', tone: 'success' }
@@ -234,7 +254,8 @@ function buildTodayRecommendationStrip(
   recoveryLabel: RecoveryDecision['label'],
   evidence: EvidenceItem[],
   workout: WorkoutSummary,
-  missingSignals: string[],
+  hasConnectedSource: boolean,
+  sourceNeedsAttention: boolean,
 ): TodayRecommendationStrip {
   if (currentRecommendation?.status === 'pending') {
     return {
@@ -247,8 +268,8 @@ function buildTodayRecommendationStrip(
   if (!evidence.length || workout.status === 'empty') {
     return {
       summary: '目前資料不足，連接睡眠或 HRV 後 Johnny 會給出更穩定判斷。',
-      actionLabel: '連接資料來源',
-      actionView: 'sources',
+      actionLabel: sourceNeedsAttention ? '檢查資料來源' : hasConnectedSource ? undefined : '連接資料來源',
+      actionView: sourceNeedsAttention || !hasConnectedSource ? 'sources' : undefined,
       actionTone: 'neutral',
     }
   }
@@ -276,16 +297,159 @@ function buildRaceTrainingRationale(workout: WorkoutSummary): string {
   return `今天的${workout.type}會服務下一場目標，請用恢復狀態決定執行強度。`
 }
 
-function formatRecoveryMetric(metric: string): string {
-  const metricLabels: Record<string, string> = {
-    readiness_label: '恢復狀態',
-    training_load: '訓練負荷',
-    acute_load: '短期負荷',
-    chronic_load: '長期負荷',
-    sleep: '睡眠',
-    hrv: 'HRV',
+function buildRecoveryEvidenceItems(recovery: Record<string, unknown>, trainingLoad: Record<string, unknown> | undefined): EvidenceItem[] {
+  const evidence = asRecord(recovery.evidence)
+  const items = [
+    buildHrvEvidence(recovery, asRecord(evidence?.hrv)),
+    buildSleepEvidence(recovery, asRecord(evidence?.sleep)),
+    buildRestingHeartRateEvidence(recovery, asRecord(evidence?.resting_heart_rate)),
+    buildBodyBatteryEvidence(recovery, asRecord(evidence?.body_battery)),
+    buildStressEvidence(recovery, asRecord(evidence?.stress)),
+    buildTrainingLoadEvidence(trainingLoad),
+  ]
+  return items.filter((item): item is EvidenceItem => item !== null).slice(0, 3)
+}
+
+function buildHrvEvidence(recovery: Record<string, unknown>, evidence: Record<string, unknown> | undefined): EvidenceItem | null {
+  const value = numberValue(evidence?.value ?? recovery.hrv_ms)
+  const delta = numberValue(recovery.hrv_delta_percentage)
+  if (value === null) {
+    return null
   }
-  return metricLabels[metric] || metric
+  return {
+    source: 'Garmin',
+    metric: 'HRV',
+    value: `${formatNumber(value)} ms`,
+    summary: delta === null ? '尚未建立基準變化' : `${delta < 0 ? '低於' : '高於'}基準 ${formatNumber(Math.abs(delta))}%`,
+    tone: recoveryTone(evidence?.level, delta !== null && delta < -10),
+  }
+}
+
+function buildSleepEvidence(recovery: Record<string, unknown>, evidence: Record<string, unknown> | undefined): EvidenceItem | null {
+  const sleepMinutes = numberValue(evidence?.value ?? recovery.sleep_minutes ?? recovery.sleep_duration_minutes)
+  const sleepDebt = numberValue(recovery.sleep_debt_minutes)
+  if (sleepMinutes === null) {
+    return null
+  }
+  return {
+    source: 'Garmin',
+    metric: '睡眠',
+    value: formatDuration(sleepMinutes),
+    summary: sleepDebt === null ? '尚未建立睡眠目標差距' : sleepDebt > 0 ? `少 ${formatDuration(sleepDebt)}` : '達到目標睡眠',
+    tone: recoveryTone(evidence?.level, sleepDebt !== null && sleepDebt > 60),
+  }
+}
+
+function buildRestingHeartRateEvidence(recovery: Record<string, unknown>, evidence: Record<string, unknown> | undefined): EvidenceItem | null {
+  const delta = numberValue(recovery.resting_heart_rate_delta_bpm)
+  const value = numberValue(evidence?.value ?? recovery.resting_heart_rate)
+  if (delta === null && value === null) {
+    return null
+  }
+  return {
+    source: 'Garmin',
+    metric: '靜息心率',
+    value: value === null ? `${formatSignedNumber(delta || 0)} bpm` : `${formatNumber(value)} bpm`,
+    summary: delta === null ? '尚未建立基準變化' : delta > 0 ? `高於基準 ${formatNumber(delta)} bpm` : delta < 0 ? `低於基準 ${formatNumber(Math.abs(delta))} bpm` : '接近基準',
+    tone: recoveryTone(evidence?.level, delta !== null && delta >= 5),
+  }
+}
+
+function buildBodyBatteryEvidence(recovery: Record<string, unknown>, evidence: Record<string, unknown> | undefined): EvidenceItem | null {
+  const value = numberValue(evidence?.value ?? recovery.body_battery_score)
+  if (value === null) {
+    return null
+  }
+  return {
+    source: 'Garmin',
+    metric: 'Body Battery',
+    value: formatNumber(value),
+    summary: value < 40 ? '能量偏低' : '能量可用',
+    tone: recoveryTone(evidence?.level, value < 40),
+  }
+}
+
+function buildStressEvidence(recovery: Record<string, unknown>, evidence: Record<string, unknown> | undefined): EvidenceItem | null {
+  const value = numberValue(evidence?.value ?? recovery.stress_score)
+  if (value === null) {
+    return null
+  }
+  return {
+    source: 'Garmin',
+    metric: '壓力',
+    value: formatNumber(value),
+    summary: value >= 70 ? '壓力偏高' : '壓力可控',
+    tone: recoveryTone(evidence?.level, value >= 70),
+  }
+}
+
+function buildTrainingLoadEvidence(trainingLoad: Record<string, unknown> | undefined): EvidenceItem | null {
+  if (!trainingLoad) {
+    return null
+  }
+  const ratio = numberValue(trainingLoad.acute_chronic_ratio)
+  if (ratio === null) {
+    return null
+  }
+  return {
+    source: 'Johnny Analytics',
+    metric: '負荷比',
+    value: `${formatNumber(ratio)}x`,
+    summary: ratio > 1.3 ? '短期負荷偏高' : '負荷穩定',
+    tone: ratio > 1.5 ? 'danger' : ratio > 1.3 ? 'warning' : 'info',
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+}
+
+function numberValue(value: unknown): number | null {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function formatNumber(value: number | null): string {
+  if (value === null) {
+    return ''
+  }
+  return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
+function formatSignedNumber(value: number): string {
+  return `${value > 0 ? '+' : ''}${formatNumber(value)}`
+}
+
+function formatDuration(minutes: number): string {
+  const rounded = Math.max(0, Math.round(minutes))
+  const hours = Math.floor(rounded / 60)
+  const remainingMinutes = rounded % 60
+  if (!hours) {
+    return `${remainingMinutes} 分`
+  }
+  return remainingMinutes ? `${hours} 小時 ${remainingMinutes} 分` : `${hours} 小時`
+}
+
+function recoveryTone(level: unknown, fallbackWarning: boolean): EvidenceItem['tone'] {
+  if (level === 'rest') {
+    return 'danger'
+  }
+  if (level === 'caution' || fallbackWarning) {
+    return 'warning'
+  }
+  return 'info'
+}
+
+function formatUnavailableSignal(signal: string): string {
+  const signalLabels: Record<string, string> = {
+    hrv_delta_percentage: 'HRV',
+    sleep_debt_minutes: '睡眠資料',
+    resting_heart_rate_baseline: '靜息心率',
+    acute_chronic_ratio: '負荷比',
+    chronic_load: '長期負荷',
+    mileage_ramp_percentage: '里程變化',
+  }
+  return signalLabels[signal] || signal
 }
 
 async function initializeAuth() {
@@ -924,14 +1088,9 @@ function applyTodayPayload(payload: Record<string, unknown>) {
   }
 
   const recovery = payload.recovery as Record<string, unknown> | undefined
+  const trainingLoad = payload.training_load as Record<string, unknown> | undefined
   if (recovery && Object.keys(recovery).length) {
-    apiRecoveryEvidence.value = Object.entries(recovery).slice(0, 4).map(([metric, value]) => ({
-      source: 'Johnny Analytics',
-      metric: formatRecoveryMetric(metric),
-      value: String(value),
-      summary: `${formatRecoveryMetric(metric)}: ${String(value)}`,
-      tone: metric.includes('status') || String(value).includes('low') ? 'warning' : 'info',
-    }))
+    apiRecoveryEvidence.value = buildRecoveryEvidenceItems(recovery, trainingLoad)
   }
 
   const unavailable = Array.isArray(payload.unavailable_signals) ? payload.unavailable_signals : []
@@ -1346,7 +1505,11 @@ function shouldRequireAuth(): boolean {
           </div>
           <div class="recommendation-strip__meta">
             <StatusBadge :tone="recoveryDecision.tone">{{ recoveryDecision.label }}</StatusBadge>
-            <AppButton :tone="todayRecommendationStrip.actionTone" @click="showView(todayRecommendationStrip.actionView)">
+            <AppButton
+              v-if="todayRecommendationStrip.actionLabel && todayRecommendationStrip.actionView"
+              :tone="todayRecommendationStrip.actionTone"
+              @click="showView(todayRecommendationStrip.actionView)"
+            >
               {{ todayRecommendationStrip.actionLabel }}
             </AppButton>
           </div>
@@ -1356,7 +1519,7 @@ function shouldRequireAuth(): boolean {
           <div class="section-heading">
             <div>
               <p class="section-label">恢復證據</p>
-              <h3>{{ recoveryDecision.label }}</h3>
+              <h3>關鍵恢復指標</h3>
             </div>
             <StatusBadge :tone="recoveryDecision.tone">{{ recoveryDecision.label }}</StatusBadge>
           </div>
@@ -1365,11 +1528,14 @@ function shouldRequireAuth(): boolean {
             <div v-for="item in recoveryEvidence.slice(0, 3)" :key="`${item.source}-${item.metric}`" class="recovery-signal-chip" data-testid="recovery-signal-chip">
               <span>{{ item.metric }}</span>
               <strong>{{ item.value }}</strong>
+              <small>{{ item.summary }}</small>
             </div>
           </div>
           <div class="compact-card-footer">
-            <span v-if="unavailableSignals.length">{{ unavailableSignals.length }} 個訊號待補，包含{{ primaryMissingSignal }}</span>
-            <AppButton tone="neutral" @click="showView('sources')">資料來源</AppButton>
+            <span v-if="recoveryFooterText">{{ recoveryFooterText }}</span>
+            <AppButton v-if="dataSourceNeedsAttention" data-testid="today-recovery-source-action" tone="neutral" @click="showView('sources')">
+              檢查資料來源
+            </AppButton>
           </div>
         </article>
 
