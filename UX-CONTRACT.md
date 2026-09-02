@@ -14,6 +14,6 @@
 
 - Production navigation shows `今日`, `訓練安排`, `Agent 收件匣`, and `資料來源`.
 - Conversation remains hidden from production navigation while the code path is retained for later reactivation and tests.
-- Today shows race, workout, recovery evidence, and an Agent Inbox entry point. Recommendation cards are rendered in Agent Inbox only.
+- Today shows workout, compact recommendation status, recovery evidence, race context, and an Agent Inbox entry point. Recommendation cards are rendered in Agent Inbox only; Today may show a compact recommendation strip for status and routing, but decisions remain in Agent Inbox.
 - Agent Inbox recommendation decisions use exactly two actions: `接受調整` and `保留課表`.
 - `訓練安排` owns the six-month future target calendar and race-goal create modal. Race entries persist through `POST /api/v1/races`; the create UI accepts kilometers and converts to API `distance_meters`, requires a product priority (`主要目標`, `次要目標`, `暖身賽`), and never sends race status on create. The calendar hydrates from `GET /api/v1/races` for the active six-month window. The workout list remains supporting context.

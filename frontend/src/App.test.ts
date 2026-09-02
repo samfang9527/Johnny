@@ -33,6 +33,40 @@ function garminConnectionData(overrides: Record<string, unknown> = {}): Record<s
   }
 }
 
+function mockAuthenticatedToday({
+  userId,
+  todayData,
+  recommendations = [],
+}: {
+  userId: string
+  todayData: Record<string, unknown>
+  recommendations?: Array<Record<string, unknown>>
+}) {
+  vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    if (url.endsWith('/api/v1/me')) {
+      return Promise.resolve(
+        okJson({
+          id: userId,
+          email: 'runner@example.com',
+          display_name: 'Runner',
+          capabilities: ['today', 'races', 'training-plans', 'recommendations', 'integrations'],
+        }),
+      )
+    }
+    if (url.endsWith('/api/v1/integrations/connections') && init?.method === 'GET') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [garminConnectionData()] }) } as Response)
+    }
+    if (url.includes('/api/v1/today')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: todayData }) } as Response)
+    }
+    if (url.endsWith('/api/v1/recommendations')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: recommendations }) } as Response)
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) } as Response)
+  })
+}
+
 describe('Johnny product shell', () => {
   beforeEach(() => {
     window.location.hash = ''
@@ -209,11 +243,97 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('目前沒有已排定課表')
   })
 
-  it('keeps recommendation cards out of Today and routes recommendation decisions to Agent Inbox', () => {
+  it('keeps recommendation cards out of Today while showing a compact recommendation strip', () => {
     const wrapper = mount(App)
 
     expect(wrapper.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('主動建議會集中在 Agent 收件匣')
+    const strip = wrapper.get('[data-testid="today-recommendation-strip"]')
+    expect(strip.text()).toContain('Johnny 建議')
+    expect(strip.text()).toContain('今天保持輕鬆，不做加速')
+    expect(strip.text()).toContain('建議保守')
+    expect(strip.text()).toContain('查看待決定建議')
+  })
+
+  it('orders Today as workout, recommendation, recovery, race, then inbox for narrow layouts', () => {
+    const wrapper = mount(App)
+    const section = wrapper.get('[data-testid="today-decision-flow"]')
+
+    const order = section
+      .findAll('[data-today-section]')
+      .map((element) => element.attributes('data-today-section'))
+
+    expect(order).toEqual(['workout', 'recommendation', 'recovery', 'race', 'inbox'])
+  })
+
+  it('shows no-recommendation and insufficient-data states in the Today recommendation strip', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-1',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-today',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            heart_rate_zone: 'Zone 2',
+            status: 'planned',
+          },
+        ],
+        recovery: { readiness_label: 'ready' },
+        unavailable_signals: [],
+      },
+    })
+
+    const noRecommendation = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    const noRecommendationStrip = noRecommendation.get('[data-testid="today-recommendation-strip"]')
+    expect(noRecommendationStrip.text()).toContain('目前可以照課表執行')
+    expect(noRecommendationStrip.text()).toContain('查看 Agent 收件匣')
+    expect(noRecommendation.text()).toContain('恢復狀態')
+    expect(noRecommendation.text()).not.toContain('readiness_label')
+
+    mockAuthenticatedToday({
+      userId: 'user-auth-2',
+      todayData: {
+        scheduled_workouts: [],
+        recovery: {},
+        unavailable_signals: ['缺少睡眠資料'],
+      },
+    })
+
+    const insufficientData = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    const insufficientDataStrip = insufficientData.get('[data-testid="today-recommendation-strip"]')
+    expect(insufficientDataStrip.text()).toContain('目前資料不足')
+    expect(insufficientDataStrip.text()).toContain('連接資料來源')
+  })
+
+  it('keeps missing signals in recovery when Today has enough data and no recommendation', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-missing-signal',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-today',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            heart_rate_zone: 'Zone 2',
+            status: 'planned',
+          },
+        ],
+        recovery: { readiness_label: 'ready' },
+        unavailable_signals: ['缺少睡眠資料'],
+      },
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('目前沒有新的待決定調整')
+    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('1 個訊號待補，包含缺少睡眠資料')
   })
 
   it('shows only accept and keep buttons on Agent Inbox recommendation cards', () => {
@@ -243,27 +363,25 @@ describe('Johnny product shell', () => {
     expect(mount(App, { props: { todayState: 'empty' } }).text()).toContain('連接資料來源後')
   })
 
-  it('keeps the Today recovery card compact so it balances the top row', () => {
+  it('keeps the Today recovery card compact with fixed action-oriented labels', () => {
     const wrapper = mount(App)
     const card = wrapper.get('[data-testid="today-recovery-card"]')
 
+    expect(card.text()).toContain('建議保守')
     expect(card.find('[data-testid="today-recovery-summary"]').exists()).toBe(true)
     expect(card.findAll('[data-testid="recovery-signal-chip"]')).toHaveLength(3)
+    expect(card.text()).toContain('2 個訊號待補，包含尚未連接靜息心率來源')
     expect(card.find('.evidence-list').exists()).toBe(false)
     expect(card.find('.unavailable-signals').exists()).toBe(false)
   })
 
-  it('stretches Today top-row cards to equal height regardless of content length', () => {
+  it('lays out Today with a wider workout card and contextual race card', () => {
     const wrapper = mount(App)
-    const topCards = [
-      wrapper.get('.race-card'),
-      wrapper.get('.workout-card'),
-      wrapper.get('[data-testid="today-recovery-card"]'),
-    ]
 
-    for (const card of topCards) {
-      expect(card.classes()).toContain('today-top-card')
-    }
+    expect(wrapper.get('.workout-card').classes()).toContain('today-card--primary')
+    expect(wrapper.get('.race-card').classes()).toContain('today-card--context')
+    expect(wrapper.get('.race-card').text()).toContain('今天的輕鬆跑是為了累積有氧基礎')
+    expect(wrapper.get('.workout-card').find('button').exists()).toBe(false)
   })
 
   it('opens training arrangements as a six-month race calendar with workout context', async () => {

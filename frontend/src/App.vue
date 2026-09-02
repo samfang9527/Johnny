@@ -174,7 +174,7 @@ const unavailableSignals = computed(() => {
   }
   return shouldRequireAuth() ? [] : fixtureUnavailableSignals
 })
-const recommendation = computed(() => apiRecommendation.value ?? fixtureRecommendation)
+const recommendation = computed(() => apiRecommendation.value ?? (shouldRequireAuth() ? null : fixtureRecommendation))
 const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : shouldRequireAuth() ? [] : fixtureWorkouts))
 const displayThreads = computed(() => props.conversationThreads ?? fixtureConversationThreads)
 const displayInboxItems = computed(() => {
@@ -190,6 +190,103 @@ const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) =
 const historicalInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status !== 'pending'))
 const raceCalendarMonths = computed(() => buildRaceCalendarMonths(raceEntries.value))
 const todayIsoDate = computed(() => new Date().toISOString().slice(0, 10))
+const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value, unavailableSignals.value))
+const todayRecommendationStrip = computed(() =>
+  buildTodayRecommendationStrip(recommendation.value, recoveryDecision.value.label, recoveryEvidence.value, todayWorkout.value, unavailableSignals.value),
+)
+const primaryMissingSignal = computed(() => unavailableSignals.value[0] || '')
+const raceTrainingRationale = computed(() => buildRaceTrainingRationale(todayWorkout.value))
+
+type RecoveryDecision = {
+  label: '可以照課表' | '建議保守' | '建議休息'
+  tone: 'success' | 'warning' | 'danger'
+}
+
+type TodayRecommendationStrip = {
+  summary: string
+  actionLabel: string
+  actionView: ViewKey
+  actionTone: 'primary' | 'neutral'
+}
+
+function buildRecoveryDecision(
+  currentRecommendation: RecommendationSummary | null,
+  evidence: EvidenceItem[],
+  missingSignals: string[],
+): RecoveryDecision {
+  if (currentRecommendation?.priority === 'danger') {
+    return { label: '建議休息', tone: 'danger' }
+  }
+  if (currentRecommendation?.priority === 'warning') {
+    return { label: '建議保守', tone: 'warning' }
+  }
+  if (evidence.some((item) => item.tone === 'danger')) {
+    return { label: '建議休息', tone: 'danger' }
+  }
+  if (evidence.some((item) => item.tone === 'warning') || missingSignals.length) {
+    return { label: '建議保守', tone: 'warning' }
+  }
+  return { label: '可以照課表', tone: 'success' }
+}
+
+function buildTodayRecommendationStrip(
+  currentRecommendation: RecommendationSummary | null,
+  recoveryLabel: RecoveryDecision['label'],
+  evidence: EvidenceItem[],
+  workout: WorkoutSummary,
+  missingSignals: string[],
+): TodayRecommendationStrip {
+  if (currentRecommendation?.status === 'pending') {
+    return {
+      summary: currentRecommendation.title,
+      actionLabel: '查看待決定建議',
+      actionView: 'inbox',
+      actionTone: 'primary',
+    }
+  }
+  if (!evidence.length || workout.status === 'empty') {
+    return {
+      summary: '目前資料不足，連接睡眠或 HRV 後 Johnny 會給出更穩定判斷。',
+      actionLabel: '連接資料來源',
+      actionView: 'sources',
+      actionTone: 'neutral',
+    }
+  }
+  return {
+    summary: recoveryLabel === '可以照課表' ? '目前可以照課表執行，Johnny 沒有新的待決定調整。' : '目前沒有新的待決定調整，請依恢復狀態保守執行。',
+    actionLabel: '查看 Agent 收件匣',
+    actionView: 'inbox',
+    actionTone: 'neutral',
+  }
+}
+
+function buildRaceTrainingRationale(workout: WorkoutSummary): string {
+  if (workout.status === 'empty') {
+    return '設定目標與課表後，Johnny 會說明今天如何服務下一場比賽。'
+  }
+  if (workout.type.includes('Easy')) {
+    return '今天的輕鬆跑是為了累積有氧基礎，不是測驗速度。'
+  }
+  if (workout.type.includes('Tempo')) {
+    return '今天的節奏課是為了穩定比賽配速，重點是控制強度。'
+  }
+  if (workout.type.includes('Long')) {
+    return '今天的長距離是為了建立後段耐力，配速應該保留餘裕。'
+  }
+  return `今天的${workout.type}會服務下一場目標，請用恢復狀態決定執行強度。`
+}
+
+function formatRecoveryMetric(metric: string): string {
+  const metricLabels: Record<string, string> = {
+    readiness_label: '恢復狀態',
+    training_load: '訓練負荷',
+    acute_load: '短期負荷',
+    chronic_load: '長期負荷',
+    sleep: '睡眠',
+    hrv: 'HRV',
+  }
+  return metricLabels[metric] || metric
+}
 
 async function initializeAuth() {
   if (!shouldRequireAuth()) {
@@ -304,9 +401,13 @@ function showView(view: ViewKey) {
 }
 
 async function handleAccept() {
+  const currentRecommendation = recommendation.value
+  if (!currentRecommendation) {
+    return
+  }
   busyAction.value = 'accept'
   try {
-    await acceptRecommendation(recommendation.value.id)
+    await acceptRecommendation(currentRecommendation.id)
     recommendationStatus.value = 'accepted'
   } catch (error) {
     handleSessionExpiry(error)
@@ -316,9 +417,13 @@ async function handleAccept() {
 }
 
 async function handleKeepOriginal() {
+  const currentRecommendation = recommendation.value
+  if (!currentRecommendation) {
+    return
+  }
   busyAction.value = 'keep'
   try {
-    await rejectRecommendation(recommendation.value.id)
+    await rejectRecommendation(currentRecommendation.id)
     recommendationStatus.value = 'kept'
   } catch (error) {
     handleSessionExpiry(error)
@@ -328,12 +433,16 @@ async function handleKeepOriginal() {
 }
 
 async function handleDiscuss() {
+  const currentRecommendation = recommendation.value
+  if (!currentRecommendation) {
+    return
+  }
   busyAction.value = 'discuss'
   try {
-    await discussRecommendation(recommendation.value.id, '我想了解這次調整的原因。')
+    await discussRecommendation(currentRecommendation.id, '我想了解這次調整的原因。')
     linkedRecommendation.value = {
-      id: recommendation.value.id,
-      title: recommendation.value.title,
+      id: currentRecommendation.id,
+      title: currentRecommendation.title,
       status: 'pending',
       statusLabel: '待決定',
       evidenceSummary: 'HRV -18% · 7 日負荷 +21%',
@@ -818,9 +927,9 @@ function applyTodayPayload(payload: Record<string, unknown>) {
   if (recovery && Object.keys(recovery).length) {
     apiRecoveryEvidence.value = Object.entries(recovery).slice(0, 4).map(([metric, value]) => ({
       source: 'Johnny Analytics',
-      metric,
+      metric: formatRecoveryMetric(metric),
       value: String(value),
-      summary: `${metric}: ${String(value)}`,
+      summary: `${formatRecoveryMetric(metric)}: ${String(value)}`,
       tone: metric.includes('status') || String(value).includes('low') ? 'warning' : 'info',
     }))
   }
@@ -833,6 +942,10 @@ function applyRecommendationsPayload(items: Array<Record<string, unknown>>) {
   const mapped = items.map(mapRecommendation).filter((item): item is InboxRecommendation => item !== null)
   apiInboxItems.value = mapped
   const firstPending = mapped.find((item) => item.status === 'pending') ?? mapped[0]
+  if (!firstPending) {
+    apiRecommendation.value = null
+    return
+  }
   if (firstPending) {
     apiRecommendation.value = {
       id: firstPending.id,
@@ -1183,7 +1296,7 @@ function shouldRequireAuth(): boolean {
     </header>
 
     <main class="main-surface">
-      <section v-if="activeView === 'today'" class="today-grid" aria-labelledby="today-title">
+      <section v-if="activeView === 'today'" class="today-grid" data-testid="today-decision-flow" aria-labelledby="today-title">
         <div class="page-heading today-grid__wide">
           <p class="section-label">今日</p>
           <h2 id="today-title">今天的訓練決策</h2>
@@ -1211,14 +1324,7 @@ function shouldRequireAuth(): boolean {
         </article>
 
         <template v-else>
-        <article class="surface-card today-top-card race-card">
-          <p class="section-label">下一場比賽</p>
-          <h3>{{ raceSummary.name }}</h3>
-          <p class="race-card__count">{{ raceSummary.daysRemaining }} 天</p>
-          <p>{{ raceSummary.distance }} · {{ raceSummary.goal }} · {{ raceSummary.date }}</p>
-        </article>
-
-        <article class="surface-card today-top-card workout-card">
+        <article class="surface-card today-top-card today-card--primary workout-card" data-today-section="workout">
           <p class="section-label">今日課表</p>
           <h3>{{ todayWorkout.type }}</h3>
           <p>{{ todayWorkout.purpose }}</p>
@@ -1229,15 +1335,32 @@ function shouldRequireAuth(): boolean {
           </div>
         </article>
 
-        <article class="surface-card today-top-card evidence-card" data-testid="today-recovery-card">
+        <article
+          class="surface-card today-grid__wide recommendation-strip"
+          data-testid="today-recommendation-strip"
+          data-today-section="recommendation"
+        >
+          <div>
+            <p class="section-label">Johnny 建議</p>
+            <h3>{{ todayRecommendationStrip.summary }}</h3>
+          </div>
+          <div class="recommendation-strip__meta">
+            <StatusBadge :tone="recoveryDecision.tone">{{ recoveryDecision.label }}</StatusBadge>
+            <AppButton :tone="todayRecommendationStrip.actionTone" @click="showView(todayRecommendationStrip.actionView)">
+              {{ todayRecommendationStrip.actionLabel }}
+            </AppButton>
+          </div>
+        </article>
+
+        <article class="surface-card today-grid__wide evidence-card" data-testid="today-recovery-card" data-today-section="recovery">
           <div class="section-heading">
             <div>
               <p class="section-label">恢復證據</p>
-              <h3>恢復偏低</h3>
+              <h3>{{ recoveryDecision.label }}</h3>
             </div>
-            <StatusBadge tone="warning">需要保守</StatusBadge>
+            <StatusBadge :tone="recoveryDecision.tone">{{ recoveryDecision.label }}</StatusBadge>
           </div>
-          <p class="recovery-summary" data-testid="today-recovery-summary">主要訊號偏向保守調整；完整證據留在 Agent 收件匣決策卡。</p>
+          <p class="recovery-summary" data-testid="today-recovery-summary">主要訊號用來判斷今天是否照課表、保守或休息。</p>
           <div class="recovery-signal-grid" aria-label="恢復關鍵訊號">
             <div v-for="item in recoveryEvidence.slice(0, 3)" :key="`${item.source}-${item.metric}`" class="recovery-signal-chip" data-testid="recovery-signal-chip">
               <span>{{ item.metric }}</span>
@@ -1245,18 +1368,26 @@ function shouldRequireAuth(): boolean {
             </div>
           </div>
           <div class="compact-card-footer">
-            <span v-if="unavailableSignals.length">{{ unavailableSignals.length }} 個訊號待補</span>
+            <span v-if="unavailableSignals.length">{{ unavailableSignals.length }} 個訊號待補，包含{{ primaryMissingSignal }}</span>
             <AppButton tone="neutral" @click="showView('sources')">資料來源</AppButton>
           </div>
         </article>
 
-        <article class="surface-card today-grid__wide inbox-nudge">
+        <article class="surface-card today-top-card today-card--context race-card" data-today-section="race">
+          <p class="section-label">下一場比賽</p>
+          <h3>{{ raceSummary.name }}</h3>
+          <p class="race-card__count">{{ raceSummary.daysRemaining }} 天</p>
+          <p>{{ raceSummary.distance }} · {{ raceSummary.goal }} · {{ raceSummary.date }}</p>
+          <p class="race-card__rationale">{{ raceTrainingRationale }}</p>
+        </article>
+
+        <article class="surface-card today-grid__wide inbox-nudge" data-today-section="inbox">
           <div>
             <p class="section-label">Agent 收件匣</p>
-            <h3>主動建議會集中在 Agent 收件匣</h3>
-            <p>今日保留訓練、恢復與下一場目標的快速判讀；需要你決定的 Johnny 建議會在收件匣處理。</p>
+            <h3>所有需要確認的調整集中處理</h3>
+            <p>所有需要你確認的調整都會集中在 Agent 收件匣。</p>
           </div>
-          <AppButton tone="primary" @click="showView('inbox')">查看待決定建議</AppButton>
+          <AppButton tone="neutral" @click="showView('inbox')">查看待決定建議</AppButton>
         </article>
         </template>
       </section>

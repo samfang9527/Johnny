@@ -299,10 +299,35 @@ button:disabled {
   height: 100%;
 }
 
-.race-card,
-.workout-card,
+.workout-card {
+  grid-column: 1 / span 7;
+  grid-row: 2;
+}
+
+.race-card {
+  grid-column: 8 / -1;
+  grid-row: 2;
+}
+
+.recommendation-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-shell-gap);
+  border-color: color-mix(in srgb, var(--color-split-amber) 40%, transparent);
+  background: color-mix(in srgb, var(--color-pit-black) 82%, var(--color-split-amber));
+}
+
+.recommendation-strip__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
 .evidence-card {
-  grid-column: span 4;
+  grid-column: 1 / -1;
 }
 
 .page-heading {
@@ -392,6 +417,12 @@ button:disabled {
   font-family: var(--font-data);
   font-size: clamp(2rem, 6vw, 3.5rem);
   line-height: 1;
+}
+
+.race-card__rationale {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--color-lane-chalk) 12%, transparent);
 }
 
 .metric-row {
@@ -1323,8 +1354,10 @@ button:disabled {
 
   .race-card,
   .workout-card,
+  .recommendation-strip,
   .evidence-card {
     grid-column: 1;
+    grid-row: auto;
   }
 
   .decision-strip,
@@ -1344,9 +1377,15 @@ button:disabled {
   .composer-form__footer,
   .form-footer,
   .compact-card-footer,
+  .recommendation-strip,
+  .recommendation-strip__meta,
   .inbox-nudge {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .recommendation-strip__meta {
+    width: 100%;
   }
 
   .action-row {
