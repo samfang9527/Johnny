@@ -16,8 +16,10 @@ VALID_DAYS = frozenset(
         "sunday",
     }
 )
-VALID_EXPERIENCE_LEVELS = frozenset({"unknown", "beginner", "intermediate", "advanced"})
+VALID_EXPERIENCE_LEVELS = frozenset({"beginner", "intermediate", "advanced"})
 VALID_UNIT_PREFERENCES = frozenset({"metric", "imperial"})
+VALID_INJURY_STATUSES = frozenset({"none", "current", "recent", "recurring"})
+VALID_INJURY_AREAS = frozenset({"knee", "calf", "shin", "ankle", "foot", "hamstring", "quad", "hip", "back", "other"})
 VALID_RACE_PRIORITIES = frozenset({"primary", "secondary", "tune_up"})
 VALID_RACE_STATUSES = frozenset({"planned", "active", "completed", "cancelled"})
 
@@ -33,6 +35,8 @@ class AthletePreferences:
     max_runs_per_week: int
     unit_preference: str = "metric"
     training_preferences: dict[str, Any] = field(default_factory=dict)
+    injury_status: str = "none"
+    injury_areas: tuple[str, ...] = ()
     injury_notes: str | None = None
 
     def __post_init__(self) -> None:
@@ -42,22 +46,31 @@ class AthletePreferences:
         normalized_long_run_day = _normalize_day(self.preferred_long_run_day)
         if self.max_runs_per_week < 1 or self.max_runs_per_week > 7:
             raise DomainValidationError("maximum runs per week must be between 1 and 7")
-        if self.max_runs_per_week < len(normalized_days):
-            raise DomainValidationError("maximum runs per week must cover preferred training days")
+        if normalized_days and normalized_long_run_day not in normalized_days:
+            raise DomainValidationError("long run day must be one of the preferred training days")
         if self.unit_preference not in VALID_UNIT_PREFERENCES:
             raise DomainValidationError("unit preference must be metric or imperial")
+        if self.injury_status not in VALID_INJURY_STATUSES:
+            raise DomainValidationError("injury status is invalid")
+
+        normalized_injury_areas = tuple(_normalize_injury_area(area) for area in self.injury_areas)
+        if len(set(normalized_injury_areas)) != len(normalized_injury_areas):
+            raise DomainValidationError("injury areas must be unique")
+        if "other" in normalized_injury_areas and not (self.injury_notes or "").strip():
+            raise DomainValidationError("other injury area requires injury notes")
 
         object.__setattr__(self, "preferred_training_days", normalized_days)
         object.__setattr__(self, "preferred_long_run_day", normalized_long_run_day)
         object.__setattr__(self, "training_preferences", dict(self.training_preferences))
+        object.__setattr__(self, "injury_areas", normalized_injury_areas)
 
 
 @dataclass(frozen=True)
 class AthleteProfile:
     user_id: str
     timezone: str
-    experience_level: str
-    current_weekly_mileage: float
+    experience_level: str | None
+    current_weekly_mileage_km: float
     preferences: AthletePreferences
     id: str | None = None
 
@@ -66,9 +79,9 @@ class AthleteProfile:
             raise DomainValidationError("user id is required")
         if not self.timezone:
             raise DomainValidationError("timezone is required")
-        if self.experience_level not in VALID_EXPERIENCE_LEVELS:
+        if self.experience_level is not None and self.experience_level not in VALID_EXPERIENCE_LEVELS:
             raise DomainValidationError("experience level is invalid")
-        if self.current_weekly_mileage < 0:
+        if self.current_weekly_mileage_km < 0:
             raise DomainValidationError("current weekly mileage cannot be negative")
 
     @classmethod
@@ -77,13 +90,15 @@ class AthleteProfile:
         *,
         user_id: str,
         timezone: str,
-        experience_level: str,
-        current_weekly_mileage: float,
+        experience_level: str | None,
+        current_weekly_mileage_km: float,
         preferred_training_days: tuple[str, ...],
         preferred_long_run_day: str,
         max_runs_per_week: int,
         unit_preference: str = "metric",
         training_preferences: dict[str, Any] | None = None,
+        injury_status: str = "none",
+        injury_areas: tuple[str, ...] = (),
         injury_notes: str | None = None,
         id: str | None = None,
     ) -> AthleteProfile:
@@ -92,13 +107,15 @@ class AthleteProfile:
             user_id=user_id,
             timezone=timezone,
             experience_level=experience_level,
-            current_weekly_mileage=current_weekly_mileage,
+            current_weekly_mileage_km=current_weekly_mileage_km,
             preferences=AthletePreferences(
                 preferred_training_days=preferred_training_days,
                 preferred_long_run_day=preferred_long_run_day,
                 max_runs_per_week=max_runs_per_week,
                 unit_preference=unit_preference,
                 training_preferences=training_preferences or {},
+                injury_status=injury_status,
+                injury_areas=injury_areas,
                 injury_notes=injury_notes,
             ),
         )
@@ -173,3 +190,10 @@ def _normalize_day(day: str) -> str:
     if normalized_day not in VALID_DAYS:
         raise DomainValidationError(f"invalid training day: {day}")
     return normalized_day
+
+
+def _normalize_injury_area(area: str) -> str:
+    normalized_area = area.strip().lower()
+    if normalized_area not in VALID_INJURY_AREAS:
+        raise DomainValidationError(f"invalid injury area: {area}")
+    return normalized_area

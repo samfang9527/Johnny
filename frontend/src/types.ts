@@ -1,4 +1,4 @@
-export type ViewKey = 'today' | 'calendar' | 'inbox' | 'conversation' | 'sources'
+export type ViewKey = 'today' | 'calendar' | 'inbox' | 'conversation' | 'athlete-settings' | 'sources'
 
 export interface CurrentUser {
   id: string
@@ -9,6 +9,29 @@ export interface CurrentUser {
 
 export interface AthleteProfileResponse {
   timezone?: string | null
+  experience_level?: 'beginner' | 'intermediate' | 'advanced' | null
+  current_weekly_mileage_km?: number | null
+  preferred_training_days?: string[] | null
+  preferred_long_run_day?: string | null
+  max_runs_per_week?: number | null
+  unit_preference?: 'metric' | 'imperial' | null
+  training_preferences?: Record<string, unknown>
+  injury_status?: 'none' | 'current' | 'recent' | 'recurring' | null
+  injury_areas?: string[] | null
+  injury_notes?: string | null
+}
+
+export interface AthleteProfileSavePayload {
+  timezone: string
+  experience_level: 'beginner' | 'intermediate' | 'advanced' | null
+  current_weekly_mileage_km: number
+  preferred_training_days: string[]
+  preferred_long_run_day: string
+  max_runs_per_week: number
+  unit_preference: 'metric' | 'imperial'
+  injury_status: 'none' | 'current' | 'recent' | 'recurring'
+  injury_areas: string[]
+  injury_notes: string | null
 }
 
 export interface AuthResponse {

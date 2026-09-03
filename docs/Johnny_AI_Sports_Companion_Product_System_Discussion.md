@@ -570,11 +570,13 @@ Represents long-term running identity and constraints.
 Key fields:
 
 - `user_id`
-- `experience_level`
-- `current_weekly_mileage`
+- `experience_level` (nullable)
+- `current_weekly_mileage_km`
 - `preferred_training_days`
 - `preferred_long_run_day`
 - `max_runs_per_week`
+- `injury_status`
+- `injury_areas`
 - `injury_notes`
 - `training_preferences`
 

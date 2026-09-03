@@ -156,10 +156,12 @@ def _profile(user_id: str = "user-1") -> AthleteProfile:
         user_id=user_id,
         timezone="Asia/Taipei",
         experience_level="intermediate",
-        current_weekly_mileage=42,
-        preferred_training_days=("tuesday", "thursday", "saturday"),
+        current_weekly_mileage_km=42,
+        preferred_training_days=("tuesday", "thursday", "sunday"),
         preferred_long_run_day="sunday",
         max_runs_per_week=5,
+        injury_status="recent",
+        injury_areas=("shin",),
         injury_notes="Previous shin soreness.",
     )
 
@@ -232,6 +234,20 @@ def test_athlete_context_tool_returns_profile_and_race_goals_without_domain_obje
 
     assert payload["profile"]["timezone"] == "Asia/Taipei"
     assert payload["profile"]["injury_notes"] == "Previous shin soreness."
+    assert payload["profile"]["current_weekly_mileage_km"] == 42
+    assert payload["profile"]["hard_constraints"] == {
+        "max_runs_per_week": 5,
+        "unit_preference": "metric",
+        "injury_status": "recent",
+        "injury_areas": ["shin"],
+        "injury_notes": "Previous shin soreness.",
+        "current_weekly_mileage_km": 42,
+    }
+    assert payload["profile"]["soft_preferences"] == {
+        "preferred_training_days": ["tuesday", "thursday", "sunday"],
+        "preferred_long_run_day": "sunday",
+        "experience_level": "intermediate",
+    }
     assert [goal["id"] for goal in payload["race_goals"]] == ["race-1"]
     assert all(not isinstance(value, AthleteProfile) for value in payload.values())
 

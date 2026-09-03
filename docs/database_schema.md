@@ -66,7 +66,7 @@ erDiagram
         string id PK
         string user_id FK,UK
         string timezone
-        string experience_level
+        string experience_level "nullable beginner/intermediate/advanced"
         json metadata_json
     }
 

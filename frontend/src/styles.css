@@ -755,6 +755,7 @@ button:disabled {
 }
 
 .race-form,
+.athlete-settings-form,
 .form-grid {
   display: grid;
   gap: 1rem;
@@ -765,10 +766,46 @@ button:disabled {
 }
 
 .form-grid label,
-.race-form label {
+.race-form label,
+.athlete-settings-form label,
+.choice-fieldset {
   display: grid;
   gap: 0.4rem;
   color: var(--color-muted-chalk);
+}
+
+.field-block {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.choice-fieldset {
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid rgba(246, 239, 228, 0.14);
+  border-radius: var(--radius-md);
+  background: rgba(17, 21, 20, 0.48);
+}
+
+.choice-fieldset legend {
+  padding: 0 0.35rem;
+  color: var(--color-lane-chalk);
+  font-weight: 700;
+}
+
+.choice-fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.5rem;
+  cursor: pointer;
+}
+
+.choice-fieldset input {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--color-primary);
 }
 
 .form-footer {
@@ -914,7 +951,10 @@ button:disabled {
 .provider-form input,
 .provider-form select,
 .race-form input,
-.race-form select {
+.race-form select,
+.athlete-settings-form input,
+.athlete-settings-form select,
+.athlete-settings-form textarea {
   width: 100%;
   min-height: 2.75rem;
   padding: 0.7rem 0.8rem;
@@ -925,25 +965,87 @@ button:disabled {
 }
 
 .provider-form select,
-.race-form select {
+.race-form select,
+.athlete-settings-form select {
   cursor: pointer;
+}
+
+.athlete-settings-form input:hover,
+.athlete-settings-form textarea:hover,
+.provider-form input:hover,
+.race-form input:hover {
+  border-color: rgba(131, 183, 165, 0.46);
+}
+
+.athlete-settings-form input:focus-visible,
+.athlete-settings-form textarea:focus-visible,
+.provider-form input:focus-visible,
+.race-form input:focus-visible {
+  border-color: rgba(131, 183, 165, 0.7);
+}
+
+.athlete-settings-form input:active,
+.athlete-settings-form textarea:active,
+.provider-form input:active,
+.race-form input:active {
+  border-color: var(--color-primary);
+}
+
+.athlete-settings-form input:disabled,
+.athlete-settings-form textarea:disabled,
+.provider-form input:disabled,
+.race-form input:disabled {
+  color: var(--color-muted-chalk);
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .provider-form select:hover,
 .provider-form select:focus-visible,
 .race-form select:hover,
-.race-form select:focus-visible {
+.race-form select:focus-visible,
+.athlete-settings-form select:hover,
+.athlete-settings-form select:focus-visible {
   border-color: rgba(131, 183, 165, 0.7);
 }
 
 .provider-form select:active,
-.race-form select:active {
+.race-form select:active,
+.athlete-settings-form select:active {
   border-color: var(--color-primary);
 }
 
 .provider-form select:disabled,
-.race-form select:disabled {
+.race-form select:disabled,
+.athlete-settings-form select:disabled {
   color: var(--color-muted-chalk);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.athlete-settings-form textarea {
+  min-height: 7rem;
+  resize: none;
+}
+
+.athlete-settings-form .choice-fieldset input {
+  width: 1.05rem;
+  min-height: 1.05rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+.athlete-settings-form .choice-fieldset input:focus-visible {
+  outline: 2px solid var(--color-split-amber);
+  outline-offset: 2px;
+}
+
+.athlete-settings-form .choice-fieldset input:active {
+  transform: translateY(1px);
+}
+
+.athlete-settings-form .choice-fieldset input:disabled,
+.athlete-settings-form .choice-fieldset input:disabled + span {
   cursor: not-allowed;
   opacity: 0.7;
 }

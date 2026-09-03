@@ -9,7 +9,7 @@ Define the athlete and race domain objects Johnny uses for training planning, in
 The system SHALL represent a runner's baseline training context for training decisions.
 
 #### Scenario: Creating an athlete profile
-- **WHEN** a user provides timezone, experience level, current weekly mileage, preferred training days, preferred long-run day, and maximum runs per week
+- **WHEN** a user provides timezone, nullable experience level, current weekly mileage in canonical kilometers, preferred training days, preferred long-run day, maximum runs per week, unit preference, and injury context
 - **THEN** the system stores a valid athlete profile for that user
 
 #### Scenario: Rejecting invalid weekly mileage
@@ -17,7 +17,7 @@ The system SHALL represent a runner's baseline training context for training dec
 - **THEN** the system rejects the athlete profile with a validation error
 
 #### Scenario: Updating athlete preferences
-- **WHEN** a user changes preferred training days, preferred long-run day, maximum runs per week, unit preference, training preferences, or injury notes
+- **WHEN** a user changes preferred training days, preferred long-run day, maximum runs per week, unit preference, training preferences, injury status, injury areas, or injury notes
 - **THEN** the system persists the updated preferences without requiring a race goal change
 
 ### Requirement: Race Goal
@@ -48,9 +48,13 @@ The system SHALL reject athlete and race values that would make training plannin
 - **WHEN** a user creates a race with a distance less than or equal to zero meters
 - **THEN** the system rejects the race goal with a validation error
 
-#### Scenario: Invalid run frequency
-- **WHEN** a user sets maximum runs per week lower than the number of preferred training days
+#### Scenario: Invalid preferred long-run day
+- **WHEN** a user selects preferred training days and sets the preferred long-run day outside that set
 - **THEN** the system rejects the athlete preferences with a validation error
+
+#### Scenario: Empty preferred training days
+- **WHEN** a user leaves preferred training days empty
+- **THEN** the system stores the profile and allows plan generation to choose training days
 
 ### Requirement: Persistence Mapping
 The system SHALL persist athlete profile and race goal domain objects through repository methods using the existing persistence schema.

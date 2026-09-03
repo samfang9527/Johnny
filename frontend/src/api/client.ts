@@ -1,4 +1,5 @@
 import type {
+  AthleteProfileSavePayload,
   AthleteProfileResponse,
   AuthResponse,
   ConversationMessageResponse,
@@ -68,6 +69,13 @@ async function postJson<T>(path: string, payload?: unknown): Promise<T> {
   })
 }
 
+async function putJson<T>(path: string, payload?: unknown): Promise<T> {
+  return requestJson(path, {
+    method: 'PUT',
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  })
+}
+
 async function deleteJson<T>(path: string): Promise<T> {
   return requestJson(path, { method: 'DELETE' })
 }
@@ -82,6 +90,10 @@ export function getCurrentUser(): Promise<{ data: CurrentUser }> {
 
 export function getAthleteProfile(): Promise<{ data: AthleteProfileResponse }> {
   return getJson('/athlete/profile')
+}
+
+export function saveAthleteProfile(payload: AthleteProfileSavePayload): Promise<{ data: AthleteProfileResponse }> {
+  return putJson('/athlete/profile', payload)
 }
 
 export function signUpWithEmail(payload: EmailPasswordSignupPayload): Promise<AuthResponse> {

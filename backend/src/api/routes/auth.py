@@ -276,8 +276,8 @@ def _ensure_default_athlete_profile(session, *, user_id: str, timezone_name: str
         AthleteProfile.create(
             user_id=user_id,
             timezone=_safe_timezone(timezone_name) or "UTC",
-            experience_level="unknown",
-            current_weekly_mileage=0,
+            experience_level=None,
+            current_weekly_mileage_km=0,
             preferred_training_days=("tuesday", "thursday", "sunday"),
             preferred_long_run_day="sunday",
             max_runs_per_week=3,

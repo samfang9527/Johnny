@@ -114,7 +114,7 @@ class AthleteProfileModel(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True)
     timezone: Mapped[str] = mapped_column(String(80), default="UTC", nullable=False)
-    experience_level: Mapped[str] = mapped_column(String(80), default="unknown", nullable=False)
+    experience_level: Mapped[str | None] = mapped_column(String(80), nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     user: Mapped[UserModel] = relationship(back_populates="athlete_profile")

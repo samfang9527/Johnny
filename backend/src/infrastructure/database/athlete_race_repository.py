@@ -130,30 +130,35 @@ def _ensure_matching_user_id(trusted_user_id: str, payload_user_id: str) -> None
 
 def _profile_metadata(profile: AthleteProfile) -> dict:
     return {
-        "current_weekly_mileage": profile.current_weekly_mileage,
+        "current_weekly_mileage_km": profile.current_weekly_mileage_km,
         "preferred_training_days": list(profile.preferences.preferred_training_days),
         "preferred_long_run_day": profile.preferences.preferred_long_run_day,
         "max_runs_per_week": profile.preferences.max_runs_per_week,
         "unit_preference": profile.preferences.unit_preference,
         "training_preferences": profile.preferences.training_preferences,
+        "injury_status": profile.preferences.injury_status,
+        "injury_areas": list(profile.preferences.injury_areas),
         "injury_notes": profile.preferences.injury_notes,
     }
 
 
 def _profile_from_model(model: AthleteProfileModel) -> AthleteProfile:
     metadata = model.metadata_json or {}
+    experience_level = None if model.experience_level == "unknown" else model.experience_level
     return AthleteProfile(
         id=model.id,
         user_id=model.user_id,
         timezone=model.timezone,
-        experience_level=model.experience_level,
-        current_weekly_mileage=float(metadata.get("current_weekly_mileage", 0)),
+        experience_level=experience_level,
+        current_weekly_mileage_km=float(metadata.get("current_weekly_mileage_km", metadata.get("current_weekly_mileage", 0))),
         preferences=AthletePreferences(
             preferred_training_days=tuple(metadata.get("preferred_training_days", ())),
             preferred_long_run_day=metadata.get("preferred_long_run_day", "sunday"),
             max_runs_per_week=int(metadata.get("max_runs_per_week", 1)),
             unit_preference=metadata.get("unit_preference", "metric"),
             training_preferences=metadata.get("training_preferences", {}),
+            injury_status=metadata.get("injury_status", "none"),
+            injury_areas=tuple(metadata.get("injury_areas", ())),
             injury_notes=metadata.get("injury_notes"),
         ),
     )

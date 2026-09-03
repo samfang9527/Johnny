@@ -254,18 +254,35 @@ def _workout_from_payload(payload: dict) -> Workout:
 def _profile_payload(profile) -> dict | None:
     if profile is None:
         return None
+    hard_constraints = {
+        "max_runs_per_week": profile.preferences.max_runs_per_week,
+        "unit_preference": profile.preferences.unit_preference,
+        "injury_status": profile.preferences.injury_status,
+        "injury_areas": list(profile.preferences.injury_areas),
+        "injury_notes": profile.preferences.injury_notes,
+        "current_weekly_mileage_km": profile.current_weekly_mileage_km,
+    }
+    soft_preferences = {
+        "preferred_training_days": list(profile.preferences.preferred_training_days),
+        "preferred_long_run_day": profile.preferences.preferred_long_run_day,
+        "experience_level": profile.experience_level,
+    }
     return {
         "id": profile.id,
         "user_id": profile.user_id,
         "timezone": profile.timezone,
         "experience_level": profile.experience_level,
-        "current_weekly_mileage": profile.current_weekly_mileage,
+        "current_weekly_mileage_km": profile.current_weekly_mileage_km,
         "preferred_training_days": list(profile.preferences.preferred_training_days),
         "preferred_long_run_day": profile.preferences.preferred_long_run_day,
         "max_runs_per_week": profile.preferences.max_runs_per_week,
         "unit_preference": profile.preferences.unit_preference,
         "training_preferences": dict(profile.preferences.training_preferences),
+        "injury_status": profile.preferences.injury_status,
+        "injury_areas": list(profile.preferences.injury_areas),
         "injury_notes": profile.preferences.injury_notes,
+        "hard_constraints": hard_constraints,
+        "soft_preferences": soft_preferences,
     }
 
 

@@ -13,13 +13,15 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
         headers={"X-Johnny-User-Id": "user-1"},
         json={
             "timezone": "Asia/Taipei",
-            "experience_level": "intermediate",
-            "current_weekly_mileage": 42.5,
+            "experience_level": None,
+            "current_weekly_mileage_km": 42.5,
             "preferred_training_days": ["tuesday", "thursday", "sunday"],
             "preferred_long_run_day": "sunday",
-            "max_runs_per_week": 4,
+            "max_runs_per_week": 2,
             "unit_preference": "metric",
             "training_preferences": {"surface": "road"},
+            "injury_status": "recent",
+            "injury_areas": ["calf", "quad"],
             "injury_notes": "Left calf watch",
         },
     )
@@ -29,13 +31,15 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
         "id": response.json()["data"]["id"],
         "user_id": "user-1",
         "timezone": "Asia/Taipei",
-        "experience_level": "intermediate",
-        "current_weekly_mileage": 42.5,
+        "experience_level": None,
+        "current_weekly_mileage_km": 42.5,
         "preferred_training_days": ["tuesday", "thursday", "sunday"],
         "preferred_long_run_day": "sunday",
-        "max_runs_per_week": 4,
+        "max_runs_per_week": 2,
         "unit_preference": "metric",
         "training_preferences": {"surface": "road"},
+        "injury_status": "recent",
+        "injury_areas": ["calf", "quad"],
         "injury_notes": "Left calf watch",
     }
 
@@ -43,6 +47,90 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
 
     assert loaded.status_code == 200
     assert loaded.json()["data"]["timezone"] == "Asia/Taipei"
+    assert loaded.json()["data"]["current_weekly_mileage_km"] == 42.5
+
+
+def test_athlete_profile_route_preserves_hidden_training_preferences_on_save() -> None:
+    client = _client()
+    initial = client.put(
+        "/api/v1/athlete/profile",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "timezone": "Asia/Taipei",
+            "experience_level": "beginner",
+            "current_weekly_mileage_km": 20,
+            "preferred_training_days": ["tuesday"],
+            "preferred_long_run_day": "tuesday",
+            "max_runs_per_week": 3,
+            "unit_preference": "metric",
+            "training_preferences": {"surface": "trail", "coach_note": "preserve me"},
+            "injury_status": "none",
+            "injury_areas": [],
+            "injury_notes": None,
+        },
+    )
+
+    response = client.put(
+        "/api/v1/athlete/profile",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "timezone": "Asia/Taipei",
+            "experience_level": "advanced",
+            "current_weekly_mileage_km": 32.5,
+            "preferred_training_days": [],
+            "preferred_long_run_day": "sunday",
+            "max_runs_per_week": 3,
+            "unit_preference": "imperial",
+            "injury_status": "current",
+            "injury_areas": ["other"],
+            "injury_notes": "Occasional tightness.",
+        },
+    )
+
+    assert initial.status_code == 200
+    assert response.status_code == 200
+    assert response.json()["data"]["training_preferences"] == {"surface": "trail", "coach_note": "preserve me"}
+    assert response.json()["data"]["preferred_training_days"] == []
+
+
+def test_athlete_profile_route_rejects_legacy_unknown_and_other_injury_without_notes() -> None:
+    client = _client()
+
+    unknown = client.put(
+        "/api/v1/athlete/profile",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "timezone": "Asia/Taipei",
+            "experience_level": "unknown",
+            "current_weekly_mileage_km": 20,
+            "preferred_training_days": ["tuesday"],
+            "preferred_long_run_day": "tuesday",
+            "max_runs_per_week": 3,
+            "unit_preference": "metric",
+            "injury_status": "none",
+            "injury_areas": [],
+            "injury_notes": None,
+        },
+    )
+    other_without_notes = client.put(
+        "/api/v1/athlete/profile",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "timezone": "Asia/Taipei",
+            "experience_level": None,
+            "current_weekly_mileage_km": 20,
+            "preferred_training_days": ["tuesday"],
+            "preferred_long_run_day": "tuesday",
+            "max_runs_per_week": 3,
+            "unit_preference": "metric",
+            "injury_status": "current",
+            "injury_areas": ["other"],
+            "injury_notes": None,
+        },
+    )
+
+    assert unknown.status_code == 422
+    assert other_without_notes.status_code == 422
 
 
 def test_race_routes_create_update_detail_and_list_with_tenant_scope_and_filters() -> None:

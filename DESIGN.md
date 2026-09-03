@@ -155,11 +155,12 @@ Copy 原則：
 
 ## Layout
 
-主架構是三個 product surface 加一個 setup surface，Conversation 暫時不在 production 導覽中：
+主架構是三個 product surface 加兩個 setup surface，Conversation 暫時不在 production 導覽中：
 
 - `今日`: daily decision cockpit，預設入口。
 - `訓練安排`: 六個月時間視窗，顯示未來目標與接下來的課表。
 - `Agent 收件匣`: Johnny 主動產生的推薦、警示、週報與待決策項目。
+- `運動員設定`: 使用者維護經驗程度、跑量、訓練日、長跑日、每週上限、單位與傷痛限制。
 - `資料來源`: 連接 Garmin、Apple Health、Strava 等同步來源。
 
 Desktop shell 使用頂部 navigation 搭配狀態列，品牌與導覽要在同一個 constrained shell 裡，不要各走各的路徑。內容最大寬度使用 `page-max`，核心 Today 區塊採 12 欄 grid：今日課表是主要卡片，desktop 使用 workout 7 欄、race 5 欄的第一列；Johnny compact recommendation strip 全寬置於課表與恢復之間；恢復證據全寬呈現；窄螢幕改為單欄，順序固定為 workout -> recommendation -> recovery -> race -> inbox nudge。
@@ -208,7 +209,7 @@ Agent 收件匣 Recommendation actions 固定語彙：
 
 ### Navigation and data display
 
-Top nav label 使用中文：`今日`、`訓練安排`、`Agent 收件匣`、`資料來源`。目前頁面以底線、底色或 lane rail 表示，不只靠顏色。
+Top nav label 使用中文：`今日`、`訓練安排`、`Agent 收件匣`、`運動員設定`、`資料來源`。目前頁面以底線、底色或 lane rail 表示，不只靠顏色。
 
 Evidence list 使用 data typography，包含來源、metric、value、summary。不可只顯示 Johnny 結論；證據應緊貼推薦。Unavailable signals 需要以安靜但可見的方式列出，例如 `缺少睡眠資料`、`尚未連接 HRV 來源`。Today recovery card 是例外：它只顯示 compact signal chips 和缺少訊號數量，避免三欄卡片高度失衡。
 

@@ -30,20 +30,28 @@ def save_profile(
     current_user: CurrentUserDependency,
     session: SessionDependency,
 ) -> DataEnvelope[AthleteProfileResponse]:
+    repository = SqlAlchemyAthleteRaceRepository(session)
+    existing = repository.get_profile_for_user(current_user.id)
+    training_preferences = dict(existing.preferences.training_preferences) if existing is not None else {}
+    if "training_preferences" in payload.model_fields_set:
+        training_preferences.update(payload.training_preferences)
+
     profile = AthleteProfile.create(
         user_id=current_user.id,
         timezone=payload.timezone,
         experience_level=payload.experience_level,
-        current_weekly_mileage=payload.current_weekly_mileage,
+        current_weekly_mileage_km=payload.current_weekly_mileage_km,
         preferred_training_days=tuple(payload.preferred_training_days),
         preferred_long_run_day=payload.preferred_long_run_day,
         max_runs_per_week=payload.max_runs_per_week,
         unit_preference=payload.unit_preference,
-        training_preferences=payload.training_preferences,
+        training_preferences=training_preferences,
+        injury_status=payload.injury_status,
+        injury_areas=tuple(payload.injury_areas),
         injury_notes=payload.injury_notes,
     )
     ensure_current_user(session, current_user)
-    saved = SqlAlchemyAthleteRaceRepository(session).save_profile(current_user.id, profile)
+    saved = repository.save_profile(current_user.id, profile)
     return DataEnvelope(data=_profile_response(saved))
 
 
@@ -53,11 +61,13 @@ def _profile_response(profile: AthleteProfile) -> AthleteProfileResponse:
         user_id=profile.user_id,
         timezone=profile.timezone,
         experience_level=profile.experience_level,
-        current_weekly_mileage=profile.current_weekly_mileage,
+        current_weekly_mileage_km=profile.current_weekly_mileage_km,
         preferred_training_days=list(profile.preferences.preferred_training_days),
         preferred_long_run_day=profile.preferences.preferred_long_run_day,
         max_runs_per_week=profile.preferences.max_runs_per_week,
         unit_preference=profile.preferences.unit_preference,
         training_preferences=profile.preferences.training_preferences,
+        injury_status=profile.preferences.injury_status,
+        injury_areas=list(profile.preferences.injury_areas),
         injury_notes=profile.preferences.injury_notes,
     )

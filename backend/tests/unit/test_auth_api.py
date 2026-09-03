@@ -211,7 +211,7 @@ def test_google_callback_creates_default_athlete_profile_with_browser_timezone(m
     assert callback.status_code == 307
     assert profile.status_code == 200
     assert profile.json()["data"]["timezone"] == "Asia/Taipei"
-    assert profile.json()["data"]["experience_level"] == "unknown"
+    assert profile.json()["data"]["experience_level"] is None
 
 
 def test_google_callback_exchanges_code_with_configured_redirect_uri(monkeypatch) -> None:

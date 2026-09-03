@@ -564,7 +564,7 @@ class _FakeAthleteProfileStore:
             user_id=user_id,
             timezone=self._timezone_name,
             experience_level="intermediate",
-            current_weekly_mileage=40,
+            current_weekly_mileage_km=40,
             preferred_training_days=("tuesday", "thursday", "sunday"),
             preferred_long_run_day="sunday",
             max_runs_per_week=4,

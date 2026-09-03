@@ -16,7 +16,7 @@ def test_athlete_profile_can_be_created_and_preferences_updated() -> None:
         user_id="user-1",
         timezone="Asia/Taipei",
         experience_level="intermediate",
-        current_weekly_mileage=42.5,
+        current_weekly_mileage_km=42.5,
         preferred_training_days=("tuesday", "thursday", "sunday"),
         preferred_long_run_day="sunday",
         max_runs_per_week=4,
@@ -29,18 +29,50 @@ def test_athlete_profile_can_be_created_and_preferences_updated() -> None:
             max_runs_per_week=3,
             unit_preference="imperial",
             training_preferences={"surface": "trail"},
+            injury_status="recent",
+            injury_areas=("shin", "quad"),
             injury_notes="Avoid aggressive downhill sessions.",
         )
     )
 
     assert updated.user_id == "user-1"
     assert updated.timezone == "Asia/Taipei"
-    assert updated.current_weekly_mileage == 42.5
+    assert updated.current_weekly_mileage_km == 42.5
     assert updated.preferences.preferred_training_days == ("monday", "wednesday", "saturday")
     assert updated.preferences.preferred_long_run_day == "saturday"
     assert updated.preferences.unit_preference == "imperial"
     assert updated.preferences.training_preferences == {"surface": "trail"}
+    assert updated.preferences.injury_status == "recent"
+    assert updated.preferences.injury_areas == ("shin", "quad")
     assert updated.preferences.injury_notes == "Avoid aggressive downhill sessions."
+
+
+def test_athlete_profile_allows_unset_experience_and_empty_preferred_days() -> None:
+    profile = AthleteProfile.create(
+        user_id="user-1",
+        timezone="Asia/Taipei",
+        experience_level=None,
+        current_weekly_mileage_km=0,
+        preferred_training_days=(),
+        preferred_long_run_day="sunday",
+        max_runs_per_week=3,
+    )
+
+    assert profile.experience_level is None
+    assert profile.preferences.preferred_training_days == ()
+
+
+def test_athlete_profile_rejects_unknown_experience_level() -> None:
+    with pytest.raises(DomainValidationError, match="experience level"):
+        AthleteProfile.create(
+            user_id="user-1",
+            timezone="Asia/Taipei",
+            experience_level="unknown",
+            current_weekly_mileage_km=0,
+            preferred_training_days=("tuesday",),
+            preferred_long_run_day="tuesday",
+            max_runs_per_week=1,
+        )
 
 
 def test_athlete_profile_rejects_negative_weekly_mileage() -> None:
@@ -49,19 +81,47 @@ def test_athlete_profile_rejects_negative_weekly_mileage() -> None:
             user_id="user-1",
             timezone="Asia/Taipei",
             experience_level="beginner",
-            current_weekly_mileage=-1,
+            current_weekly_mileage_km=-1,
             preferred_training_days=("tuesday",),
             preferred_long_run_day="tuesday",
             max_runs_per_week=1,
         )
 
 
-def test_athlete_preferences_reject_run_frequency_below_preferred_days() -> None:
-    with pytest.raises(DomainValidationError, match="maximum runs per week"):
+def test_athlete_preferences_allow_run_frequency_below_preferred_days() -> None:
+    preferences = AthletePreferences(
+        preferred_training_days=("tuesday", "thursday", "sunday"),
+        preferred_long_run_day="sunday",
+        max_runs_per_week=2,
+    )
+
+    assert preferences.max_runs_per_week == 2
+
+
+def test_athlete_preferences_reject_duplicate_days_and_long_run_outside_selected_days() -> None:
+    with pytest.raises(DomainValidationError, match="unique"):
         AthletePreferences(
-            preferred_training_days=("tuesday", "thursday", "sunday"),
+            preferred_training_days=("tuesday", " Tuesday "),
+            preferred_long_run_day="tuesday",
+            max_runs_per_week=2,
+        )
+
+    with pytest.raises(DomainValidationError, match="long run day"):
+        AthletePreferences(
+            preferred_training_days=("tuesday", "thursday"),
             preferred_long_run_day="sunday",
             max_runs_per_week=2,
+        )
+
+
+def test_athlete_preferences_require_notes_for_other_injury_area() -> None:
+    with pytest.raises(DomainValidationError, match="other injury"):
+        AthletePreferences(
+            preferred_training_days=("tuesday",),
+            preferred_long_run_day="tuesday",
+            max_runs_per_week=1,
+            injury_status="current",
+            injury_areas=("other",),
         )
 
 

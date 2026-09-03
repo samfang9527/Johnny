@@ -404,7 +404,7 @@ def test_garmin_connect_endpoint_uses_discovered_identity_and_redacts_credential
         json={
             "timezone": "Asia/Taipei",
             "experience_level": "intermediate",
-            "current_weekly_mileage": 42,
+            "current_weekly_mileage_km": 42,
             "preferred_training_days": ["tuesday", "thursday", "sunday"],
             "preferred_long_run_day": "sunday",
             "max_runs_per_week": 4,
@@ -922,7 +922,7 @@ def _put_api_athlete_profile(client) -> None:  # noqa: ANN001
         json={
             "timezone": "Asia/Taipei",
             "experience_level": "intermediate",
-            "current_weekly_mileage": 42,
+            "current_weekly_mileage_km": 42,
             "preferred_training_days": ["tuesday", "thursday", "sunday"],
             "preferred_long_run_day": "sunday",
             "max_runs_per_week": 4,

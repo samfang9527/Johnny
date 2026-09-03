@@ -761,7 +761,7 @@ def test_athlete_profile_repository_round_trips_profile_and_preferences(sqlite_s
                 user_id=user.id,
                 timezone="Asia/Taipei",
                 experience_level="intermediate",
-                current_weekly_mileage=42.5,
+                current_weekly_mileage_km=42.5,
                 preferred_training_days=("tuesday", "thursday", "sunday"),
                 preferred_long_run_day="sunday",
                 max_runs_per_week=4,
@@ -790,7 +790,7 @@ def test_athlete_profile_repository_round_trips_profile_and_preferences(sqlite_s
         assert loaded.user_id == user.id
         assert loaded.timezone == "Asia/Taipei"
         assert loaded.experience_level == "intermediate"
-        assert loaded.current_weekly_mileage == 42.5
+        assert loaded.current_weekly_mileage_km == 42.5
         assert loaded.preferences.preferred_training_days == ("monday", "wednesday", "saturday")
         assert loaded.preferences.preferred_long_run_day == "saturday"
         assert loaded.preferences.max_runs_per_week == 3
@@ -925,7 +925,7 @@ def test_athlete_profile_repository_rejects_mismatched_tenant_payload(sqlite_ses
                     user_id=other.id,
                     timezone="Asia/Taipei",
                     experience_level="beginner",
-                    current_weekly_mileage=10,
+                    current_weekly_mileage_km=10,
                     preferred_training_days=("sunday",),
                     preferred_long_run_day="sunday",
                     max_runs_per_week=1,

@@ -16,6 +16,7 @@ import {
   listRecommendations,
   listTrainingPlans,
   rejectRecommendation,
+  saveAthleteProfile,
   signInWithEmail,
   signOut,
   signUpWithEmail,
@@ -57,6 +58,8 @@ import type {
   IntegrationConnectionResponse,
   SyncResourceSummary,
   RaceGoalCreatePayload,
+  AthleteProfileResponse,
+  AthleteProfileSavePayload,
 } from './types'
 
 const props = withDefaults(
@@ -85,6 +88,7 @@ const navItems: Array<{ key: ViewKey; label: string }> = [
   { key: 'today', label: '今日' },
   { key: 'calendar', label: '訓練安排' },
   { key: 'inbox', label: 'Agent 收件匣' },
+  { key: 'athlete-settings', label: '運動員設定' },
   { key: 'sources', label: '資料來源' },
 ]
 
@@ -145,6 +149,12 @@ const authError = ref('')
 const authMessage = ref('')
 const authBusy = ref(false)
 const hasBackendHydrated = ref(false)
+const athleteSettings = ref<AthleteSettingsForm>(defaultAthleteSettingsForm())
+const athleteSettingsError = ref('')
+const athleteSettingsFieldErrors = ref<Record<string, string>>({})
+const athleteSettingsMessage = ref('')
+const athleteSettingsBusy = ref(false)
+const athleteMileageDisplayUnit = ref<'metric' | 'imperial'>('metric')
 
 const activeTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label || '今日')
 const isAuthenticated = computed(() => authStatus.value === 'authenticated')
@@ -229,6 +239,42 @@ type TodayRecommendationStrip = {
   actionView?: ViewKey
   actionTone?: 'primary' | 'neutral'
 }
+
+type AthleteSettingsForm = {
+  timezone: string
+  experienceLevel: '' | 'beginner' | 'intermediate' | 'advanced'
+  currentWeeklyMileage: string
+  preferredTrainingDays: string[]
+  preferredLongRunDay: string
+  maxRunsPerWeek: string
+  unitPreference: 'metric' | 'imperial'
+  injuryStatus: 'none' | 'current' | 'recent' | 'recurring'
+  injuryAreas: string[]
+  injuryNotes: string
+}
+
+const weekDayOptions = [
+  { value: 'monday', label: '週一' },
+  { value: 'tuesday', label: '週二' },
+  { value: 'wednesday', label: '週三' },
+  { value: 'thursday', label: '週四' },
+  { value: 'friday', label: '週五' },
+  { value: 'saturday', label: '週六' },
+  { value: 'sunday', label: '週日' },
+]
+const injuryAreaOptions = [
+  { value: 'knee', label: '膝蓋' },
+  { value: 'calf', label: '小腿' },
+  { value: 'shin', label: '脛骨' },
+  { value: 'ankle', label: '腳踝' },
+  { value: 'foot', label: '足部' },
+  { value: 'hamstring', label: '腿後肌' },
+  { value: 'quad', label: '股四頭肌' },
+  { value: 'hip', label: '髖部' },
+  { value: 'back', label: '背部' },
+  { value: 'other', label: '其他' },
+]
+const KILOMETERS_PER_MILE = 1.60934
 
 function buildRecoveryDecision(
   currentRecommendation: RecommendationSummary | null,
@@ -1047,9 +1093,149 @@ async function hydrateFromBackend() {
   hasBackendHydrated.value = true
 }
 
-function applyAthleteProfilePayload(profile: { timezone?: string | null }) {
-  if (profile.timezone && isValidTimezone(profile.timezone)) {
-    userTimezone.value = profile.timezone
+function applyAthleteProfilePayload(profile: AthleteProfileResponse) {
+  if (!profile || Array.isArray(profile)) {
+    return
+  }
+  const timezone = typeof profile.timezone === 'string' && isValidTimezone(profile.timezone) ? profile.timezone : ''
+  if (timezone) {
+    userTimezone.value = timezone
+  }
+  const unitPreference = profile.unit_preference === 'imperial' ? 'imperial' : 'metric'
+  const mileageKm = numberValue(profile.current_weekly_mileage_km) ?? 0
+  athleteSettings.value = {
+    timezone: timezone || userTimezone.value,
+    experienceLevel: isExperienceLevel(profile.experience_level) ? profile.experience_level : '',
+    currentWeeklyMileage: formatMileageForUnit(mileageKm, unitPreference),
+    preferredTrainingDays: Array.isArray(profile.preferred_training_days) ? profile.preferred_training_days.map(String) : ['tuesday', 'thursday', 'sunday'],
+    preferredLongRunDay: typeof profile.preferred_long_run_day === 'string' ? profile.preferred_long_run_day : 'sunday',
+    maxRunsPerWeek: String(numberValue(profile.max_runs_per_week) ?? 3),
+    unitPreference,
+    injuryStatus: isInjuryStatus(profile.injury_status) ? profile.injury_status : 'none',
+    injuryAreas: Array.isArray(profile.injury_areas) ? profile.injury_areas.map(String) : [],
+    injuryNotes: typeof profile.injury_notes === 'string' ? profile.injury_notes : '',
+  }
+  athleteMileageDisplayUnit.value = unitPreference
+}
+
+function defaultAthleteSettingsForm(): AthleteSettingsForm {
+  return {
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    experienceLevel: '',
+    currentWeeklyMileage: '0.0',
+    preferredTrainingDays: ['tuesday', 'thursday', 'sunday'],
+    preferredLongRunDay: 'sunday',
+    maxRunsPerWeek: '3',
+    unitPreference: 'metric',
+    injuryStatus: 'none',
+    injuryAreas: [],
+    injuryNotes: '',
+  }
+}
+
+function isInjuryStatus(value: unknown): value is AthleteSettingsForm['injuryStatus'] {
+  return value === 'none' || value === 'current' || value === 'recent' || value === 'recurring'
+}
+
+function isExperienceLevel(value: unknown): value is AthleteSettingsForm['experienceLevel'] {
+  return value === 'beginner' || value === 'intermediate' || value === 'advanced'
+}
+
+function formatMileageForUnit(kilometers: number, unit: 'metric' | 'imperial'): string {
+  const value = unit === 'imperial' ? kilometers / KILOMETERS_PER_MILE : kilometers
+  return value.toFixed(1)
+}
+
+function weeklyMileageKilometers(): number | null {
+  const mileage = Number(athleteSettings.value.currentWeeklyMileage)
+  if (!Number.isFinite(mileage) || mileage < 0) {
+    return null
+  }
+  const kilometers = athleteSettings.value.unitPreference === 'imperial' ? mileage * KILOMETERS_PER_MILE : mileage
+  return Math.round(kilometers * 10_000) / 10_000
+}
+
+function handleAthleteUnitChange() {
+  const previousUnit = athleteMileageDisplayUnit.value
+  const displayedMileage = Number(athleteSettings.value.currentWeeklyMileage)
+  if (Number.isFinite(displayedMileage) && displayedMileage >= 0) {
+    const kilometers = previousUnit === 'imperial' ? displayedMileage * KILOMETERS_PER_MILE : displayedMileage
+    athleteSettings.value.currentWeeklyMileage = formatMileageForUnit(kilometers, athleteSettings.value.unitPreference)
+  }
+  athleteMileageDisplayUnit.value = athleteSettings.value.unitPreference
+}
+
+function validateAthleteSettings(): AthleteProfileSavePayload | null {
+  athleteSettingsError.value = ''
+  athleteSettingsFieldErrors.value = {}
+  const form = athleteSettings.value
+  const mileageKm = weeklyMileageKilometers()
+  const maxRunsPerWeek = Number(form.maxRunsPerWeek)
+  const normalizedDays = form.preferredTrainingDays.map((day) => day.trim().toLowerCase())
+  const uniqueDays = new Set(normalizedDays)
+  if (!form.timezone.trim() || !isValidTimezone(form.timezone.trim())) {
+    setAthleteSettingsError('timezone', '請輸入有效的時區')
+    return null
+  }
+  if (mileageKm === null) {
+    setAthleteSettingsError('currentWeeklyMileage', '每週跑量必須是 0 以上')
+    return null
+  }
+  if (!Number.isInteger(maxRunsPerWeek) || maxRunsPerWeek < 1 || maxRunsPerWeek > 7) {
+    setAthleteSettingsError('maxRunsPerWeek', '每週最多跑步次數必須介於 1 到 7')
+    return null
+  }
+  if (uniqueDays.size !== normalizedDays.length) {
+    setAthleteSettingsError('preferredTrainingDays', '偏好訓練日不可重複')
+    return null
+  }
+  if (normalizedDays.length > 0 && !uniqueDays.has(form.preferredLongRunDay)) {
+    setAthleteSettingsError('preferredLongRunDay', '長跑日必須包含在偏好訓練日中')
+    return null
+  }
+  if (form.injuryAreas.includes('other') && !form.injuryNotes.trim()) {
+    setAthleteSettingsError('injuryNotes', '其他傷痛部位需要補充說明')
+    return null
+  }
+  return {
+    timezone: form.timezone.trim(),
+    experience_level: form.experienceLevel || null,
+    current_weekly_mileage_km: mileageKm,
+    preferred_training_days: normalizedDays,
+    preferred_long_run_day: form.preferredLongRunDay,
+    max_runs_per_week: maxRunsPerWeek,
+    unit_preference: form.unitPreference,
+    injury_status: form.injuryStatus,
+    injury_areas: form.injuryAreas.map((area) => area.trim().toLowerCase()),
+    injury_notes: form.injuryNotes.trim() || null,
+  }
+}
+
+function setAthleteSettingsError(field: string, message: string) {
+  athleteSettingsFieldErrors.value = { [field]: message }
+  athleteSettingsError.value = message
+}
+
+async function submitAthleteSettings() {
+  if (athleteSettingsBusy.value) {
+    return
+  }
+  athleteSettingsMessage.value = ''
+  const payload = validateAthleteSettings()
+  if (!payload) {
+    return
+  }
+  athleteSettingsBusy.value = true
+  try {
+    const response = await saveAthleteProfile(payload)
+    applyAthleteProfilePayload(response.data)
+    athleteSettingsMessage.value = '運動員設定已更新'
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      athleteSettingsError.value = '運動員設定儲存失敗，請檢查欄位後再試。'
+    }
+  } finally {
+    athleteSettingsBusy.value = false
   }
 }
 
@@ -1864,6 +2050,147 @@ function shouldRequireAuth(): boolean {
             </form>
           </section>
         </div>
+      </section>
+
+      <section v-else-if="activeView === 'athlete-settings'" class="page-stack" aria-labelledby="athlete-settings-title">
+        <div class="page-heading">
+          <p class="section-label">Athlete Profile</p>
+          <h2 id="athlete-settings-title">運動員設定</h2>
+          <p>這些設定會成為 Johnny 產生建議與訓練計畫時的個人限制與偏好。</p>
+        </div>
+
+        <form class="surface-card athlete-settings-form" data-testid="athlete-settings-form" novalidate @submit.prevent="submitAthleteSettings">
+          <div class="form-grid">
+            <label>
+              時區
+              <input
+                v-model="athleteSettings.timezone"
+                name="athleteTimezone"
+                autocomplete="off"
+                :aria-invalid="athleteSettingsFieldErrors.timezone ? 'true' : 'false'"
+                aria-describedby="athlete-timezone-error athlete-settings-status"
+              />
+              <span v-if="athleteSettingsFieldErrors.timezone" id="athlete-timezone-error" class="field-error">{{ athleteSettingsFieldErrors.timezone }}</span>
+            </label>
+
+            <label>
+              經驗程度
+              <select v-model="athleteSettings.experienceLevel" name="experienceLevel" autocomplete="off">
+                <option value="">未設定</option>
+                <option value="beginner">初學</option>
+                <option value="intermediate">中階</option>
+                <option value="advanced">進階</option>
+              </select>
+            </label>
+
+            <label>
+              單位
+              <select v-model="athleteSettings.unitPreference" name="unitPreference" autocomplete="off" @change="handleAthleteUnitChange">
+                <option value="metric">公里</option>
+                <option value="imperial">英里</option>
+              </select>
+            </label>
+
+            <label>
+              目前每週跑量
+              <input
+                v-model="athleteSettings.currentWeeklyMileage"
+                name="currentWeeklyMileage"
+                type="number"
+                min="0"
+                step="0.1"
+                inputmode="decimal"
+                :aria-invalid="athleteSettingsFieldErrors.currentWeeklyMileage ? 'true' : 'false'"
+                aria-describedby="athlete-mileage-error athlete-settings-status"
+              />
+              <span v-if="athleteSettingsFieldErrors.currentWeeklyMileage" id="athlete-mileage-error" class="field-error">{{ athleteSettingsFieldErrors.currentWeeklyMileage }}</span>
+            </label>
+
+            <label>
+              每週最多跑步次數
+              <input
+                v-model="athleteSettings.maxRunsPerWeek"
+                name="maxRunsPerWeek"
+                type="number"
+                min="1"
+                max="7"
+                step="1"
+                inputmode="numeric"
+                :aria-invalid="athleteSettingsFieldErrors.maxRunsPerWeek ? 'true' : 'false'"
+                aria-describedby="athlete-max-runs-error athlete-settings-status"
+              />
+              <span v-if="athleteSettingsFieldErrors.maxRunsPerWeek" id="athlete-max-runs-error" class="field-error">{{ athleteSettingsFieldErrors.maxRunsPerWeek }}</span>
+            </label>
+
+            <label>
+              偏好長跑日
+              <select
+                v-model="athleteSettings.preferredLongRunDay"
+                name="preferredLongRunDay"
+                autocomplete="off"
+                :aria-invalid="athleteSettingsFieldErrors.preferredLongRunDay ? 'true' : 'false'"
+                aria-describedby="athlete-long-run-error athlete-settings-status"
+              >
+                <option v-for="day in weekDayOptions" :key="day.value" :value="day.value">{{ day.label }}</option>
+              </select>
+              <span v-if="athleteSettingsFieldErrors.preferredLongRunDay" id="athlete-long-run-error" class="field-error">{{ athleteSettingsFieldErrors.preferredLongRunDay }}</span>
+            </label>
+          </div>
+
+          <fieldset class="choice-fieldset" :aria-invalid="athleteSettingsFieldErrors.preferredTrainingDays ? 'true' : 'false'" aria-describedby="athlete-training-days-error athlete-settings-status">
+            <legend>偏好訓練日</legend>
+            <label v-for="day in weekDayOptions" :key="day.value">
+              <input v-model="athleteSettings.preferredTrainingDays" type="checkbox" name="preferredTrainingDays" :value="day.value" />
+              <span>{{ day.label }}</span>
+            </label>
+            <span v-if="athleteSettingsFieldErrors.preferredTrainingDays" id="athlete-training-days-error" class="field-error">{{ athleteSettingsFieldErrors.preferredTrainingDays }}</span>
+          </fieldset>
+
+          <div class="form-grid">
+            <label>
+              傷痛狀態
+              <select v-model="athleteSettings.injuryStatus" name="injuryStatus" autocomplete="off">
+                <option value="none">沒有</option>
+                <option value="current">目前有</option>
+                <option value="recent">近期有</option>
+                <option value="recurring">反覆發生</option>
+              </select>
+            </label>
+          </div>
+
+          <fieldset class="choice-fieldset">
+            <legend>傷痛部位</legend>
+            <label v-for="area in injuryAreaOptions" :key="area.value">
+              <input
+                v-model="athleteSettings.injuryAreas"
+                type="checkbox"
+                :name="`injuryArea-${area.value}`"
+                :value="area.value"
+              />
+              <span>{{ area.label }}</span>
+            </label>
+          </fieldset>
+
+          <label class="field-block">
+            傷痛補充說明
+            <textarea
+              v-model="athleteSettings.injuryNotes"
+              name="injuryNotes"
+              rows="4"
+              style="resize: none"
+              :aria-invalid="athleteSettingsFieldErrors.injuryNotes ? 'true' : 'false'"
+              aria-describedby="athlete-injury-notes-error athlete-settings-status"
+            ></textarea>
+            <span v-if="athleteSettingsFieldErrors.injuryNotes" id="athlete-injury-notes-error" class="field-error">{{ athleteSettingsFieldErrors.injuryNotes }}</span>
+          </label>
+
+          <div class="form-footer athlete-settings-form__footer">
+            <p v-if="athleteSettingsError" id="athlete-settings-status" class="field-error" role="alert">{{ athleteSettingsError }}</p>
+            <p v-else-if="athleteSettingsMessage" id="athlete-settings-status" class="inline-note" aria-live="polite">{{ athleteSettingsMessage }}</p>
+            <p v-else id="athlete-settings-status">偏好訓練日可以留空，Johnny 會在產生計畫時自行安排。</p>
+            <AppButton tone="primary" type="submit" :busy="athleteSettingsBusy">儲存設定</AppButton>
+          </div>
+        </form>
       </section>
 
       <section v-else-if="activeView === 'sources'" class="page-stack" aria-labelledby="sources-title">

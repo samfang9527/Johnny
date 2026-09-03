@@ -42,7 +42,7 @@ def main() -> None:
                     timezone="Asia/Taipei",
                     experience_level="intermediate",
                     metadata_json={
-                        "current_weekly_mileage": 42,
+                        "current_weekly_mileage_km": 42,
                         "preferred_training_days": ["tuesday", "thursday", "saturday", "sunday"],
                         "preferred_long_run_day": "sunday",
                         "max_runs_per_week": 5,

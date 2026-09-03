@@ -173,10 +173,100 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('nav').text()).toContain('今日')
     expect(wrapper.get('nav').text()).toContain('訓練安排')
     expect(wrapper.get('nav').text()).toContain('Agent 收件匣')
+    expect(wrapper.get('nav').text()).toContain('運動員設定')
     expect(wrapper.get('nav').text()).toContain('資料來源')
     expect(wrapper.get('nav').text()).not.toContain('對話')
     expect(wrapper.text()).toContain('今天的訓練決策')
     expect(wrapper.text()).toContain('Sydney Marathon')
+  })
+
+  it('edits athlete settings with structured validation, unit conversion, and canonical km save payload', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/athlete/profile') && init?.method === 'GET') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                timezone: 'Asia/Taipei',
+                experience_level: null,
+                current_weekly_mileage_km: 32.1868,
+                preferred_training_days: ['tuesday', 'thursday', 'sunday'],
+                preferred_long_run_day: 'sunday',
+                max_runs_per_week: 3,
+                unit_preference: 'metric',
+                training_preferences: { surface: 'trail' },
+                injury_status: 'none',
+                injury_areas: [],
+                injury_notes: null,
+              },
+            }),
+        } as Response)
+      }
+      if (url.endsWith('/api/v1/athlete/profile') && init?.method === 'PUT') {
+        expect(JSON.parse(String(init.body))).toEqual({
+          timezone: 'Asia/Taipei',
+          experience_level: 'intermediate',
+          current_weekly_mileage_km: 40.2335,
+          preferred_training_days: ['tuesday', 'thursday', 'sunday'],
+          preferred_long_run_day: 'sunday',
+          max_runs_per_week: 3,
+          unit_preference: 'imperial',
+          injury_status: 'current',
+          injury_areas: ['other'],
+          injury_notes: 'Left calf watch',
+        })
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                timezone: 'Asia/Taipei',
+                experience_level: 'intermediate',
+                current_weekly_mileage_km: 40.2335,
+                preferred_training_days: ['tuesday', 'thursday', 'sunday'],
+                preferred_long_run_day: 'sunday',
+                max_runs_per_week: 3,
+                unit_preference: 'imperial',
+                training_preferences: { surface: 'trail' },
+                injury_status: 'current',
+                injury_areas: ['other'],
+                injury_notes: 'Left calf watch',
+              },
+            }),
+        } as Response)
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) } as Response)
+    })
+    const wrapper = mount(App)
+    await flushPromises()
+
+    await wrapper.get('button[data-view="athlete-settings"]').trigger('click')
+
+    expect(wrapper.text()).toContain('運動員設定')
+    expect(wrapper.get('select[name="experienceLevel"]').text()).toContain('未設定')
+    expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('32.2')
+
+    await wrapper.get('select[name="unitPreference"]').setValue('imperial')
+    expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('20.0')
+
+    await wrapper.get('select[name="experienceLevel"]').setValue('intermediate')
+    await wrapper.get('input[name="currentWeeklyMileage"]').setValue('25.0')
+    await wrapper.get('select[name="injuryStatus"]').setValue('current')
+    await wrapper.get('input[name="injuryArea-other"]').setValue(true)
+    await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
+
+    expect(wrapper.text()).toContain('其他傷痛部位需要補充說明')
+    expect(wrapper.get('textarea[name="injuryNotes"]').attributes('aria-invalid')).toBe('true')
+    expect(wrapper.get('#athlete-injury-notes-error').text()).toBe('其他傷痛部位需要補充說明')
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(0)
+
+    await wrapper.get('textarea[name="injuryNotes"]').setValue('Left calf watch')
+    await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('運動員設定已更新')
   })
 
   it('does not show the connect-source empty block after a provider is connected', async () => {

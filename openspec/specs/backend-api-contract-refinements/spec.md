@@ -62,7 +62,7 @@ The system SHALL expose backend health and readiness checks and a current-user c
 The system SHALL expose routes for reading and saving athlete profile data and managing race goals within the current user's tenant scope.
 
 #### Scenario: Saving athlete profile
-- **WHEN** the current user submits timezone, experience level, and profile metadata
+- **WHEN** the current user submits timezone, nullable experience level, canonical `current_weekly_mileage_km`, training-day preferences, maximum runs per week, unit preference, and structured injury fields
 - **THEN** the API validates the request and returns the saved athlete profile for that user
 
 #### Scenario: Listing race goals
