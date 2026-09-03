@@ -25,7 +25,7 @@ READ_TOOL_NAMES = frozenset(
 )
 DAILY_WRITE_TOOL_NAMES = frozenset({"createRecommendation", "proposeWorkoutAdjustment"})
 CONVERSATION_WRITE_TOOL_NAMES = frozenset({"createRecommendation", "storeMemoryCandidate"})
-TRAINING_PLAN_GENERATION_WRITE_TOOL_NAMES = frozenset({"createDraftTrainingPlan", "createRecommendation"})
+TRAINING_PLAN_GENERATION_WRITE_TOOL_NAMES = frozenset({"createTrainingPlan"})
 
 
 class FakeModelGateway:
@@ -170,11 +170,11 @@ class RunningCompanionAgent:
                 {
                     "role": "system",
                     "content": (
-                        "Generate a validated draft training plan only. Store it with createDraftTrainingPlan, "
-                        "then create a pending training_plan_creation recommendation for user approval."
+                        "Generate a validated active training plan only. Store it with createTrainingPlan. "
+                        "Do not create recommendations in this workflow."
                     ),
                 },
-                {"role": "user", "content": "Create a draft running training plan for review."},
+                {"role": "user", "content": "Create an active running training plan."},
             ),
             tools=_allowed_registered_tools(self._tools.names(), "training_plan_generation"),
             context=context,
@@ -261,8 +261,7 @@ class RunningCompanionAgent:
         allowed_tools = set(allowed_tools or request.tools)
         token_usage = None
         repair_attempted = False
-        draft_training_plan_id: str | None = None
-        training_plan_creation_recommendation_id: str | None = None
+        training_plan_id: str | None = None
         while True:
             try:
                 response = self._model_gateway.complete(request)
@@ -271,8 +270,7 @@ class RunningCompanionAgent:
                 tool_results = []
                 (
                     recommendation_id,
-                    draft_training_plan_id,
-                    training_plan_creation_recommendation_id,
+                    training_plan_id,
                     sequence_number,
                     tool_results,
                 ) = self._run_tool_calls(
@@ -283,15 +281,13 @@ class RunningCompanionAgent:
                     allowed_tools=allowed_tools,
                     sequence_number=sequence_number,
                     recommendation_id=recommendation_id,
-                    draft_training_plan_id=draft_training_plan_id,
-                    training_plan_creation_recommendation_id=training_plan_creation_recommendation_id,
+                    training_plan_id=training_plan_id,
                 )
                 follow_up_tools = _follow_up_write_tools(request.workflow_name, allowed_tools)
                 if (
                     _needs_follow_up_write(
                         request.workflow_name,
                         recommendation_id=recommendation_id,
-                        training_plan_creation_recommendation_id=training_plan_creation_recommendation_id,
                     )
                     and tool_results
                     and follow_up_tools
@@ -319,8 +315,7 @@ class RunningCompanionAgent:
                     token_usage = _sum_token_usage(token_usage, response.token_usage)
                     (
                         recommendation_id,
-                        draft_training_plan_id,
-                        training_plan_creation_recommendation_id,
+                        training_plan_id,
                         sequence_number,
                         _,
                     ) = self._run_tool_calls(
@@ -331,14 +326,12 @@ class RunningCompanionAgent:
                         allowed_tools=set(follow_up_tools),
                         sequence_number=sequence_number,
                         recommendation_id=recommendation_id,
-                        draft_training_plan_id=draft_training_plan_id,
-                        training_plan_creation_recommendation_id=training_plan_creation_recommendation_id,
+                        training_plan_id=training_plan_id,
                     )
 
                 if required_error := _required_workflow_output_error(
                     request.workflow_name,
-                    draft_training_plan_id=draft_training_plan_id,
-                    training_plan_creation_recommendation_id=training_plan_creation_recommendation_id,
+                    training_plan_id=training_plan_id,
                 ):
                     raise ValueError(required_error)
                 output_summary = _run_output_summary(response.content, safety=safety, recommendation_id=recommendation_id)
@@ -382,9 +375,8 @@ class RunningCompanionAgent:
         allowed_tools: set[str],
         sequence_number: int,
         recommendation_id: str | None,
-        draft_training_plan_id: str | None = None,
-        training_plan_creation_recommendation_id: str | None = None,
-    ) -> tuple[str | None, str | None, str | None, int, list[dict]]:
+        training_plan_id: str | None = None,
+    ) -> tuple[str | None, str | None, int, list[dict]]:
         tool_results = []
         for tool_call in response.tool_calls:
             if tool_call.tool_name not in allowed_tools:
@@ -420,7 +412,6 @@ class RunningCompanionAgent:
 
             tool = self._tools.get(tool_call.tool_name)
             arguments = dict(tool_call.arguments)
-            _resolve_draft_training_plan_reference(arguments, draft_training_plan_id)
             arguments.setdefault("agent_run_id", run.id)
             payload = tool.run(user_id=user_id, arguments=arguments)
             tool_results.append(
@@ -430,12 +421,8 @@ class RunningCompanionAgent:
                     "output": payload,
                 }
             )
-            draft_training_plan_id = _draft_training_plan_id_from_payload(payload) or draft_training_plan_id
+            training_plan_id = _training_plan_id_from_payload(payload) or training_plan_id
             recommendation_id = _recommendation_id_from_payload(payload) or recommendation_id
-            training_plan_creation_recommendation_id = (
-                _training_plan_creation_recommendation_id_from_payload(payload)
-                or training_plan_creation_recommendation_id
-            )
             self._run_store.record_step(
                 AgentRunStep.complete_tool_call(
                     agent_run_id=run.id,
@@ -449,8 +436,7 @@ class RunningCompanionAgent:
             sequence_number += 1
         return (
             recommendation_id,
-            draft_training_plan_id,
-            training_plan_creation_recommendation_id,
+            training_plan_id,
             sequence_number,
             tool_results,
         )
@@ -503,47 +489,23 @@ def _recommendation_id_from_payload(payload: dict) -> str | None:
     return str(value) if value else None
 
 
-def _draft_training_plan_id_from_payload(payload: dict) -> str | None:
-    draft = payload.get("draft_training_plan")
-    if not isinstance(draft, dict):
+def _training_plan_id_from_payload(payload: dict) -> str | None:
+    plan = payload.get("training_plan")
+    if not isinstance(plan, dict):
         return None
-    value = draft.get("id")
+    value = plan.get("id")
     return str(value) if value else None
-
-
-def _training_plan_creation_recommendation_id_from_payload(payload: dict) -> str | None:
-    recommendation = payload.get("recommendation")
-    if not isinstance(recommendation, dict):
-        return None
-    action = recommendation.get("proposed_action")
-    if recommendation.get("recommendation_type") != "training_plan_creation":
-        return None
-    if not isinstance(action, dict) or action.get("type") != "create_training_plan":
-        return None
-    value = recommendation.get("id")
-    return str(value) if value else None
-
-
-def _resolve_draft_training_plan_reference(arguments: dict, draft_training_plan_id: str | None) -> None:
-    action = arguments.get("action")
-    if not isinstance(action, dict) or action.get("type") != "create_training_plan":
-        return
-    if action.get("draft_training_plan_id") == "__last_draft_training_plan_id__" and draft_training_plan_id:
-        action["draft_training_plan_id"] = draft_training_plan_id
 
 
 def _required_workflow_output_error(
     workflow_name: str,
     *,
-    draft_training_plan_id: str | None,
-    training_plan_creation_recommendation_id: str | None,
+    training_plan_id: str | None,
 ) -> str | None:
     if workflow_name != "training_plan_generation":
         return None
-    if not draft_training_plan_id:
-        return "training plan generation did not create a draft training plan"
-    if not training_plan_creation_recommendation_id:
-        return "training plan generation did not create a training plan creation recommendation"
+    if not training_plan_id:
+        return "training plan generation did not create a training plan"
     return None
 
 
@@ -551,10 +513,9 @@ def _needs_follow_up_write(
     workflow_name: str,
     *,
     recommendation_id: str | None,
-    training_plan_creation_recommendation_id: str | None,
 ) -> bool:
     if workflow_name == "training_plan_generation":
-        return training_plan_creation_recommendation_id is None
+        return False
     return recommendation_id is None
 
 
@@ -603,7 +564,7 @@ def _follow_up_write_tools(workflow_name: str, allowed_tools: set[str]) -> tuple
     elif workflow_name == "coach_conversation":
         candidates = {"createRecommendation"}
     elif workflow_name == "training_plan_generation":
-        candidates = {"createRecommendation"}
+        candidates = frozenset()
     else:
         candidates = frozenset()
     return tuple(sorted(allowed_tools & candidates))
@@ -639,7 +600,7 @@ def _repair_request(request: ModelRequest, exc: Exception) -> ModelRequest:
             {
                 "role": "user",
                 "content": (
-                    "Repair the draft training plan once using the original request and these validation errors: "
+                    "Repair the training plan once using the original request and these validation errors: "
                     f"{exc.__class__.__name__}: {str(exc)}"
                 ),
             },

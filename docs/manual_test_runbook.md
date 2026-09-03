@@ -166,8 +166,8 @@ Expected:
 
 - Run status becomes `completed`.
 - Run steps show ordered tool calls.
-- `GET /api/v1/recommendations` includes a daily recommendation and a generated-plan recommendation.
-- `GET /api/v1/training-plans` includes a generated `draft` plan that remains inactive until its recommendation is accepted.
+- `GET /api/v1/recommendations` includes a daily recommendation.
+- `GET /api/v1/training-plans` includes a generated `active` plan.
 
 Run the deterministic end-to-end async smoke:
 

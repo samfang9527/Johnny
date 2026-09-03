@@ -60,12 +60,7 @@ def test_openai_gateway_maps_request_tools_and_context() -> None:
     assert created["tools"][0]["strict"] is True
     assert create_schema["additionalProperties"] is False
     assert "title" in create_schema["required"]
-    assert create_schema["properties"]["recommendation_type"]["enum"] == [
-        "informational",
-        "recovery_warning",
-        "workout_adjustment",
-        "training_plan_creation",
-    ]
+    assert create_schema["properties"]["recommendation_type"]["enum"] == ["informational", "recovery_warning"]
     assert create_schema["properties"]["evidence"]["items"]["properties"]["value"]["type"] == [
         "string",
         "number",
@@ -128,7 +123,7 @@ def test_openai_gateway_all_tool_schemas_are_strict_for_openai() -> None:
         "getRecentActivities",
         "getRecoveryState",
         "getTrainingMetrics",
-        "createDraftTrainingPlan",
+        "createTrainingPlan",
         "createRecommendation",
         "proposeWorkoutAdjustment",
         "storeMemoryCandidate",
@@ -147,15 +142,15 @@ def test_openai_gateway_exposes_training_plan_generation_write_contract() -> Non
     client = FakeOpenAIClient(response=_response())
     gateway = OpenAIModelGateway(client=client, model="gpt-5")
 
-    gateway.complete(_request_with_tools(("createDraftTrainingPlan", "createRecommendation")))
+    gateway.complete(_request_with_tools(("createTrainingPlan",)))
 
     created = client.responses.calls[0]
     tools_by_name = {tool["name"]: tool for tool in created["tools"]}
-    draft_schema = tools_by_name["createDraftTrainingPlan"]["parameters"]
-    recommendation_schema = tools_by_name["createRecommendation"]["parameters"]
-    assert draft_schema["properties"]["name"]["type"] == "string"
-    assert draft_schema["properties"]["race_id"]["type"] == ["string", "null"]
-    assert draft_schema["properties"]["workouts"]["items"]["properties"]["workout_type"]["enum"] == [
+    plan_schema = tools_by_name["createTrainingPlan"]["parameters"]
+    workout_schema = plan_schema["properties"]["workouts"]["items"]
+    assert plan_schema["properties"]["name"]["type"] == "string"
+    assert plan_schema["properties"]["race_id"]["type"] == ["string", "null"]
+    assert workout_schema["properties"]["workout_type"]["enum"] == [
         "easy_run",
         "long_run",
         "tempo",
@@ -165,22 +160,33 @@ def test_openai_gateway_exposes_training_plan_generation_write_contract() -> Non
         "strength",
         "cross_training",
     ]
-    assert recommendation_schema["properties"]["recommendation_type"]["enum"] == [
-        "informational",
-        "recovery_warning",
-        "workout_adjustment",
-        "training_plan_creation",
-    ]
-    assert recommendation_schema["properties"]["action"]["properties"]["type"]["enum"] == [
-        "no_plan_change",
-        "create_training_plan",
-    ]
-    assert recommendation_schema["properties"]["action"]["properties"]["draft_training_plan_id"]["type"] == [
-        "string",
-        "null",
-    ]
+    assert workout_schema["properties"]["planned_duration_minutes"]["minimum"] == 1
+    assert workout_schema["properties"]["planned_distance_meters"]["minimum"] == 1
     for tool in created["tools"]:
         _assert_strict_schema(tool["parameters"])
+
+
+def test_openai_gateway_rejects_non_positive_generated_plan_distance() -> None:
+    response = _response(
+        output=[
+            SimpleNamespace(
+                type="function_call",
+                name="createTrainingPlan",
+                arguments=(
+                    '{"name": "Generated Plan", "race_id": null, '
+                    '"starts_on": "2027-01-01", "ends_on": "2027-01-28", '
+                    '"workouts": [{"id": null, "scheduled_for": "2027-01-03", '
+                    '"workout_type": "easy_run", "purpose": "Aerobic base", '
+                    '"planned_duration_minutes": null, "planned_distance_meters": 0, '
+                    '"pace_range_seconds_per_km": null, "heart_rate_zone": null, "status": "planned"}]}'
+                ),
+            )
+        ]
+    )
+    gateway = OpenAIModelGateway(client=FakeOpenAIClient(response=response), model="gpt-5")
+
+    with pytest.raises(OpenAIModelGatewayError, match="Invalid argument value"):
+        gateway.complete(_request_with_tools(("createTrainingPlan",)))
 
 
 def test_openai_gateway_parses_content_tool_calls_and_token_usage() -> None:
@@ -195,8 +201,7 @@ def test_openai_gateway_parses_content_tool_calls_and_token_usage() -> None:
                     '"recommendation_type": "informational", '
                     '"priority": "medium", '
                     '"evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}], '
-                    '"action": {"type": "no_plan_change", "reason": "Rest today.", '
-                    '"draft_training_plan_id": null, "summary": null}}'
+                    '"action": {"type": "no_plan_change", "reason": "Rest today."}}'
                 ),
             )
         ],
@@ -223,8 +228,6 @@ def test_openai_gateway_parses_content_tool_calls_and_token_usage() -> None:
         "action": {
             "type": "no_plan_change",
             "reason": "Rest today.",
-            "draft_training_plan_id": None,
-            "summary": None,
         },
     }
 
@@ -311,8 +314,7 @@ def test_openai_gateway_rejects_extra_tool_arguments() -> None:
                     '"recommendation_type": "informational", '
                     '"priority": "medium", '
                     '"evidence": [{"source": "agent", "metric": "recovery", "value": "rest"}], '
-                    '"action": {"type": "no_plan_change", "reason": "Rest", '
-                    '"draft_training_plan_id": null, "summary": null}, '
+                    '"action": {"type": "no_plan_change", "reason": "Rest"}, '
                     '"agent_run_id": "model-controlled"}'
                 ),
             )
@@ -321,6 +323,29 @@ def test_openai_gateway_rejects_extra_tool_arguments() -> None:
     gateway = OpenAIModelGateway(client=FakeOpenAIClient(response=response), model="gpt-5")
 
     with pytest.raises(OpenAIModelGatewayError, match="Unsupported argument"):
+        gateway.complete(_request_with_tools(("createRecommendation",)))
+
+
+def test_openai_gateway_rejects_generated_plan_recommendation_action() -> None:
+    response = _response(
+        output=[
+            SimpleNamespace(
+                type="function_call",
+                name="createRecommendation",
+                arguments=(
+                    '{"title": "Review plan", "rationale": "Plan created.", '
+                    '"recommendation_type": "training_plan_creation", '
+                    '"priority": "medium", '
+                    '"evidence": [{"source": "agent", "metric": "plan", "value": "created"}], '
+                    '"action": {"type": "create_training_plan", "reason": "Approve", '
+                    '"draft_training_plan_id": "draft-1", "summary": "Draft"}}'
+                ),
+            )
+        ]
+    )
+    gateway = OpenAIModelGateway(client=FakeOpenAIClient(response=response), model="gpt-5")
+
+    with pytest.raises(OpenAIModelGatewayError, match="Unsupported argument value"):
         gateway.complete(_request_with_tools(("createRecommendation",)))
 
 

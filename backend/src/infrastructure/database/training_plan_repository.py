@@ -70,6 +70,17 @@ class SqlAlchemyTrainingPlanRepository:
             raise ValueError("draft plan must have draft status")
         return self.save_plan(user_id, plan)
 
+    def create_active_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+        if plan.status != "active":
+            raise ValueError("active plan must have active status")
+        conflicts = self._active_conflicts_for_plan(user_id, plan)
+        saved = self.save_plan(user_id, plan)
+        for conflict in conflicts:
+            if conflict.id != saved.id:
+                conflict.status = "superseded"
+        self._session.flush()
+        return _plan_from_model(self._session.get(TrainingPlanModel, saved.id))
+
     def activate_draft_plan(
         self,
         user_id: str,
@@ -245,6 +256,22 @@ class SqlAlchemyTrainingPlanRepository:
                 TrainingPlanModel.starts_on <= draft.ends_on,
                 TrainingPlanModel.ends_on >= draft.starts_on,
             )
+        return list(self._session.scalars(statement))
+
+    def _active_conflicts_for_plan(self, user_id: str, plan: TrainingPlan) -> list[TrainingPlanModel]:
+        statement = select(TrainingPlanModel).where(
+            TrainingPlanModel.user_id == user_id,
+            TrainingPlanModel.status == "active",
+        )
+        if plan.id is not None:
+            statement = statement.where(TrainingPlanModel.id != plan.id)
+        if plan.race_id is None:
+            return []
+        statement = statement.where(
+            TrainingPlanModel.race_id == plan.race_id,
+            TrainingPlanModel.starts_on <= plan.ends_on,
+            TrainingPlanModel.ends_on >= plan.starts_on,
+        )
         return list(self._session.scalars(statement))
 
 

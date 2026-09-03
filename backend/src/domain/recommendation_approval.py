@@ -5,13 +5,11 @@ from datetime import datetime
 from typing import Any
 
 
-RECOMMENDATION_TYPES = frozenset(
-    {"workout_adjustment", "recovery_warning", "informational", "training_plan_creation"}
-)
+RECOMMENDATION_TYPES = frozenset({"workout_adjustment", "recovery_warning", "informational"})
 PRIORITIES = frozenset({"low", "medium", "high"})
 STATUSES = frozenset({"pending", "decided", "superseded"})
 DECISIONS = frozenset({"accepted", "rejected", "edited"})
-ACTION_TYPES = frozenset({"adjust_workout", "no_plan_change", "create_training_plan"})
+ACTION_TYPES = frozenset({"adjust_workout", "no_plan_change"})
 
 
 class DomainValidationError(ValueError):
@@ -87,8 +85,6 @@ class ProposedAction:
             raise DomainValidationError("action type is not supported")
         if self.action_type == "adjust_workout":
             _validate_adjust_workout(self.payload)
-        if self.action_type == "create_training_plan":
-            _validate_create_training_plan(self.payload)
         if self.action_type == "no_plan_change" and not self.payload.get("reason"):
             raise DomainValidationError("no plan change action requires a reason")
         object.__setattr__(self, "payload", dict(self.payload))
@@ -121,23 +117,6 @@ class ProposedAction:
     @classmethod
     def no_plan_change(cls, *, reason: str) -> ProposedAction:
         return cls.create(action_type="no_plan_change", payload={"reason": reason})
-
-    @classmethod
-    def create_training_plan(
-        cls,
-        *,
-        draft_training_plan_id: str,
-        reason: str,
-        summary: str,
-    ) -> ProposedAction:
-        return cls.create(
-            action_type="create_training_plan",
-            payload={
-                "draft_training_plan_id": draft_training_plan_id,
-                "reason": reason,
-                "summary": summary,
-            },
-        )
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ProposedAction:
@@ -197,11 +176,6 @@ class Recommendation:
                 raise DomainValidationError("workout adjustment requires workout")
             object.__setattr__(self, "training_plan_id", plan_id)
             object.__setattr__(self, "workout_id", workout_id)
-        if self.proposed_action.action_type == "create_training_plan":
-            plan_id = self.training_plan_id or self.proposed_action.payload.get("draft_training_plan_id")
-            if not plan_id:
-                raise DomainValidationError("training plan creation requires draft training plan")
-            object.__setattr__(self, "training_plan_id", plan_id)
         object.__setattr__(self, "evidence", tuple(self.evidence))
 
     @classmethod
@@ -339,12 +313,3 @@ def _validate_adjust_workout(payload: dict[str, Any]) -> None:
         raise DomainValidationError("workout adjustment requires after payload")
     if not payload.get("reason"):
         raise DomainValidationError("workout adjustment requires reason")
-
-
-def _validate_create_training_plan(payload: dict[str, Any]) -> None:
-    if not payload.get("draft_training_plan_id"):
-        raise DomainValidationError("training plan creation requires draft training plan")
-    if not payload.get("reason"):
-        raise DomainValidationError("training plan creation requires reason")
-    if not payload.get("summary"):
-        raise DomainValidationError("training plan creation requires summary")

@@ -170,8 +170,8 @@ class WorkoutAdjustmentProposalTool:
         return {"recommendation": saved.to_payload(), "applied": False}
 
 
-class CreateDraftTrainingPlanTool:
-    name = "createDraftTrainingPlan"
+class CreateTrainingPlanTool:
+    name = "createTrainingPlan"
 
     def __init__(self, *, training_plans) -> None:
         self._training_plans = training_plans
@@ -182,13 +182,13 @@ class CreateDraftTrainingPlanTool:
             user_id=user_id,
             race_id=arguments.get("race_id"),
             name=arguments["name"],
-            status="draft",
+            status="active",
             starts_on=_date_arg(arguments, "starts_on"),
             ends_on=_date_arg(arguments, "ends_on"),
             workouts=workouts,
         )
-        saved = self._training_plans.create_draft_plan(user_id, plan)
-        return {"draft_training_plan": _plan_payload(saved), "applied": False}
+        saved = self._training_plans.create_active_plan(user_id, plan)
+        return {"training_plan": _plan_payload(saved), "applied": True}
 
 
 class MemoryCandidateTool:

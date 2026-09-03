@@ -1,8 +1,8 @@
 ## Purpose
-Define the runtime tool boundaries for Johnny's running companion agent so it can access athlete, training, recovery, metric, recommendation, memory, and generated-plan draft data through explicit domain tools while keeping plan mutations safe and observable.
+Define the runtime tool boundaries for Johnny's running companion agent so it can access athlete, training, recovery, metric, recommendation, memory, and generated training-plan data through explicit domain tools while keeping plan creation observable.
 ## Requirements
 ### Requirement: Tool-Centric Agent Access
-The system SHALL require the Running Companion Agent to access athlete, training, recovery, metric, recommendation, memory, and generated-plan draft data through explicit domain tools.
+The system SHALL require the Running Companion Agent to access athlete, training, recovery, metric, recommendation, memory, and generated training-plan data through explicit domain tools.
 
 #### Scenario: Agent needs recovery context
 - **WHEN** the agent needs recovery context for a user and date
@@ -15,11 +15,11 @@ The system SHALL require the Running Companion Agent to access athlete, training
 - **THEN** it calls a training history or metrics tool with a trusted `user_id` and date window
 - **AND** the tool returns only records scoped to that user
 
-#### Scenario: Agent creates a generated training plan draft
-- **WHEN** the training-plan generation workflow needs to persist a proposed plan
-- **THEN** it uses the `createDraftTrainingPlan` tool
-- **AND** the tool validates and stores a draft plan scoped to the trusted user
-- **AND** the tool does not activate or supersede existing plans
+#### Scenario: Agent creates a generated training plan
+- **WHEN** the training-plan generation workflow needs to persist a generated plan
+- **THEN** it uses the `createTrainingPlan` tool
+- **AND** the tool validates and stores an active plan scoped to the trusted user
+- **AND** overlapping active plans for the same race are marked `superseded`
 
 ### Requirement: Deterministic Analytics Boundary
 The system SHALL compute canonical training load, recovery state, and today context through deterministic domain or application services rather than relying on LLM-generated calculations.
@@ -29,8 +29,8 @@ The system SHALL compute canonical training load, recovery state, and today cont
 - **THEN** the runtime builds today context through the training analytics application handler
 - **AND** the agent prompt or model response references that structured context instead of inventing metric values
 
-### Requirement: Proposal-Only Write Tools
-The system SHALL allow the agent to create recommendations, workout adjustment proposals, memory candidates, and draft training plans but MUST NOT directly apply significant training-plan changes.
+### Requirement: Write Tool Safety
+The system SHALL allow the agent to create recommendations, workout adjustment proposals, memory candidates, and active training plans while keeping recommendation approval separate from training-plan generation.
 
 #### Scenario: Agent recommends reducing a workout
 - **GIVEN** the agent recommends reducing tomorrow's workout
@@ -40,9 +40,9 @@ The system SHALL allow the agent to create recommendations, workout adjustment p
 
 #### Scenario: Agent proposes a new training plan
 - **WHEN** the agent generates a new race or base training plan
-- **THEN** the system stores the plan with status `draft`
-- **AND** it creates a pending `training_plan_creation` recommendation
-- **AND** no draft plan becomes active until the user accepts that recommendation
+- **THEN** the system stores the plan with status `active`
+- **AND** it does not create or require a recommendation
+- **AND** overlapping active plans for the same race are marked `superseded`
 
 #### Scenario: Agent has no safe plan change
 - **WHEN** the agent decides no training-plan mutation is appropriate
@@ -71,13 +71,13 @@ The system SHALL record each agent run with trigger, workflow name, model provid
 - **AND** it does not leave a successful recommendation linked to the failed run
 
 ### Requirement: Training Plan Generation Workflow
-The system SHALL provide a `training_plan_generation` workflow that creates a validated draft plan and pending approval recommendation.
+The system SHALL provide a `training_plan_generation` workflow that creates a validated active plan.
 
 #### Scenario: Race plan generated from explicit race
 - **GIVEN** the current user has an athlete profile and the requested future race
 - **WHEN** the training-plan generation workflow runs with `plan_type` `race` and an explicit `race_id`
 - **THEN** the workflow uses that race as the plan target
-- **AND** creates a draft training plan and pending training-plan-creation recommendation
+- **AND** creates an active training plan
 
 #### Scenario: Race plan generated from next primary race
 - **GIVEN** the current user has an athlete profile and future race goals
@@ -88,8 +88,7 @@ The system SHALL provide a `training_plan_generation` workflow that creates a va
 #### Scenario: Base plan generated without race
 - **GIVEN** the current user has an athlete profile and no race goal
 - **WHEN** the workflow runs with `plan_type` `base`
-- **THEN** it creates an 8-week base training plan draft
-- **AND** creates a pending training-plan-creation recommendation
+- **THEN** it creates an active base training plan
 
 #### Scenario: Invalid generated plan is repaired once
 - **WHEN** the model proposes an invalid generated training plan
@@ -101,8 +100,8 @@ The system SHALL support deterministic local agent behavior for every MVP workfl
 
 #### Scenario: Local training plan generation
 - **WHEN** local deterministic mode runs `training_plan_generation`
-- **THEN** it creates a valid 4-week draft plan with 3-5 workouts per week
-- **AND** it creates a pending recommendation that links to the draft plan
+- **THEN** it creates a valid 4-week active plan with 3-5 workouts per week
+- **AND** it does not create a recommendation
 
 #### Scenario: Live OpenAI smoke remains opt-in
 - **WHEN** live OpenAI smoke is requested

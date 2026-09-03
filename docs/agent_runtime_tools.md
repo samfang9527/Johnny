@@ -1,6 +1,6 @@
 # Agent Runtime Tools
 
-This document describes the MVP Running Companion Agent implementation. The agent is an application-layer orchestrator that reaches project data only through explicit tools, records every run through existing observability tables, and creates proposals instead of applying training changes directly.
+This document describes the MVP Running Companion Agent implementation. The agent is an application-layer orchestrator that reaches project data only through explicit tools, records every run through existing observability tables, and keeps recommendation flows separate from generated training-plan creation.
 
 ```mermaid
 flowchart TD
@@ -9,12 +9,12 @@ flowchart TD
     Agent --> Gateway["ModelGateway"]
     Agent --> Registry["AgentToolRegistry"]
     Registry --> ReadTools["Read tools: athlete, plan, workout, activities, recovery, metrics"]
-    Registry --> WriteTools["Write tools: recommendations, workout adjustment proposals, memory candidates, draft plans"]
+    Registry --> WriteTools["Write tools: recommendations, workout adjustment proposals, memory candidates, active generated plans"]
     ReadTools --> Stores["Application stores/providers"]
     Stores --> Domain["Deterministic domain/application services"]
-    WriteTools --> Approval["Recommendation approval boundary"]
+    WriteTools --> Stores
     RunStore --> Observability["agent_runs, agent_run_steps, agent_context_sources"]
-    Approval --> Pending["Pending user approval"]
+    WriteTools --> Pending["Pending recommendation approval for recommendation flows only"]
 ```
 
 ## Boundaries
@@ -23,7 +23,7 @@ flowchart TD
 - `ModelGateway` isolates provider-specific LLM calls. Tests use `FakeModelGateway` and do not require network access.
 - `AgentRunStore` records top-level runs, ordered steps, and context sources.
 - Read tools return structured payloads and filter by trusted `user_id`.
-- Write tools create pending recommendations, workout adjustment proposals, memory candidates, or generated draft plans. They do not directly activate or supersede training plans.
+- Write tools create pending recommendations, workout adjustment proposals, memory candidates, or generated active training plans. Training-plan generation creates an active plan directly and supersedes overlapping active plans for the same race.
 
 ## Async Runtime
 
@@ -69,11 +69,11 @@ The scheduler only emits today's daily recommendation jobs for active users with
 
 ## Generated Training Plans
 
-The `training_plan_generation` workflow selects an explicit race when supplied, otherwise the earliest future primary race, otherwise the earliest future race. `plan_type=base` creates a no-race base-plan draft.
+The `training_plan_generation` workflow selects an explicit race when supplied, otherwise the earliest future primary race, otherwise the earliest future race. `plan_type=base` creates a no-race active plan.
 
-The model may call `createDraftTrainingPlan` and `createRecommendation` in this workflow. `createDraftTrainingPlan` stores a `draft` plan only. The generated `training_plan_creation` recommendation references that draft through a `create_training_plan` proposed action. Accepting the recommendation activates the draft and supersedes conflicting active plans; rejecting it leaves the draft inactive.
+The model may call `createTrainingPlan` in this workflow. `createTrainingPlan` stores an `active` plan immediately. When the generated plan targets a race, existing overlapping active plans for the same race are marked `superseded`. Recommendation creation is handled by separate recommendation or conversation workflows.
 
-If the model proposes an invalid draft plan, the agent asks for one repair using validation errors. A second invalid response fails the run with inspectable step details.
+If the model proposes an invalid plan, the agent asks for one repair using validation errors. A second invalid response fails the run with inspectable step details.
 
 ## Future AWS Mapping
 

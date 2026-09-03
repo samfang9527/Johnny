@@ -239,6 +239,94 @@ def test_training_plan_repository_creates_draft_and_activates_it_for_race(sqlite
         assert old_plan.status == "superseded"
 
 
+def test_training_plan_repository_creates_active_plan_and_supersedes_same_race(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="active-plan-race@example.com", display_name="Active Plan Race")
+        uow.session.add(user)
+        uow.session.flush()
+        primary_race = RaceModel(
+            user_id=user.id,
+            name="Taipei Half",
+            race_date=date(2027, 3, 1),
+            distance_meters=21_097,
+        )
+        other_race = RaceModel(
+            user_id=user.id,
+            name="Tokyo Half",
+            race_date=date(2027, 4, 1),
+            distance_meters=21_097,
+        )
+        uow.session.add_all((primary_race, other_race))
+        uow.session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        same_race = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=primary_race.id,
+                name="Current Same Race Plan",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 3, 1),
+            ),
+        )
+        non_overlapping_same_race = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=primary_race.id,
+                name="Current Same Race Fall Plan",
+                starts_on=date(2027, 5, 1),
+                ends_on=date(2027, 6, 1),
+            ),
+        )
+        other = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=other_race.id,
+                name="Current Other Race Plan",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 4, 1),
+            ),
+        )
+
+        created = repository.create_active_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                race_id=primary_race.id,
+                name="Generated Active Plan",
+                starts_on=date(2027, 1, 15),
+                ends_on=date(2027, 3, 1),
+                workouts=(Workout.create(
+                    scheduled_for=date(2027, 1, 16),
+                    workout_type="easy_run",
+                    purpose="Aerobic base",
+                    planned_duration_minutes=40,
+                ),),
+            ),
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        old_same_race = repository.get_plan_for_user(user.id, same_race.id)
+        old_non_overlapping_same_race = repository.get_plan_for_user(user.id, non_overlapping_same_race.id)
+        old_other_race = repository.get_plan_for_user(user.id, other.id)
+        new_plan = repository.get_plan_for_user(user.id, created.id)
+
+        assert new_plan is not None
+        assert new_plan.status == "active"
+        assert old_same_race is not None
+        assert old_same_race.status == "superseded"
+        assert old_non_overlapping_same_race is not None
+        assert old_non_overlapping_same_race.status == "active"
+        assert old_other_race is not None
+        assert old_other_race.status == "active"
+
+
 def test_training_plan_repository_rejects_expired_or_stale_draft_activation(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
 

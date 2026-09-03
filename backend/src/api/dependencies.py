@@ -11,7 +11,7 @@ from src.application.agent_runtime import RunningCompanionAgent
 from src.application.agent_tools import (
     AgentToolRegistry,
     AthleteContextTool,
-    CreateDraftTrainingPlanTool,
+    CreateTrainingPlanTool,
     CreateRecommendationTool,
     MemoryCandidateTool,
     RecentActivitiesTool,
@@ -154,7 +154,7 @@ def build_request_companion_agent(session: Session) -> RunningCompanionAgent:
             RecentActivitiesTool(activities=activities),
             RecoveryStateTool(today_context=today_context),
             TrainingMetricsTool(today_context=today_context),
-            CreateDraftTrainingPlanTool(training_plans=training_plans),
+            CreateTrainingPlanTool(training_plans=training_plans),
             CreateRecommendationTool(recommendations=recommendations),
             WorkoutAdjustmentProposalTool(recommendations=recommendations),
             MemoryCandidateTool(memory_candidates=SqlAlchemyMemoryCandidateRepository(session)),

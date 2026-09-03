@@ -27,36 +27,13 @@ class LocalCompanionModelGateway:
             )
 
         if request.workflow_name == "training_plan_generation":
-            draft_arguments = _draft_plan_arguments(request.context or {})
+            plan_arguments = _plan_arguments(request.context or {})
             return ModelResponse(
-                content="Johnny generated a local deterministic draft training plan for review.",
+                content="Johnny generated a local deterministic active training plan.",
                 tool_calls=(
                     ToolCallRequest(
-                        tool_name="createDraftTrainingPlan",
-                        arguments=draft_arguments,
-                    ),
-                    ToolCallRequest(
-                        tool_name="createRecommendation",
-                        arguments={
-                            "title": "Review generated training plan",
-                            "rationale": "Local companion mode generated a draft plan for approval testing.",
-                            "recommendation_type": "training_plan_creation",
-                            "priority": "medium",
-                            "evidence": [
-                                {
-                                    "source": "local_companion",
-                                    "metric": "generated_plan_weeks",
-                                    "value": 4,
-                                    "summary": "Network-free local training plan generation",
-                                }
-                            ],
-                            "action": {
-                                "type": "create_training_plan",
-                                "draft_training_plan_id": "__last_draft_training_plan_id__",
-                                "reason": "A structured draft plan is ready for review.",
-                                "summary": "Four-week generated plan with three to five workouts per week.",
-                            },
-                        },
+                        tool_name="createTrainingPlan",
+                        arguments=plan_arguments,
                     ),
                 ),
                 token_usage=TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0),
@@ -102,7 +79,7 @@ def _recommendation_arguments(*, title: str, rationale: str) -> dict:
     }
 
 
-def _draft_plan_arguments(context: dict) -> dict:
+def _plan_arguments(context: dict) -> dict:
     starts_on = _date_from_context(context.get("starts_on")) or date.today()
     ends_on = starts_on + timedelta(days=27)
     workouts = []

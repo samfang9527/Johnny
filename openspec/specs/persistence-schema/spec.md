@@ -241,5 +241,5 @@ The system SHALL include one coherent migration for async agent flow schema chan
 
 - **GIVEN** an empty or existing MVP database is available
 - **WHEN** the migration upgrade command is run
-- **THEN** the database supports queued agent runs, agent task persistence, draft and superseded training plans, and training-plan-creation recommendations
+- **THEN** the database supports queued agent runs, agent task persistence, active and superseded generated training plans, and recommendation observability
 - **AND** SQLite-compatible tests and optional PostgreSQL migration tests verify the schema behavior

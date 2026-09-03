@@ -181,20 +181,20 @@ def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_pol
     assert hidden.status_code == 404
 
 
-def test_generated_plan_recommendation_api_blocks_cross_user_accept_and_inspection() -> None:
+def test_plan_recommendation_api_blocks_cross_user_accept_without_plan_activation() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 
     client = create_sqlite_test_client()
     owner_headers = {"X-Johnny-User-Id": "user-1"}
     other_headers = {"X-Johnny-User-Id": "user-2"}
-    draft = client.post(
+    plan = client.post(
         "/api/v1/training-plans",
         headers=owner_headers,
         json={
-            "name": "Generated Draft",
+            "name": "Generated Active Plan",
             "starts_on": "2027-01-01",
             "ends_on": "2027-01-28",
-            "status": "draft",
+            "status": "active",
             "workouts": [
                 {
                     "scheduled_for": "2027-01-03",
@@ -209,27 +209,28 @@ def test_generated_plan_recommendation_api_blocks_cross_user_accept_and_inspecti
         "/api/v1/recommendations",
         headers=owner_headers,
         json={
-            "recommendation_type": "training_plan_creation",
+            "recommendation_type": "informational",
             "priority": "medium",
-            "title": "Review generated plan",
-            "rationale": "A draft plan is ready.",
+            "title": "Training plan created",
+            "rationale": "An active generated plan is ready.",
             "evidence": [{"source": "agent", "metric": "plan_weeks", "value": 4}],
             "proposed_action": {
-                "type": "create_training_plan",
-                "draft_training_plan_id": draft["id"],
-                "reason": "A plan is needed.",
-                "summary": "Four-week plan.",
+                "type": "no_plan_change",
+                "reason": "The plan has already been created.",
             },
+            "training_plan_id": plan["id"],
         },
     ).json()["data"]
 
     other_accept = client.post(f"/api/v1/recommendations/{recommendation['id']}/accept", headers=other_headers)
-    other_plan = client.get(f"/api/v1/training-plans/{draft['id']}", headers=other_headers)
-    owner_plan = client.get(f"/api/v1/training-plans/{draft['id']}", headers=owner_headers)
+    other_plan = client.get(f"/api/v1/training-plans/{plan['id']}", headers=other_headers)
+    owner_accept = client.post(f"/api/v1/recommendations/{recommendation['id']}/accept", headers=owner_headers)
+    owner_plan = client.get(f"/api/v1/training-plans/{plan['id']}", headers=owner_headers)
 
     assert other_accept.status_code == 404
     assert other_plan.status_code == 404
-    assert owner_plan.json()["data"]["status"] == "draft"
+    assert owner_accept.json()["data"]["decision"] == "accepted"
+    assert owner_plan.json()["data"]["status"] == "active"
 
 
 def test_api_allows_local_vite_origin_for_browser_requests() -> None:

@@ -105,15 +105,21 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
         processed = work_drain(uow.session)
         daily_run = handler_runs.get_run_for_user("worker-user", daily.run.id)
         training_run = handler_runs.get_run_for_user("worker-user", training.run.id)
-        draft_count = len(uow.session.scalars(select(TrainingPlanModel).where(TrainingPlanModel.status == "draft")).all())
+        generated_plan = uow.session.scalar(
+            select(TrainingPlanModel).where(
+                TrainingPlanModel.user_id == "worker-user",
+                TrainingPlanModel.name == "Local Generated Four Week Plan",
+            )
+        )
         recommendation_count = len(uow.session.scalars(select(RecommendationModel)).all())
         uow.commit()
 
     assert processed == 2
     assert daily_run.status == "completed"
     assert training_run.status == "completed"
-    assert draft_count == 1
-    assert recommendation_count == 2
+    assert generated_plan is not None
+    assert generated_plan.status == "active"
+    assert recommendation_count == 1
 
 
 def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_session_factory) -> None:
@@ -222,5 +228,5 @@ def test_smoke_flow_queues_with_http_drains_worker_and_polls_completion(monkeypa
     assert processed == 2
     assert daily_run["status"] == "completed"
     assert training_run["status"] == "completed"
-    assert len(recommendations) == 2
-    assert any(plan["status"] == "draft" for plan in plans)
+    assert len(recommendations) == 1
+    assert any(plan["name"] == "Local Generated Four Week Plan" and plan["status"] == "active" for plan in plans)

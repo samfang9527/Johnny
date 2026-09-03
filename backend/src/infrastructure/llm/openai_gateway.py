@@ -138,7 +138,7 @@ def _tool_description(tool_name: str) -> str:
         "getRecentActivities": "Read user-scoped recent activity history within a date window.",
         "getRecoveryState": "Read deterministic recovery state for a user-scoped date.",
         "getTrainingMetrics": "Read deterministic training-load metrics for a user-scoped date.",
-        "createDraftTrainingPlan": "Create a draft training plan for user review. Does not activate the plan.",
+        "createTrainingPlan": "Create an active training plan for the user. Supersedes active plans for the same race.",
         "createRecommendation": "Create a pending recommendation for user approval. Does not apply plan changes.",
         "proposeWorkoutAdjustment": "Create a pending workout-adjustment proposal for user approval. Does not apply plan changes.",
         "storeMemoryCandidate": "Store a pending memory candidate for later approval. Does not create durable memory.",
@@ -171,7 +171,7 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
         ),
         "getRecoveryState": _date_schema(),
         "getTrainingMetrics": _date_schema(),
-        "createDraftTrainingPlan": _object_schema(
+        "createTrainingPlan": _object_schema(
             properties={
                 "name": {"type": "string"},
                 "race_id": {"type": ["string", "null"]},
@@ -187,7 +187,7 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
                 "rationale": {"type": "string"},
                 "recommendation_type": {
                     "type": "string",
-                    "enum": ["informational", "recovery_warning", "workout_adjustment", "training_plan_creation"],
+                    "enum": ["informational", "recovery_warning"],
                 },
                 "priority": {"type": "string", "enum": ["low", "medium", "high"]},
                 "evidence": _evidence_array_schema(),
@@ -250,12 +250,10 @@ def _date_schema() -> dict[str, Any]:
 def _recommendation_action_schema() -> dict[str, Any]:
     return _object_schema(
         properties={
-            "type": {"type": "string", "enum": ["no_plan_change", "create_training_plan"]},
+            "type": {"type": "string", "enum": ["no_plan_change"]},
             "reason": {"type": "string"},
-            "draft_training_plan_id": {"type": ["string", "null"]},
-            "summary": {"type": ["string", "null"]},
         },
-        required=["type", "reason", "draft_training_plan_id", "summary"],
+        required=["type", "reason"],
     )
 
 
@@ -293,8 +291,8 @@ def _workout_payload_schema() -> dict[str, Any]:
                 ],
             },
             "purpose": {"type": "string"},
-            "planned_duration_minutes": {"type": ["integer", "null"]},
-            "planned_distance_meters": {"type": ["integer", "null"]},
+            "planned_duration_minutes": {"type": ["integer", "null"], "minimum": 1},
+            "planned_distance_meters": {"type": ["integer", "null"], "minimum": 1},
             "pace_range_seconds_per_km": {
                 "type": ["array", "null"],
                 "items": {"type": "integer"},
@@ -372,6 +370,8 @@ def _validate_value(*, schema: dict[str, Any], value: Any, path: str) -> None:
         raise OpenAIModelGatewayError(f"Invalid argument type for {path}")
     if "enum" in schema and value not in schema["enum"]:
         raise OpenAIModelGatewayError(f"Unsupported argument value for {path}")
+    if expected in {"integer", "number"} and "minimum" in schema and value < schema["minimum"]:
+        raise OpenAIModelGatewayError(f"Invalid argument value for {path}")
 
 
 def _matches_type(expected: str, value: Any) -> bool:

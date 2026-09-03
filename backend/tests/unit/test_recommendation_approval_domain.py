@@ -104,41 +104,26 @@ def test_informational_recommendation_allows_no_plan_change_action() -> None:
     assert recommendation.proposed_action.action_type == "no_plan_change"
 
 
-def test_training_plan_creation_recommendation_references_draft_plan() -> None:
-    recommendation = Recommendation.create(
-        user_id="user-1",
-        recommendation_type="training_plan_creation",
-        priority="medium",
-        title="Review generated plan",
-        rationale="The generated plan matches the target race.",
-        evidence=_evidence(),
-        proposed_action=ProposedAction.create_training_plan(
-            draft_training_plan_id="plan-draft-1",
-            reason="A structured plan is needed.",
-            summary="Four-week race build.",
-        ),
-    )
-
-    payload = recommendation.to_payload()
-
-    assert recommendation.training_plan_id == "plan-draft-1"
-    assert payload["proposed_action"]["type"] == "create_training_plan"
-    assert payload["proposed_action"]["draft_training_plan_id"] == "plan-draft-1"
-
-
-def test_training_plan_creation_action_requires_draft_plan_reason_and_summary() -> None:
-    with pytest.raises(DomainValidationError, match="draft training plan"):
-        ProposedAction.create_training_plan(
-            draft_training_plan_id="",
-            reason="A plan is needed.",
-            summary="Four-week race build.",
+def test_recommendation_rejects_training_plan_creation_type_and_action() -> None:
+    with pytest.raises(DomainValidationError, match="action type"):
+        ProposedAction.create(
+            action_type="create_training_plan",
+            payload={
+                "draft_training_plan_id": "plan-draft-1",
+                "reason": "A plan is needed.",
+                "summary": "Four-week race build.",
+            },
         )
 
-    with pytest.raises(DomainValidationError, match="summary"):
-        ProposedAction.create_training_plan(
-            draft_training_plan_id="plan-draft-1",
-            reason="A plan is needed.",
-            summary="",
+    with pytest.raises(DomainValidationError, match="recommendation type"):
+        Recommendation.create(
+            user_id="user-1",
+            recommendation_type="training_plan_creation",
+            priority="medium",
+            title="Review generated plan",
+            rationale="The generated plan matches the target race.",
+            evidence=_evidence(),
+            proposed_action=ProposedAction.no_plan_change(reason="Training plans are created by a separate workflow."),
         )
 
 

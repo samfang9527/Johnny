@@ -64,7 +64,6 @@ class FakeTrainingPlanStore:
     def __init__(self, plan: TrainingPlan | None) -> None:
         self.plan = plan
         self.adjustments = []
-        self.activated_draft_ids: list[str] = []
 
     def get_plan_for_user(self, user_id: str, plan_id: str | None) -> TrainingPlan | None:
         if self.plan is None or self.plan.user_id != user_id or self.plan.id != plan_id:
@@ -80,29 +79,6 @@ class FakeTrainingPlanStore:
     def create_adjustment_proposal(self, user_id: str, proposal):
         self.adjustments.append(proposal)
         return proposal
-
-    def activate_draft_plan(
-        self,
-        user_id: str,
-        plan_id: str | None,
-        *,
-        accepted_at: date,
-        conflict_created_after=None,
-    ) -> TrainingPlan | None:
-        if self.plan is None or self.plan.user_id != user_id or self.plan.id != plan_id or self.plan.status != "draft":
-            return None
-        self.activated_draft_ids.append(plan_id)
-        self.plan = TrainingPlan.create(
-            id=self.plan.id,
-            user_id=self.plan.user_id,
-            race_id=self.plan.race_id,
-            name=self.plan.name,
-            status="active",
-            starts_on=self.plan.starts_on,
-            ends_on=self.plan.ends_on,
-            workouts=self.plan.workouts,
-        )
-        return self.plan
 
 
 def _workout(*, duration: int = 45, status: str = "planned") -> Workout:
@@ -152,41 +128,6 @@ def _recommendation(*, user_id: str = "user-1", duration: int = 30) -> Recommend
             after_payload=after,
             reason="Recovery is low",
         ),
-    )
-
-
-def _training_plan_creation_recommendation(*, user_id: str = "user-1") -> Recommendation:
-    return Recommendation.create(
-        user_id=user_id,
-        recommendation_type="training_plan_creation",
-        priority="medium",
-        title="Review generated plan",
-        rationale="A generated draft plan is ready.",
-        evidence=(
-            EvidenceItem.create(
-                source="agent",
-                metric="plan_weeks",
-                value=4,
-                observed_at="2027-01-28",
-            ),
-        ),
-        proposed_action=ProposedAction.create_training_plan(
-            draft_training_plan_id="draft-plan-1",
-            reason="A structured plan is needed.",
-            summary="Four-week race build.",
-        ),
-    )
-
-
-def _draft_plan(*, user_id: str = "user-1") -> TrainingPlan:
-    return TrainingPlan.create(
-        id="draft-plan-1",
-        user_id=user_id,
-        name="Generated Draft",
-        starts_on=date(2027, 1, 1),
-        ends_on=date(2027, 1, 28),
-        status="draft",
-        workouts=(_workout(),),
     )
 
 
@@ -246,35 +187,6 @@ def test_accepting_recommendation_applies_matching_workout_adjustment() -> None:
     assert plans.plan is not None
     assert plans.plan.workouts[0].planned_duration_minutes == 30
     assert plans.adjustments[0].status == "applied"
-
-
-def test_accepting_training_plan_creation_activates_draft_after_user_decision() -> None:
-    recommendations = FakeRecommendationStore()
-    saved = recommendations.create_recommendation("user-1", _training_plan_creation_recommendation())
-    plans = FakeTrainingPlanStore(_draft_plan())
-    handler = AcceptRecommendationHandler(recommendations=recommendations, training_plans=plans)
-
-    decided = handler.handle(user_id="user-1", recommendation_id=saved.id, accepted_at=date(2027, 1, 28))
-
-    assert decided is not None
-    assert decided.decision == "accepted"
-    assert plans.plan is not None
-    assert plans.plan.status == "active"
-    assert plans.activated_draft_ids == ["draft-plan-1"]
-
-
-def test_rejecting_training_plan_creation_leaves_draft_inactive() -> None:
-    recommendations = FakeRecommendationStore()
-    saved = recommendations.create_recommendation("user-1", _training_plan_creation_recommendation())
-    plans = FakeTrainingPlanStore(_draft_plan())
-    handler = RejectRecommendationHandler(recommendations=recommendations)
-
-    decided = handler.handle(user_id="user-1", recommendation_id=saved.id)
-
-    assert decided is not None
-    assert decided.decision == "rejected"
-    assert plans.plan is not None
-    assert plans.plan.status == "draft"
 
 
 def test_accepting_stale_or_cross_user_recommendation_does_not_mutate_plan() -> None:

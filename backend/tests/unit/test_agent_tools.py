@@ -1,9 +1,9 @@
 from datetime import date, datetime, timezone
 
+from src.application import agent_tools as agent_tools_module
 from src.application.agent_tools import (
     AgentToolRegistry,
     AthleteContextTool,
-    CreateDraftTrainingPlanTool,
     CreateRecommendationTool,
     MemoryCandidateTool,
     RecentActivitiesTool,
@@ -92,7 +92,7 @@ class LeakyActivityStore:
 class FakeTrainingPlanStore:
     def __init__(self, plan: TrainingPlan | None) -> None:
         self.plan = plan
-        self.drafts: list[TrainingPlan] = []
+        self.active_plans: list[TrainingPlan] = []
 
     def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
         return self.plan
@@ -102,18 +102,18 @@ class FakeTrainingPlanStore:
             return None
         return self.plan
 
-    def create_draft_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+    def create_active_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
         saved = TrainingPlan.create(
-            id=f"draft-{len(self.drafts) + 1}",
+            id=f"plan-{len(self.active_plans) + 1}",
             user_id=user_id,
             race_id=plan.race_id,
             name=plan.name,
-            status="draft",
+            status="active",
             starts_on=plan.starts_on,
             ends_on=plan.ends_on,
             workouts=plan.workouts,
         )
-        self.drafts.append(saved)
+        self.active_plans.append(saved)
         return saved
 
 
@@ -352,9 +352,13 @@ def test_workout_adjustment_tool_creates_proposal_without_mutating_plan() -> Non
     assert payload["recommendation"]["proposed_action"]["type"] == "adjust_workout"
 
 
-def test_create_draft_training_plan_tool_stores_valid_draft_without_activation() -> None:
+def test_create_training_plan_tool_stores_active_plan_immediately() -> None:
     plan_store = FakeTrainingPlanStore(None)
-    tool = CreateDraftTrainingPlanTool(training_plans=plan_store)
+    tool_class = getattr(agent_tools_module, "CreateTrainingPlanTool", None)
+
+    assert tool_class is not None
+
+    tool = tool_class(training_plans=plan_store)
 
     payload = tool.run(
         user_id="user-1",
@@ -374,9 +378,9 @@ def test_create_draft_training_plan_tool_stores_valid_draft_without_activation()
         },
     )
 
-    assert payload["draft_training_plan"]["id"] == "draft-1"
-    assert payload["draft_training_plan"]["status"] == "draft"
-    assert plan_store.drafts[0].status == "draft"
+    assert payload["training_plan"]["id"] == "plan-1"
+    assert payload["training_plan"]["status"] == "active"
+    assert plan_store.active_plans[0].status == "active"
 
 
 def test_memory_candidate_tool_stores_candidate_without_mutating_profile() -> None:
