@@ -7,6 +7,8 @@ from src.domain.training_plan import (
     PlanAdjustmentProposal,
     TrainingPlan,
     Workout,
+    WorkoutStep,
+    WorkoutTarget,
 )
 
 
@@ -97,6 +99,95 @@ def test_workout_accepts_supported_details() -> None:
     assert workout.pace_range_seconds_per_km == (330, 390)
     assert workout.heart_rate_zone == "z2"
     assert workout.status == "planned"
+
+
+def test_interval_workout_accepts_repeat_steps_and_derives_compact_summary() -> None:
+    workout = Workout.create(
+        scheduled_for=date(2027, 1, 5),
+        workout_type="interval",
+        purpose="Improve 5K-specific aerobic power",
+        planned_duration_minutes=55,
+        planned_distance_meters=8_600,
+        phase="build",
+        coach_note="Keep the first two reps controlled.",
+        steps=(
+            WorkoutStep.create(
+                step_type="warmup",
+                duration_seconds=900,
+                target=WorkoutTarget.rpe(3),
+            ),
+            WorkoutStep.create(
+                step_type="repeat",
+                repeat_count=4,
+                steps=(
+                    WorkoutStep.create(
+                        step_type="work",
+                        distance_meters=800,
+                        target=WorkoutTarget.pace(zone="interval", pace_range_seconds_per_km=(275, 285), rpe=8),
+                    ),
+                    WorkoutStep.create(
+                        step_type="recovery",
+                        distance_meters=400,
+                        target=WorkoutTarget.pace(zone="easy", rpe=3),
+                    ),
+                ),
+            ),
+            WorkoutStep.create(
+                step_type="cooldown",
+                duration_seconds=600,
+                target=WorkoutTarget.rpe(2),
+            ),
+        ),
+    )
+
+    assert workout.phase == "build"
+    assert workout.coach_note == "Keep the first two reps controlled."
+    assert workout.compact_summary == "15 min warmup + 4 x (800m interval / 400m easy) + 10 min cooldown"
+    assert workout.to_payload()["steps"][1]["repeat_count"] == 4
+
+
+def test_workout_steps_reject_missing_load_and_bad_repeat_blocks() -> None:
+    with pytest.raises(DomainValidationError, match="step requires distance or duration"):
+        WorkoutStep.create(step_type="work", target=WorkoutTarget.rpe(6))
+
+    with pytest.raises(DomainValidationError, match="repeat block requires nested steps"):
+        WorkoutStep.create(step_type="repeat", repeat_count=4, steps=())
+
+
+def test_workout_rejects_step_totals_outside_tolerance_and_long_coach_note() -> None:
+    with pytest.raises(DomainValidationError, match="planned duration does not match workout steps"):
+        Workout.create(
+            scheduled_for=date(2027, 1, 5),
+            workout_type="tempo",
+            purpose="Threshold development",
+            planned_duration_minutes=30,
+            steps=(WorkoutStep.create(step_type="warmup", duration_seconds=2_400, target=WorkoutTarget.rpe(3)),),
+        )
+
+    with pytest.raises(DomainValidationError, match="coach note"):
+        Workout.create(
+            scheduled_for=date(2027, 1, 5),
+            workout_type="easy_run",
+            purpose="Aerobic base",
+            planned_duration_minutes=45,
+            coach_note="x" * 501,
+        )
+
+
+def test_workout_can_derive_planned_load_from_steps() -> None:
+    workout = Workout.create(
+        scheduled_for=date(2027, 1, 5),
+        workout_type="tempo",
+        purpose="Threshold development",
+        steps=(
+            WorkoutStep.create(step_type="warmup", duration_seconds=600, target=WorkoutTarget.rpe(3)),
+            WorkoutStep.create(step_type="work", duration_seconds=1_800, target=WorkoutTarget.pace(zone="threshold")),
+            WorkoutStep.create(step_type="cooldown", duration_seconds=600, target=WorkoutTarget.rpe(2)),
+        ),
+    )
+
+    assert workout.planned_duration_minutes == 50
+    assert workout.planned_distance_meters is None
 
 
 def test_workout_rejects_unsupported_type() -> None:

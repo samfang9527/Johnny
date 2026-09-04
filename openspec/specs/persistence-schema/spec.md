@@ -118,6 +118,18 @@ The system SHALL use JSON fields only for flexible evidence payloads, provider s
 - **THEN** the field is represented as a typed table column
 - **AND** it is not stored only inside a JSON payload
 
+#### Scenario: Training plan version metadata is flexible
+
+- **WHEN** generated training plans store plan series, previous plan, version, generation mode, continuity summary, or weekly rationale metadata
+- **THEN** those values may be stored in `training_plans.metadata_json`
+- **AND** the column is non-null with an empty object default
+
+#### Scenario: Workout steps remain JSON-backed for V1
+
+- **WHEN** structured workout steps are persisted
+- **THEN** they are stored in the existing `workouts.details` JSON column
+- **AND** no `workout_steps` table is required in V1
+
 ### Requirement: SSO Identity Persistence
 
 The system SHALL persist SSO provider identities separately from Johnny application users without coupling the schema to one auth broker.

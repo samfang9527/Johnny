@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Iterable
 
+from src.application.training_targets import PaceProfile, enrich_workout_steps
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
-from src.domain.training_plan import TrainingPlan, Workout
+from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep
 
 
 class AgentToolRegistry:
@@ -47,7 +48,11 @@ class TrainingPlanTool:
 
     def run(self, *, user_id: str, arguments: dict) -> dict:
         plan_id = arguments.get("training_plan_id")
-        plan = self._training_plans.get_plan_for_user(user_id, plan_id)
+        plan = (
+            self._training_plans.get_plan_for_user(user_id, plan_id)
+            if plan_id
+            else self._training_plans.get_current_plan_for_user(user_id)
+        )
         return {"training_plan": _plan_payload(plan)}
 
 
@@ -177,7 +182,11 @@ class CreateTrainingPlanTool:
         self._training_plans = training_plans
 
     def run(self, *, user_id: str, arguments: dict) -> dict:
-        workouts = tuple(_workout_from_payload(payload) for payload in arguments.get("workouts", ()))
+        trusted_context = arguments.get("trusted_context") if isinstance(arguments.get("trusted_context"), dict) else {}
+        pace_profile = trusted_context.get("pace_profile")
+        workouts = tuple(
+            _workout_from_payload({**payload, "_pace_profile": pace_profile}) for payload in arguments.get("workouts", ())
+        )
         plan = TrainingPlan.create(
             user_id=user_id,
             race_id=arguments.get("race_id"),
@@ -185,6 +194,7 @@ class CreateTrainingPlanTool:
             status="active",
             starts_on=_date_arg(arguments, "starts_on"),
             ends_on=_date_arg(arguments, "ends_on"),
+            metadata=_plan_metadata(arguments=arguments, trusted_context=trusted_context),
             workouts=workouts,
         )
         saved = self._training_plans.create_active_plan(user_id, plan)
@@ -238,6 +248,12 @@ def _proposed_action(payload: dict) -> ProposedAction:
 
 def _workout_from_payload(payload: dict) -> Workout:
     pace_range = payload.get("pace_range_seconds_per_km")
+    steps = tuple(
+        step if isinstance(step, WorkoutStep) else WorkoutStep.from_payload(step)
+        for step in payload.get("steps", ())
+    )
+    pace_profile = PaceProfile.from_payload(payload.get("_pace_profile"))
+    workout_steps = enrich_workout_steps(steps, pace_profile=pace_profile) if pace_profile is not None else steps
     return Workout.create(
         id=payload.get("id"),
         scheduled_for=_date_arg(payload, "scheduled_for"),
@@ -247,8 +263,21 @@ def _workout_from_payload(payload: dict) -> Workout:
         planned_distance_meters=payload.get("planned_distance_meters"),
         pace_range_seconds_per_km=tuple(pace_range) if pace_range is not None else None,
         heart_rate_zone=payload.get("heart_rate_zone"),
+        phase=payload.get("phase"),
+        coach_note=payload.get("coach_note"),
+        steps=tuple(workout_steps),
         status=payload.get("status", "planned"),
     )
+
+
+def _plan_metadata(*, arguments: dict, trusted_context: dict) -> dict:
+    metadata = dict(arguments.get("metadata", {}))
+    for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
+        value = trusted_context.get(key)
+        if value is not None:
+            metadata.setdefault(key, value)
+    metadata.setdefault("generation_mode", arguments.get("generation_mode", "generated"))
+    return metadata
 
 
 def _profile_payload(profile) -> dict | None:
@@ -311,6 +340,7 @@ def _plan_payload(plan) -> dict | None:
         "status": plan.status,
         "starts_on": plan.starts_on.isoformat(),
         "ends_on": plan.ends_on.isoformat(),
+        "metadata": dict(plan.metadata),
         "workouts": [workout.to_payload() for workout in plan.workouts],
     }
 

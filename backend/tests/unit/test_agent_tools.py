@@ -13,6 +13,7 @@ from src.application.agent_tools import (
     TrainingPlanTool,
     WorkoutAdjustmentProposalTool,
 )
+from src.application.training_targets import build_pace_profile
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.athlete_race import AthleteProfile, RaceGoal
@@ -112,6 +113,7 @@ class FakeTrainingPlanStore:
             starts_on=plan.starts_on,
             ends_on=plan.ends_on,
             workouts=plan.workouts,
+            metadata=plan.metadata,
         )
         self.active_plans.append(saved)
         return saved
@@ -151,7 +153,7 @@ class FakeMemoryCandidateStore:
         return saved
 
 
-def _profile(user_id: str = "user-1") -> AthleteProfile:
+def _profile(user_id: str = "user-1", training_preferences: dict | None = None) -> AthleteProfile:
     return AthleteProfile.create(
         user_id=user_id,
         timezone="Asia/Taipei",
@@ -160,6 +162,7 @@ def _profile(user_id: str = "user-1") -> AthleteProfile:
         preferred_training_days=("tuesday", "thursday", "sunday"),
         preferred_long_run_day="sunday",
         max_runs_per_week=5,
+        training_preferences=training_preferences,
         injury_status="recent",
         injury_areas=("shin",),
         injury_notes="Previous shin soreness.",
@@ -381,6 +384,84 @@ def test_create_training_plan_tool_stores_active_plan_immediately() -> None:
     assert payload["training_plan"]["id"] == "plan-1"
     assert payload["training_plan"]["status"] == "active"
     assert plan_store.active_plans[0].status == "active"
+
+
+def test_create_training_plan_tool_enriches_workout_steps_from_trusted_pace_profile() -> None:
+    plan_store = FakeTrainingPlanStore(None)
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=plan_store)
+    pace_profile = build_pace_profile(profile=_profile(training_preferences={"threshold_pace_seconds_per_km": 300}))
+
+    payload = tool.run(
+        user_id="user-1",
+        arguments={
+            "name": "Generated Detailed Plan",
+            "race_id": "race-1",
+            "starts_on": "2027-01-01",
+            "ends_on": "2027-01-28",
+            "trusted_context": {"pace_profile": pace_profile.to_payload()},
+            "workouts": [
+                {
+                    "scheduled_for": "2027-01-05",
+                    "workout_type": "interval",
+                    "purpose": "Improve 5K-specific aerobic power",
+                    "planned_duration_minutes": 55,
+                    "steps": [
+                        {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
+                        {
+                            "type": "repeat",
+                            "repeat_count": 4,
+                            "steps": [
+                                {
+                                    "type": "work",
+                                    "distance_meters": 800,
+                                    "target": {"kind": "pace", "zone": "interval", "rpe": 8},
+                                },
+                                {
+                                    "type": "recovery",
+                                    "distance_meters": 400,
+                                    "target": {"kind": "pace", "zone": "easy", "rpe": 3},
+                                },
+                            ],
+                        },
+                        {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+                    ],
+                }
+            ],
+        },
+    )
+
+    work_target = payload["training_plan"]["workouts"][0]["steps"][1]["steps"][0]["target"]
+    assert work_target["pace_range_seconds_per_km"] == [276, 291]
+    assert work_target["confidence"] == "high"
+
+
+def test_create_training_plan_tool_preserves_trusted_continuity_metadata() -> None:
+    plan_store = FakeTrainingPlanStore(None)
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=plan_store)
+
+    payload = tool.run(
+        user_id="user-1",
+        arguments={
+            "name": "Generated Continuation",
+            "race_id": "race-1",
+            "starts_on": "2027-02-01",
+            "ends_on": "2027-03-01",
+            "metadata": {"weekly_rationales": [{"week_index": 1, "phase": "build"}]},
+            "trusted_context": {
+                "plan_series_id": "series-1",
+                "previous_plan_id": "plan-previous",
+                "version": 3,
+                "continuity_summary": "Continue the existing threshold-first build.",
+            },
+            "workouts": [],
+        },
+    )
+
+    assert payload["training_plan"]["metadata"]["plan_series_id"] == "series-1"
+    assert payload["training_plan"]["metadata"]["previous_plan_id"] == "plan-previous"
+    assert payload["training_plan"]["metadata"]["version"] == 3
+    assert payload["training_plan"]["metadata"]["generation_mode"] == "generated"
+    assert payload["training_plan"]["metadata"]["weekly_rationales"] == [{"week_index": 1, "phase": "build"}]
 
 
 def test_memory_candidate_tool_stores_candidate_without_mutating_profile() -> None:

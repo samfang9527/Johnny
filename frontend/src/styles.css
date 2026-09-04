@@ -300,8 +300,21 @@ button:disabled {
 }
 
 .workout-card {
+  display: grid;
+  gap: 0.9rem;
   grid-column: 1 / span 7;
   grid-row: 2;
+}
+
+.workout-card__actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.workout-step-summary {
+  margin: 0;
+  color: var(--color-lane-chalk) !important;
+  font-weight: 700;
 }
 
 .race-card {
@@ -822,6 +835,12 @@ button:disabled {
   gap: 1rem;
 }
 
+.schedule-row__meta {
+  display: grid;
+  justify-items: end;
+  gap: 0.65rem;
+}
+
 .schedule-row__date {
   display: grid;
   gap: 0.2rem;
@@ -932,6 +951,64 @@ button:disabled {
 }
 
 .app-dialog__panel h3 {
+  margin: 0;
+}
+
+.workout-detail-dialog {
+  display: grid;
+  gap: 1rem;
+}
+
+.workout-detail-summary {
+  margin: 0;
+  color: var(--color-lane-chalk) !important;
+  font-weight: 700;
+}
+
+.workout-step-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.workout-step-row {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 0.8fr) minmax(7rem, 1fr) minmax(8rem, 1.2fr);
+  gap: 0.75rem;
+  align-items: center;
+  min-height: 3rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(246, 239, 228, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(246, 239, 228, 0.05);
+}
+
+.workout-step-row--depth-1 {
+  margin-left: 1rem;
+  border-color: rgba(232, 184, 109, 0.24);
+}
+
+.workout-step-row strong,
+.workout-step-row span,
+.workout-step-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workout-step-row small {
+  grid-column: 1 / -1;
+  color: var(--color-muted-chalk);
+}
+
+.coach-note {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(232, 184, 109, 0.24);
+  border-radius: var(--radius-md);
+  background: rgba(232, 184, 109, 0.08);
+}
+
+.coach-note p {
   margin: 0;
 }
 
@@ -1501,6 +1578,18 @@ button:disabled {
 
   .recommendation-strip__meta {
     width: 100%;
+  }
+
+  .schedule-row__meta {
+    justify-items: start;
+  }
+
+  .workout-step-row {
+    grid-template-columns: 1fr;
+  }
+
+  .workout-step-row--depth-1 {
+    margin-left: 0.5rem;
   }
 
   .action-row {

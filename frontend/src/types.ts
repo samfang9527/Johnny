@@ -75,6 +75,31 @@ export interface EvidenceItem {
   tone?: 'info' | 'warning' | 'danger' | 'success'
 }
 
+export type WorkoutStepType = 'warmup' | 'work' | 'recovery' | 'cooldown' | 'repeat' | 'drill' | 'stride' | 'hill' | 'free_run'
+export type WorkoutTargetKind = 'pace' | 'heart_rate' | 'rpe'
+export type WorkoutTargetConfidence = 'high' | 'medium' | 'low'
+
+export interface WorkoutTarget {
+  kind: WorkoutTargetKind
+  zone?: string | null
+  heartRateZone?: string | null
+  rpe?: number | null
+  paceRangeSecondsPerKm?: number[] | null
+  heartRateRangeBpm?: number[] | null
+  confidence?: WorkoutTargetConfidence | null
+}
+
+export interface WorkoutStep {
+  type: WorkoutStepType
+  durationSeconds?: number | null
+  distanceMeters?: number | null
+  target?: WorkoutTarget | null
+  repeatCount?: number | null
+  steps?: WorkoutStep[]
+  notes?: string | null
+  gradeNotes?: string | null
+}
+
 export interface WorkoutSummary {
   id: string
   weekday: string
@@ -85,6 +110,10 @@ export interface WorkoutSummary {
   duration?: string
   pace?: string
   heartRateZone?: string
+  phase?: string
+  coachNote?: string
+  stepSummary?: string
+  steps?: WorkoutStep[]
   status: string
 }
 

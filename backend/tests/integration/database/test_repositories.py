@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics, match_activity_to_workout
 from src.domain.athlete_race import AthletePreferences, AthleteProfile, RaceGoal
-from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout
+from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout, WorkoutStep, WorkoutTarget
 from src.infrastructure.database.models import (
     ActivityModel,
     AgentContextSourceModel,
@@ -19,6 +19,7 @@ from src.infrastructure.database.models import (
     RaceModel,
     TrainingPlanModel,
     UserModel,
+    WorkoutModel,
 )
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
@@ -134,6 +135,93 @@ def test_training_plan_repository_round_trips_plan_workouts_and_ownership(sqlite
         assert loaded.workouts[0].planned_distance_meters == 8_000
         assert loaded.workouts[0].pace_range_seconds_per_km == (330, 390)
         assert loaded.workouts[0].heart_rate_zone == "z2"
+        assert loaded.workouts[0].steps[0].step_type == "free_run"
+        assert loaded.workouts[0].steps[0].duration_seconds == 45 * 60
+        assert loaded.workouts[0].steps[0].distance_meters == 8_000
+        assert loaded.workouts[0].steps[0].target is not None
+        assert loaded.workouts[0].steps[0].target.zone == "easy"
+        stored_workout = uow.session.get(WorkoutModel, loaded.workouts[0].id)
+        assert stored_workout.details["steps"] == []
+
+
+def test_training_plan_repository_round_trips_structured_steps_and_plan_metadata(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="detailed-plan@example.com", display_name="Detailed Plan")
+        uow.session.add(user)
+        uow.session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(uow.session)
+        saved = repository.save_plan(
+            user.id,
+            TrainingPlan.create(
+                user_id=user.id,
+                name="Detailed Build",
+                starts_on=date(2027, 1, 1),
+                ends_on=date(2027, 1, 31),
+                metadata={
+                    "plan_series_id": "series-1",
+                    "previous_plan_id": "plan-old",
+                    "version": 2,
+                    "continuity_summary": "Continue build phase.",
+                },
+                workouts=(
+                    Workout.create(
+                        scheduled_for=date(2027, 1, 5),
+                        workout_type="interval",
+                        purpose="Improve 5K-specific aerobic power",
+                        planned_duration_minutes=55,
+                        phase="build",
+                        coach_note="Keep the first two reps controlled.",
+                        steps=(
+                            WorkoutStep.create(
+                                step_type="warmup",
+                                duration_seconds=900,
+                                target=WorkoutTarget.rpe(3),
+                            ),
+                            WorkoutStep.create(
+                                step_type="repeat",
+                                repeat_count=4,
+                                steps=(
+                                    WorkoutStep.create(
+                                        step_type="work",
+                                        distance_meters=800,
+                                        target=WorkoutTarget.pace(
+                                            zone="interval",
+                                            pace_range_seconds_per_km=(275, 285),
+                                            rpe=8,
+                                            confidence="high",
+                                        ),
+                                    ),
+                                    WorkoutStep.create(
+                                        step_type="recovery",
+                                        distance_meters=400,
+                                        target=WorkoutTarget.pace(zone="easy", rpe=3),
+                                    ),
+                                ),
+                            ),
+                            WorkoutStep.create(
+                                step_type="cooldown",
+                                duration_seconds=600,
+                                target=WorkoutTarget.rpe(2),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded = SqlAlchemyTrainingPlanRepository(uow.session).get_plan_for_user(user.id, saved.id)
+
+        assert loaded is not None
+        assert loaded.metadata["plan_series_id"] == "series-1"
+        assert loaded.metadata["version"] == 2
+        assert loaded.workouts[0].phase == "build"
+        assert loaded.workouts[0].coach_note == "Keep the first two reps controlled."
+        assert loaded.workouts[0].compact_summary == "15 min warmup + 4 x (800m interval / 400m easy) + 10 min cooldown"
+        assert loaded.workouts[0].steps[1].repeat_count == 4
 
 
 def test_training_plan_repository_persists_workout_statuses(sqlite_session_factory) -> None:

@@ -42,6 +42,69 @@ def test_training_plan_routes_create_load_and_update_workout_status_with_tenant_
     assert updated.json()["data"]["workouts"][0]["status"] == "completed"
 
 
+def test_training_plan_routes_accept_and_return_structured_workout_details() -> None:
+    client = create_sqlite_test_client()
+
+    created = client.post(
+        "/api/v1/training-plans",
+        headers={"X-Johnny-User-Id": "user-1"},
+        json={
+            "name": "Detailed Build",
+            "starts_on": "2027-01-01",
+            "ends_on": "2027-01-31",
+            "metadata": {
+                "plan_series_id": "series-1",
+                "previous_plan_id": "plan-old",
+                "version": 2,
+            },
+            "workouts": [
+                {
+                    "scheduled_for": "2027-01-05",
+                    "workout_type": "interval",
+                    "purpose": "Improve 5K-specific aerobic power",
+                    "planned_duration_minutes": 55,
+                    "phase": "build",
+                    "coach_note": "Keep the first two reps controlled.",
+                    "steps": [
+                        {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
+                        {
+                            "type": "repeat",
+                            "repeat_count": 4,
+                            "steps": [
+                                {
+                                    "type": "work",
+                                    "distance_meters": 800,
+                                    "target": {
+                                        "kind": "pace",
+                                        "zone": "interval",
+                                        "pace_range_seconds_per_km": [275, 285],
+                                        "rpe": 8,
+                                    },
+                                },
+                                {
+                                    "type": "recovery",
+                                    "distance_meters": 400,
+                                    "target": {"kind": "pace", "zone": "easy", "rpe": 3},
+                                },
+                            ],
+                        },
+                        {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert created.status_code == 200
+    plan = created.json()["data"]
+    workout = plan["workouts"][0]
+    assert plan["metadata"]["plan_series_id"] == "series-1"
+    assert workout["phase"] == "build"
+    assert workout["coach_note"] == "Keep the first two reps controlled."
+    assert workout["compact_summary"] == "15 min warmup + 4 x (800m interval / 400m easy) + 10 min cooldown"
+    assert workout["steps"][1]["repeat_count"] == 4
+
+
 def test_activity_and_health_routes_create_and_list_current_user_data() -> None:
     client = create_sqlite_test_client()
     activity = client.post(

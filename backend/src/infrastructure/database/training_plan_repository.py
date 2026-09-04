@@ -5,7 +5,7 @@ from datetime import date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout
+from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout, WorkoutStep, WorkoutTarget
 
 from .models import PlanAdjustmentModel, RaceModel, TrainingPlanModel, WorkoutModel
 
@@ -29,6 +29,7 @@ class SqlAlchemyTrainingPlanRepository:
             name=name,
             starts_on=starts_on,
             ends_on=ends_on,
+            metadata_json={},
         )
         self._session.add(plan)
         self._session.flush()
@@ -123,6 +124,7 @@ class SqlAlchemyTrainingPlanRepository:
         model.status = plan.status
         model.starts_on = plan.starts_on
         model.ends_on = plan.ends_on
+        model.metadata_json = dict(plan.metadata)
         model.workouts = [_workout_model_from_domain(workout) for workout in plan.workouts]
         self._session.flush()
         return _plan_from_model(model)
@@ -234,6 +236,7 @@ class SqlAlchemyTrainingPlanRepository:
             status=plan.status,
             starts_on=plan.starts_on,
             ends_on=plan.ends_on,
+            metadata_json=dict(plan.metadata),
         )
         self._session.add(model)
         return model
@@ -299,6 +302,9 @@ def _workout_details(workout: Workout) -> dict:
         if workout.pace_range_seconds_per_km is not None
         else None,
         "heart_rate_zone": workout.heart_rate_zone,
+        "phase": workout.phase,
+        "coach_note": workout.coach_note,
+        "steps": [step.to_payload() for step in workout.steps],
     }
 
 
@@ -311,6 +317,7 @@ def _plan_from_model(model: TrainingPlanModel) -> TrainingPlan:
         status=model.status,
         starts_on=model.starts_on,
         ends_on=model.ends_on,
+        metadata=model.metadata_json or {},
         workouts=tuple(_workout_from_model(workout) for workout in model.workouts),
     )
 
@@ -318,6 +325,9 @@ def _plan_from_model(model: TrainingPlanModel) -> TrainingPlan:
 def _workout_from_model(model: WorkoutModel) -> Workout:
     details = model.details or {}
     pace_range = details.get("pace_range_seconds_per_km")
+    steps = tuple(details.get("steps") or ())
+    if not steps:
+        steps = _synthetic_free_run_steps(model=model, details=details, pace_range=pace_range)
     return Workout.create(
         id=model.id,
         scheduled_for=model.scheduled_for,
@@ -327,8 +337,50 @@ def _workout_from_model(model: WorkoutModel) -> Workout:
         planned_distance_meters=details.get("planned_distance_meters"),
         pace_range_seconds_per_km=tuple(pace_range) if pace_range is not None else None,
         heart_rate_zone=details.get("heart_rate_zone"),
+        phase=details.get("phase"),
+        coach_note=details.get("coach_note"),
+        steps=steps,
         status=model.status,
     )
+
+
+def _synthetic_free_run_steps(*, model: WorkoutModel, details: dict, pace_range) -> tuple[WorkoutStep, ...]:
+    duration_seconds = model.planned_duration_minutes * 60 if model.planned_duration_minutes is not None else None
+    distance_meters = details.get("planned_distance_meters")
+    if duration_seconds is None and distance_meters is None:
+        return ()
+    target = _synthetic_target(model.workout_type, details=details, pace_range=pace_range)
+    return (
+        WorkoutStep.create(
+            step_type="free_run",
+            duration_seconds=duration_seconds,
+            distance_meters=distance_meters,
+            target=target,
+        ),
+    )
+
+
+def _synthetic_target(workout_type: str, *, details: dict, pace_range) -> WorkoutTarget | None:
+    if pace_range is not None:
+        return WorkoutTarget.pace(
+            zone=_pace_zone_for_workout_type(workout_type),
+            pace_range_seconds_per_km=tuple(pace_range),
+            confidence="low",
+        )
+    heart_rate_zone = details.get("heart_rate_zone")
+    if heart_rate_zone:
+        return WorkoutTarget.heart_rate(heart_rate_zone=heart_rate_zone, confidence="low")
+    return None
+
+
+def _pace_zone_for_workout_type(workout_type: str) -> str:
+    return {
+        "tempo": "threshold",
+        "interval": "interval",
+        "long_run": "easy",
+        "easy_run": "easy",
+        "recovery_run": "easy",
+    }.get(workout_type, "rpe_only")
 
 
 def _adjustment_payload(proposal: PlanAdjustmentProposal) -> dict:

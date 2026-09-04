@@ -31,6 +31,19 @@ The system SHALL render Today as a decision cockpit that prioritizes race contex
 - **THEN** the UI shows a clear sparse-data state that identifies missing signals
 - **AND** the UI provides a path to `資料來源` for binding data providers
 
+#### Scenario: Showing a compact structured workout summary
+
+- **GIVEN** today's workout includes structured steps
+- **WHEN** the Today screen renders
+- **THEN** the workout card shows a compact deterministic summary such as `15 min warmup + 4 x (800m interval / 400m easy) + 10 min cooldown`
+- **AND** the summary does not replace the workout purpose or status
+
+#### Scenario: Opening workout detail
+
+- **GIVEN** today's workout includes structured steps
+- **WHEN** the user opens workout details
+- **THEN** a view-only modal shows the ordered steps, nested repeat blocks, target zones, computed target snapshots, and optional coach note
+
 ### Requirement: Recommendation decision strip
 
 The system SHALL display recommendation decisions using the `decision strip` pattern from `DESIGN.md`.
@@ -55,12 +68,18 @@ The system SHALL display planned workouts in a calendar-oriented schedule that r
 #### Scenario: User opens the schedule view
 
 - **WHEN** planned workouts are available
-- **THEN** workouts are grouped by date with type, purpose, distance or duration, pace or heart-rate guidance when available, and status
+- **THEN** workouts are grouped by date with type, purpose, distance or duration, pace or heart-rate guidance when available, compact structured summary when available, and status
 
 #### Scenario: User opens the schedule on a narrow viewport
 
 - **WHEN** the viewport is narrow
 - **THEN** the schedule uses a list-first layout that preserves workout details and actions without clipping text
+
+#### Scenario: Rendering legacy workouts
+
+- **GIVEN** a workout has no structured steps
+- **WHEN** Today or schedule UI renders it
+- **THEN** the UI preserves the current simple workout display
 
 ### Requirement: Data source binding entry point
 

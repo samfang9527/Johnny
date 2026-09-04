@@ -140,7 +140,12 @@ def ensure_current_user(session: Session, current_user: CurrentUser) -> UserMode
     return user
 
 
-def build_request_companion_agent(session: Session) -> RunningCompanionAgent:
+def build_request_companion_agent(
+    session: Session,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> RunningCompanionAgent:
     activities = SqlAlchemyActivityRepository(session)
     training_plans = SqlAlchemyTrainingPlanRepository(session)
     athlete_races = SqlAlchemyAthleteRaceRepository(session)
@@ -160,6 +165,15 @@ def build_request_companion_agent(session: Session) -> RunningCompanionAgent:
             MemoryCandidateTool(memory_candidates=SqlAlchemyMemoryCandidateRepository(session)),
         )
     )
+    if provider == "local":
+        return RunningCompanionAgent(
+            run_store=SqlAlchemyAgentRunRepository(session),
+            model_gateway=LocalCompanionModelGateway(),
+            tools=tools,
+            prompt_version="running-companion-v1",
+            provider="local",
+            model=model or "deterministic-local-companion",
+        )
     settings = load_llm_settings()
     if settings is not None:
         return build_running_companion_agent(

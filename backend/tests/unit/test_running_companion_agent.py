@@ -102,6 +102,19 @@ class FailingOnceTrainingPlanTool:
         return {"training_plan": {"id": "plan-1", "status": "active"}}
 
 
+class FailingTwiceTrainingPlanTool:
+    name = "createTrainingPlan"
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def run(self, *, user_id: str, arguments: dict) -> dict:
+        self.calls.append({"user_id": user_id, "arguments": arguments})
+        if len(self.calls) <= 2:
+            raise ValueError("workout step requires distance or duration")
+        return {"training_plan": {"id": "fallback-plan", "status": "active"}}
+
+
 def test_running_companion_agent_records_daily_recommendation_run_and_tool_steps() -> None:
     run_store = FakeRunStore()
     today_tool = StaticTool(
@@ -465,6 +478,157 @@ def test_training_plan_generation_repairs_invalid_plan_once() -> None:
     assert result.recommendation_id is None
     assert len(model.requests) == 2
     assert "repair" in model.requests[1].messages[-1]["content"].lower()
+
+
+def test_training_plan_generation_preloads_planning_context_and_pace_profile() -> None:
+    run_store = FakeRunStore()
+    athlete_tool = StaticTool(
+        "getAthleteContext",
+        {
+            "profile": {
+                "id": "profile-1",
+                "user_id": "user-1",
+                "timezone": "Asia/Taipei",
+                "experience_level": "intermediate",
+                "current_weekly_mileage_km": 42,
+                "preferred_training_days": ["tuesday", "thursday", "sunday"],
+                "preferred_long_run_day": "sunday",
+                "max_runs_per_week": 5,
+                "unit_preference": "metric",
+                "training_preferences": {"threshold_pace_seconds_per_km": 300},
+            },
+            "race_goals": [
+                {
+                    "id": "race-1",
+                    "user_id": "user-1",
+                    "name": "Taipei 10K",
+                    "race_date": "2027-03-07",
+                    "distance_meters": 10_000,
+                    "target_finish_seconds": 3_000,
+                    "priority": "primary",
+                    "status": "planned",
+                    "target_pace_seconds_per_km": 300,
+                }
+            ],
+        },
+    )
+    recent_tool = StaticTool("getRecentActivities", {"activities": [{"id": "activity-1", "average_pace_seconds_per_km": 320}]})
+    current_plan_tool = StaticTool(
+        "getTrainingPlan",
+        {
+            "training_plan": {
+                "id": "plan-current",
+                "race_id": "race-1",
+                "name": "Current 10K Build",
+                "status": "active",
+                "starts_on": "2026-12-01",
+                "ends_on": "2027-03-07",
+                "metadata": {
+                    "plan_series_id": "series-10k",
+                    "version": 2,
+                    "continuity_summary": "Build threshold first, then sharpen late.",
+                },
+                "workouts": [],
+            },
+        },
+    )
+    plan_tool = StaticTool("createTrainingPlan", {"training_plan": {"id": "plan-1", "status": "active"}})
+    model = FakeModelGateway(
+        ModelResponse(
+            content="Created active plan.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createTrainingPlan",
+                    arguments={
+                        "name": "Generated Plan",
+                        "race_id": "race-1",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [],
+                    },
+                ),
+            ),
+        )
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((athlete_tool, recent_tool, current_plan_tool, plan_tool)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_training_plan_generation(
+        user_id="user-1",
+        starts_on=date(2027, 1, 1),
+        plan_type="race",
+    )
+
+    assert result.status == "completed"
+    assert model.requests[0].context["athlete_context"]["profile"]["timezone"] == "Asia/Taipei"
+    assert model.requests[0].context["pace_profile"]["source"] == "threshold_pace"
+    assert model.requests[0].context["pace_profile"]["zones"]["interval"] == [276, 291]
+    assert model.requests[0].context["last_active_plan"]["id"] == "plan-current"
+    assert model.requests[0].context["plan_series_id"] == "series-10k"
+    assert model.requests[0].context["previous_plan_id"] == "plan-current"
+    assert model.requests[0].context["version"] == 3
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["pace_profile"]["source"] == "threshold_pace"
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_series_id"] == "series-10k"
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["previous_plan_id"] == "plan-current"
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["version"] == 3
+
+
+def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> None:
+    run_store = FakeRunStore()
+    plan_tool = FailingTwiceTrainingPlanTool()
+    model = FakeModelGateway(
+        ModelResponse(
+            content="Invalid plan.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createTrainingPlan",
+                    arguments={
+                        "name": "Broken",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [
+                            {
+                                "scheduled_for": "2027-01-03",
+                                "workout_type": "interval",
+                                "purpose": "Broken",
+                                "steps": [{"type": "work", "target": {"kind": "rpe", "rpe": 8}}],
+                            }
+                        ],
+                    },
+                ),
+            ),
+        ),
+        ModelResponse(
+            content="Still invalid.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createTrainingPlan",
+                    arguments={
+                        "name": "Still Broken",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [],
+                    },
+                ),
+            ),
+        ),
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((plan_tool,)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_training_plan_generation(user_id="user-1", starts_on=date(2027, 1, 1), plan_type="base")
+
+    assert result.status == "completed"
+    assert len(plan_tool.calls) == 3
+    assert plan_tool.calls[-1]["arguments"]["name"] == "Fallback Four Week Plan"
 
 
 def test_training_plan_generation_fails_when_model_never_creates_required_plan() -> None:

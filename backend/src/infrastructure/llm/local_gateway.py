@@ -83,21 +83,14 @@ def _plan_arguments(context: dict) -> dict:
     starts_on = _date_from_context(context.get("starts_on")) or date.today()
     ends_on = starts_on + timedelta(days=27)
     workouts = []
-    workout_types = ("easy_run", "strength", "tempo", "long_run")
+    workout_types = ("easy_run", "interval", "tempo", "long_run")
     for week in range(4):
         week_start = starts_on + timedelta(days=week * 7)
         for offset, workout_type in zip((1, 3, 5, 6), workout_types):
             scheduled_for = week_start + timedelta(days=offset)
             if scheduled_for > ends_on:
                 continue
-            workouts.append(
-                {
-                    "scheduled_for": scheduled_for.isoformat(),
-                    "workout_type": workout_type,
-                    "purpose": _workout_purpose(workout_type),
-                    "planned_duration_minutes": 30 + week * 5 + offset * 3,
-                }
-            )
+            workouts.append(_workout_payload(scheduled_for=scheduled_for, workout_type=workout_type, week=week, offset=offset))
     return {
         "name": "Local Generated Four Week Plan",
         "race_id": context.get("selected_race_id"),
@@ -118,7 +111,63 @@ def _date_from_context(value) -> date | None:
 def _workout_purpose(workout_type: str) -> str:
     return {
         "easy_run": "Aerobic base",
+        "interval": "Controlled speed development",
         "strength": "Durability and injury resistance",
         "tempo": "Sustained threshold development",
         "long_run": "Endurance progression",
     }[workout_type]
+
+
+def _workout_payload(*, scheduled_for: date, workout_type: str, week: int, offset: int) -> dict:
+    duration_minutes = 30 + week * 5 + offset * 3
+    if workout_type == "interval":
+        return {
+            "scheduled_for": scheduled_for.isoformat(),
+            "workout_type": workout_type,
+            "purpose": _workout_purpose(workout_type),
+            "planned_duration_minutes": max(duration_minutes, 50),
+            "phase": "build",
+            "coach_note": "Keep every repeat controlled and recover with an easy jog.",
+            "steps": [
+                {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
+                {
+                    "type": "repeat",
+                    "repeat_count": 4 + min(week, 2),
+                    "steps": [
+                        {"type": "work", "distance_meters": 800, "target": {"kind": "pace", "zone": "interval", "rpe": 8}},
+                        {"type": "recovery", "distance_meters": 400, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
+                    ],
+                },
+                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+            ],
+        }
+    if workout_type == "tempo":
+        work_duration_seconds = 1_500 + week * 120
+        planned_duration_minutes = (600 + work_duration_seconds + 600 + 59) // 60
+        return {
+            "scheduled_for": scheduled_for.isoformat(),
+            "workout_type": workout_type,
+            "purpose": _workout_purpose(workout_type),
+            "planned_duration_minutes": planned_duration_minutes,
+            "phase": "build",
+            "coach_note": "Keep the tempo effort smooth and sustainable.",
+            "steps": [
+                {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
+                {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
+                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+            ],
+        }
+    return {
+        "scheduled_for": scheduled_for.isoformat(),
+        "workout_type": workout_type,
+        "purpose": _workout_purpose(workout_type),
+        "planned_duration_minutes": duration_minutes,
+        "phase": "build",
+        "steps": [
+            {
+                "type": "free_run",
+                "duration_seconds": duration_minutes * 60,
+                "target": {"kind": "pace", "zone": "easy", "rpe": 3},
+            }
+        ],
+    }

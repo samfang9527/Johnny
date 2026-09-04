@@ -133,7 +133,7 @@ def _get(value, name: str, default=None):
 def _tool_description(tool_name: str) -> str:
     descriptions = {
         "getAthleteContext": "Read user-scoped athlete profile and race goal context.",
-        "getTrainingPlan": "Read one user-scoped training plan by id.",
+        "getTrainingPlan": "Read one user-scoped training plan by id, or the current active plan when training_plan_id is null.",
         "getTodayWorkout": "Read deterministic scheduled workout context for a user-scoped date.",
         "getRecentActivities": "Read user-scoped recent activity history within a date window.",
         "getRecoveryState": "Read deterministic recovery state for a user-scoped date.",
@@ -156,7 +156,7 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
             required=[],
         ),
         "getTrainingPlan": _object_schema(
-            properties={"training_plan_id": {"type": "string"}},
+            properties={"training_plan_id": {"type": ["string", "null"]}},
             required=["training_plan_id"],
         ),
         "getTodayWorkout": _date_schema(),
@@ -177,9 +177,10 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
                 "race_id": {"type": ["string", "null"]},
                 "starts_on": {"type": "string"},
                 "ends_on": {"type": "string"},
+                "metadata": _plan_metadata_schema(),
                 "workouts": {"type": "array", "items": _workout_payload_schema()},
             },
-            required=["name", "race_id", "starts_on", "ends_on", "workouts"],
+            required=["name", "race_id", "starts_on", "ends_on", "metadata", "workouts"],
         ),
         "createRecommendation": _object_schema(
             properties={
@@ -298,6 +299,9 @@ def _workout_payload_schema() -> dict[str, Any]:
                 "items": {"type": "integer"},
             },
             "heart_rate_zone": {"type": ["string", "null"]},
+            "phase": {"type": ["string", "null"]},
+            "coach_note": {"type": ["string", "null"]},
+            "steps": {"type": "array", "items": _workout_step_schema(depth=0)},
             "status": {"type": "string", "enum": ["planned", "adjusted", "completed", "skipped"]},
         },
         required=[
@@ -309,9 +313,119 @@ def _workout_payload_schema() -> dict[str, Any]:
             "planned_distance_meters",
             "pace_range_seconds_per_km",
             "heart_rate_zone",
+            "phase",
+            "coach_note",
+            "steps",
             "status",
         ],
     )
+
+
+def _plan_metadata_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "plan_series_id": {"type": ["string", "null"]},
+            "previous_plan_id": {"type": ["string", "null"]},
+            "version": {"type": ["integer", "null"]},
+            "generation_mode": {"type": ["string", "null"]},
+            "continuity_summary": {"type": ["string", "null"]},
+            "weekly_rationales": {"type": "array", "items": _weekly_rationale_schema()},
+        },
+        required=[
+            "plan_series_id",
+            "previous_plan_id",
+            "version",
+            "generation_mode",
+            "continuity_summary",
+            "weekly_rationales",
+        ],
+    )
+
+
+def _weekly_rationale_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "week_index": {"type": "integer"},
+            "phase": {"type": "string"},
+            "focus": {"type": "string"},
+            "load_progression": {"type": "string"},
+            "key_workouts": {"type": "array", "items": {"type": "string"}},
+        },
+        required=["week_index", "phase", "focus", "load_progression", "key_workouts"],
+    )
+
+
+def _workout_step_schema(*, depth: int) -> dict[str, Any]:
+    nested_items = _workout_step_schema(depth=depth + 1) if depth < 2 else _terminal_workout_step_schema()
+    return _object_schema(
+        properties={
+            "type": {
+                "type": "string",
+                "enum": [
+                    "warmup",
+                    "work",
+                    "recovery",
+                    "cooldown",
+                    "repeat",
+                    "drill",
+                    "stride",
+                    "hill",
+                    "free_run",
+                ],
+            },
+            "duration_seconds": {"type": ["integer", "null"], "minimum": 1},
+            "distance_meters": {"type": ["integer", "null"], "minimum": 1},
+            "target": {"type": ["object", "null"], **_workout_target_schema()},
+            "repeat_count": {"type": ["integer", "null"], "minimum": 1},
+            "steps": {"type": "array", "items": nested_items},
+            "notes": {"type": ["string", "null"]},
+            "grade_notes": {"type": ["string", "null"]},
+        },
+        required=["type", "duration_seconds", "distance_meters", "target", "repeat_count", "steps", "notes", "grade_notes"],
+    )
+
+
+def _terminal_workout_step_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "type": {"type": "string", "enum": ["warmup", "work", "recovery", "cooldown", "drill", "stride", "hill", "free_run"]},
+            "duration_seconds": {"type": ["integer", "null"], "minimum": 1},
+            "distance_meters": {"type": ["integer", "null"], "minimum": 1},
+            "target": {"type": ["object", "null"], **_workout_target_schema()},
+            "repeat_count": {"type": ["integer", "null"], "minimum": 1},
+            "steps": {"type": "array", "items": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+            "notes": {"type": ["string", "null"]},
+            "grade_notes": {"type": ["string", "null"]},
+        },
+        required=["type", "duration_seconds", "distance_meters", "target", "repeat_count", "steps", "notes", "grade_notes"],
+    )
+
+
+def _workout_target_schema() -> dict[str, Any]:
+    return {
+        "properties": {
+            "kind": {"type": "string", "enum": ["pace", "heart_rate", "rpe"]},
+            "zone": {
+                "type": ["string", "null"],
+                "enum": ["easy", "steady", "marathon", "threshold", "interval", "repetition", "rpe_only", None],
+            },
+            "heart_rate_zone": {"type": ["string", "null"]},
+            "rpe": {"type": ["integer", "null"], "minimum": 1},
+            "pace_range_seconds_per_km": {"type": ["array", "null"], "items": {"type": "integer"}},
+            "heart_rate_range_bpm": {"type": ["array", "null"], "items": {"type": "integer"}},
+            "confidence": {"type": ["string", "null"], "enum": ["high", "medium", "low", None]},
+        },
+        "required": [
+            "kind",
+            "zone",
+            "heart_rate_zone",
+            "rpe",
+            "pace_range_seconds_per_km",
+            "heart_rate_range_bpm",
+            "confidence",
+        ],
+        "additionalProperties": False,
+    }
 
 
 def _memory_evidence_schema() -> dict[str, Any]:

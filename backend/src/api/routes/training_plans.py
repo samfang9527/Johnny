@@ -78,6 +78,7 @@ def update_workout_status(
             status=plan.status,
             starts_on=plan.starts_on,
             ends_on=plan.ends_on,
+            metadata=plan.metadata,
             workouts=tuple(updated if item.id == workout_id else item for item in plan.workouts),
         ),
     )
@@ -92,6 +93,7 @@ def _plan_from_request(user_id: str, payload: TrainingPlanRequest) -> TrainingPl
         starts_on=payload.starts_on,
         ends_on=payload.ends_on,
         status=payload.status,
+        metadata=payload.metadata,
         workouts=tuple(
             Workout.create(
                 scheduled_for=workout.scheduled_for,
@@ -103,6 +105,9 @@ def _plan_from_request(user_id: str, payload: TrainingPlanRequest) -> TrainingPl
                 if workout.pace_range_seconds_per_km is not None
                 else None,
                 heart_rate_zone=workout.heart_rate_zone,
+                phase=workout.phase,
+                coach_note=workout.coach_note,
+                steps=tuple(step.model_dump() for step in workout.steps),
                 status=workout.status,
             )
             for workout in payload.workouts
@@ -119,6 +124,7 @@ def _plan_response(plan: TrainingPlan) -> TrainingPlanResponse:
         status=plan.status,
         starts_on=plan.starts_on,
         ends_on=plan.ends_on,
+        metadata=plan.metadata,
         workouts=[
             WorkoutResponse(
                 id=workout.id,
@@ -131,6 +137,10 @@ def _plan_response(plan: TrainingPlan) -> TrainingPlanResponse:
                 if workout.pace_range_seconds_per_km is not None
                 else None,
                 heart_rate_zone=workout.heart_rate_zone,
+                phase=workout.phase,
+                coach_note=workout.coach_note,
+                steps=[step.to_payload() for step in workout.steps],
+                compact_summary=workout.compact_summary,
                 status=workout.status,
             )
             for workout in plan.workouts

@@ -161,6 +161,7 @@ class TrainingPlanModel(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     starts_on: Mapped[date] = mapped_column(Date, nullable=False)
     ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     user: Mapped[UserModel] = relationship(back_populates="training_plans")
     race: Mapped[RaceModel | None] = relationship(back_populates="training_plans")

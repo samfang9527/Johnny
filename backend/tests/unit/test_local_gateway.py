@@ -24,3 +24,7 @@ def test_local_gateway_generates_active_training_plan_tool_call_only() -> None:
     assert plan_call.arguments["starts_on"] == "2027-01-01"
     assert plan_call.arguments["ends_on"] == "2027-01-28"
     assert 12 <= len(plan_call.arguments["workouts"]) <= 20
+    interval = next(workout for workout in plan_call.arguments["workouts"] if workout["workout_type"] == "interval")
+    assert interval["steps"][1]["type"] == "repeat"
+    assert interval["steps"][1]["repeat_count"] >= 4
+    assert interval["steps"][1]["steps"][0]["target"]["zone"] == "interval"

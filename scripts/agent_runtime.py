@@ -289,7 +289,7 @@ def _process_task(session: Session, task_id: str) -> None:
 
 
 def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, workflow_input: dict) -> AgentRun:
-    agent = build_request_companion_agent(session)
+    agent = build_request_companion_agent(session, provider=run.provider, model=run.model)
     if workflow_name == "daily_recommendation":
         anchor = workflow_input.get("anchor_date")
         anchor_date = date.fromisoformat(anchor) if isinstance(anchor, str) else date.today()

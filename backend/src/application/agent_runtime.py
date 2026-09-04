@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable
 
+from src.application.training_targets import build_pace_profile_from_payloads
 from src.domain.agent_runtime import (
     AgentContextSource,
     AgentRun,
@@ -155,6 +156,13 @@ class RunningCompanionAgent:
             "plan_type": plan_type,
             "goal_notes": goal_notes,
         }
+        context.update(
+            self._training_plan_generation_preload_context(
+                user_id=user_id,
+                selected_race_id=selected_race_id,
+                starts_on=starts_on,
+            )
+        )
         run = self._start_run(
             user_id=user_id,
             trigger_type="manual",
@@ -282,6 +290,7 @@ class RunningCompanionAgent:
                     sequence_number=sequence_number,
                     recommendation_id=recommendation_id,
                     training_plan_id=training_plan_id,
+                    request_context=request.context,
                 )
                 follow_up_tools = _follow_up_write_tools(request.workflow_name, allowed_tools)
                 if (
@@ -327,6 +336,7 @@ class RunningCompanionAgent:
                         sequence_number=sequence_number,
                         recommendation_id=recommendation_id,
                         training_plan_id=training_plan_id,
+                        request_context=follow_up.context,
                     )
 
                 if required_error := _required_workflow_output_error(
@@ -358,6 +368,21 @@ class RunningCompanionAgent:
                     repair_attempted = True
                     request = _repair_request(request, exc)
                     continue
+                if (
+                    repair_validation_once
+                    and repair_attempted
+                    and isinstance(exc, ValueError)
+                    and str(exc) != "training plan generation did not create a training plan"
+                ):
+                    fallback = self._run_fallback_training_plan(
+                        run=run,
+                        request=request,
+                        user_id=user_id,
+                        sequence_number=sequence_number,
+                        token_usage=token_usage,
+                    )
+                    if fallback is not None:
+                        return fallback
                 return self._run_store.fail_run(
                     run.fail(
                         error_type=exc.__class__.__name__,
@@ -376,6 +401,7 @@ class RunningCompanionAgent:
         sequence_number: int,
         recommendation_id: str | None,
         training_plan_id: str | None = None,
+        request_context: dict | None = None,
     ) -> tuple[str | None, str | None, int, list[dict]]:
         tool_results = []
         for tool_call in response.tool_calls:
@@ -413,6 +439,8 @@ class RunningCompanionAgent:
             tool = self._tools.get(tool_call.tool_name)
             arguments = dict(tool_call.arguments)
             arguments.setdefault("agent_run_id", run.id)
+            if tool_call.tool_name == "createTrainingPlan":
+                _inject_training_plan_trusted_context(arguments, request_context or {})
             payload = tool.run(user_id=user_id, arguments=arguments)
             tool_results.append(
                 {
@@ -439,6 +467,98 @@ class RunningCompanionAgent:
             training_plan_id,
             sequence_number,
             tool_results,
+        )
+
+    def _training_plan_generation_preload_context(
+        self,
+        *,
+        user_id: str,
+        selected_race_id: str | None,
+        starts_on: date | None,
+    ) -> dict:
+        athlete_context = _safe_tool_payload(
+            self._tools,
+            "getAthleteContext",
+            user_id=user_id,
+            arguments={"limit": 20, "offset": 0},
+        )
+        anchor = starts_on or date.today()
+        recent_activities = _safe_tool_payload(
+            self._tools,
+            "getRecentActivities",
+            user_id=user_id,
+            arguments={
+                "start_date": (anchor - timedelta(days=28)).isoformat(),
+                "end_date": anchor.isoformat(),
+                "limit": 20,
+                "offset": 0,
+            },
+        )
+        current_plan_payload = _safe_tool_payload(
+            self._tools,
+            "getTrainingPlan",
+            user_id=user_id,
+            arguments={"training_plan_id": None},
+        )
+        race_goals = list((athlete_context or {}).get("race_goals", ()))
+        selected_race = next((goal for goal in race_goals if goal.get("id") == selected_race_id), None)
+        activities = tuple((recent_activities or {}).get("activities", ()))
+        last_active_plan = (current_plan_payload or {}).get("training_plan")
+        pace_profile = build_pace_profile_from_payloads(
+            profile_payload=(athlete_context or {}).get("profile"),
+            selected_race_payload=selected_race,
+            recent_activity_payloads=activities,
+        )
+        continuity_context = _plan_continuity_context(
+            last_active_plan if isinstance(last_active_plan, dict) else None,
+            selected_race_id=selected_race_id,
+        )
+        return {
+            "athlete_context": athlete_context,
+            "selected_race": selected_race,
+            "recent_activity_summary": _recent_activity_summary(activities),
+            "key_activities": list(activities[:3]),
+            "last_active_plan": last_active_plan if isinstance(last_active_plan, dict) else None,
+            "pace_profile": pace_profile.to_payload(),
+            **continuity_context,
+        }
+
+    def _run_fallback_training_plan(
+        self,
+        *,
+        run: AgentRun,
+        request: ModelRequest,
+        user_id: str,
+        sequence_number: int,
+        token_usage,
+    ) -> AgentRun | None:
+        if request.workflow_name != "training_plan_generation" or "createTrainingPlan" not in self._tools.names():
+            return None
+        arguments = _fallback_training_plan_arguments(request.context or {})
+        arguments.setdefault("agent_run_id", run.id)
+        _inject_training_plan_trusted_context(arguments, request.context or {})
+        try:
+            payload = self._tools.get("createTrainingPlan").run(user_id=user_id, arguments=arguments)
+        except Exception:
+            return None
+        training_plan_id = _training_plan_id_from_payload(payload)
+        self._run_store.record_step(
+            AgentRunStep.complete_tool_call(
+                agent_run_id=run.id,
+                sequence_number=sequence_number,
+                tool_name="createTrainingPlan",
+                input_summary=_summary_arguments(arguments),
+                output_summary=_summary_payload(payload),
+                payload=payload,
+            )
+        )
+        if not training_plan_id:
+            return None
+        return self._run_store.complete_run(
+            run.complete(
+                output_summary="Created deterministic fallback training plan.",
+                token_usage=token_usage,
+            )
         )
 
 
@@ -517,6 +637,178 @@ def _needs_follow_up_write(
     if workflow_name == "training_plan_generation":
         return False
     return recommendation_id is None
+
+
+def _safe_tool_payload(tools, tool_name: str, *, user_id: str, arguments: dict) -> dict | None:
+    if tool_name not in tools.names():
+        return None
+    try:
+        payload = tools.get(tool_name).run(user_id=user_id, arguments=arguments)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _recent_activity_summary(activities: tuple[dict, ...]) -> dict:
+    run_activities = [activity for activity in activities if float(activity.get("distance_meters") or 0) > 0]
+    total_distance = sum(float(activity.get("distance_meters") or 0) for activity in run_activities)
+    paces = [float(activity.get("average_pace_seconds_per_km") or 0) for activity in run_activities]
+    paces = [pace for pace in paces if pace > 0]
+    return {
+        "activity_count": len(run_activities),
+        "total_distance_meters": round(total_distance),
+        "average_pace_seconds_per_km": round(sum(paces) / len(paces), 2) if paces else None,
+    }
+
+
+def _inject_training_plan_trusted_context(arguments: dict, request_context: dict) -> None:
+    trusted_context = arguments.get("trusted_context")
+    if not isinstance(trusted_context, dict):
+        trusted_context = {}
+        arguments["trusted_context"] = trusted_context
+    pace_profile = request_context.get("pace_profile")
+    if isinstance(pace_profile, dict):
+        trusted_context["pace_profile"] = pace_profile
+    for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
+        if key in request_context:
+            trusted_context[key] = request_context.get(key)
+
+
+def _plan_continuity_context(last_active_plan: dict | None, *, selected_race_id: str | None) -> dict:
+    if last_active_plan is None:
+        return {
+            "plan_series_id": selected_race_id,
+            "previous_plan_id": None,
+            "version": 1,
+            "continuity_summary": "Initial generated projection.",
+        }
+    metadata = last_active_plan.get("metadata") if isinstance(last_active_plan.get("metadata"), dict) else {}
+    previous_plan_id = last_active_plan.get("id")
+    plan_series_id = (
+        metadata.get("plan_series_id")
+        or selected_race_id
+        or last_active_plan.get("race_id")
+        or previous_plan_id
+    )
+    return {
+        "plan_series_id": plan_series_id,
+        "previous_plan_id": previous_plan_id,
+        "version": _next_plan_version(metadata),
+        "continuity_summary": metadata.get("continuity_summary")
+        or f"Continue from {last_active_plan.get('name', 'the previous active plan')}.",
+    }
+
+
+def _next_plan_version(metadata: dict) -> int:
+    raw_version = metadata.get("version")
+    if isinstance(raw_version, int):
+        return raw_version + 1
+    if isinstance(raw_version, str) and raw_version.isdigit():
+        return int(raw_version) + 1
+    return 2
+
+
+def _fallback_training_plan_arguments(context: dict) -> dict:
+    starts_on = _date_from_context(context.get("starts_on")) or date.today()
+    ends_on = _date_from_context(context.get("ends_on")) or starts_on + timedelta(days=27)
+    workouts = []
+    workout_types = ("easy_run", "interval", "tempo", "long_run")
+    purposes = {
+        "easy_run": "Aerobic base",
+        "interval": "Controlled speed development",
+        "tempo": "Sustained threshold development",
+        "long_run": "Endurance progression",
+    }
+    for week in range(4):
+        week_start = starts_on + timedelta(days=week * 7)
+        for offset, workout_type in zip((1, 3, 5, 6), workout_types):
+            scheduled_for = week_start + timedelta(days=offset)
+            if scheduled_for > ends_on:
+                continue
+            workouts.append(
+                _fallback_workout_payload(
+                    scheduled_for=scheduled_for,
+                    workout_type=workout_type,
+                    purpose=purposes[workout_type],
+                    week=week,
+                )
+            )
+    return {
+        "name": "Fallback Four Week Plan",
+        "race_id": context.get("selected_race_id"),
+        "starts_on": starts_on.isoformat(),
+        "ends_on": ends_on.isoformat(),
+        "metadata": {
+            "plan_series_id": context.get("plan_series_id"),
+            "previous_plan_id": context.get("previous_plan_id"),
+            "version": context.get("version", 1),
+            "generation_mode": "fallback",
+            "continuity_summary": "Fallback plan created after generated plan validation failed.",
+        },
+        "workouts": workouts,
+    }
+
+
+def _fallback_workout_payload(*, scheduled_for: date, workout_type: str, purpose: str, week: int) -> dict:
+    if workout_type == "interval":
+        repeat_count = 4 + min(week, 2)
+        return {
+            "scheduled_for": scheduled_for.isoformat(),
+            "workout_type": workout_type,
+            "purpose": purpose,
+            "planned_duration_minutes": 50 + week * 3,
+            "phase": "build",
+            "coach_note": "Keep the repeats controlled and stop if form breaks down.",
+            "steps": [
+                {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
+                {
+                    "type": "repeat",
+                    "repeat_count": repeat_count,
+                    "steps": [
+                        {"type": "work", "distance_meters": 800, "target": {"kind": "pace", "zone": "interval", "rpe": 8}},
+                        {"type": "recovery", "distance_meters": 400, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
+                    ],
+                },
+                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+            ],
+        }
+    if workout_type == "tempo":
+        return {
+            "scheduled_for": scheduled_for.isoformat(),
+            "workout_type": workout_type,
+            "purpose": purpose,
+            "planned_duration_minutes": 45 + week * 3,
+            "phase": "build",
+            "coach_note": "Run the tempo segment smoothly rather than forcing pace.",
+            "steps": [
+                {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
+                {"type": "work", "duration_seconds": 1_500 + week * 120, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
+                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+            ],
+        }
+    duration_minutes = 40 + week * 5
+    return {
+        "scheduled_for": scheduled_for.isoformat(),
+        "workout_type": workout_type,
+        "purpose": purpose,
+        "planned_duration_minutes": duration_minutes,
+        "phase": "build",
+        "steps": [
+            {
+                "type": "free_run",
+                "duration_seconds": duration_minutes * 60,
+                "target": {"kind": "pace", "zone": "easy", "rpe": 3},
+            }
+        ],
+    }
+
+
+def _date_from_context(value) -> date | None:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        return date.fromisoformat(value)
+    return None
 
 
 def _summary_arguments(arguments: dict) -> str:

@@ -402,6 +402,75 @@ describe('Johnny product shell', () => {
     expect(insufficientDataStrip.text()).not.toContain('連接資料來源')
   })
 
+  it('shows structured workout steps from Today in a detail modal', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-structured-workout',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-interval',
+            scheduled_for: '2026-09-02',
+            workout_type: 'interval',
+            purpose: '提升 10K 配速耐受',
+            planned_distance_meters: 9000,
+            planned_duration_minutes: 56,
+            compact_summary: '15 分 warmup + 4 x (800m interval / 400m easy) + 10 分 cooldown',
+            coach_note: '維持可控，不要把前兩組跑成測驗。',
+            phase: 'build',
+            status: 'planned',
+            steps: [
+              {
+                type: 'warmup',
+                duration_seconds: 900,
+                target: { kind: 'pace', zone: 'easy', pace_range_seconds_per_km: [360, 390], confidence: 'high' },
+              },
+              {
+                type: 'repeat',
+                repeat_count: 4,
+                steps: [
+                  {
+                    type: 'work',
+                    distance_meters: 800,
+                    target: { kind: 'pace', zone: 'interval', pace_range_seconds_per_km: [278, 286], confidence: 'high' },
+                  },
+                  {
+                    type: 'recovery',
+                    distance_meters: 400,
+                    target: { kind: 'pace', zone: 'easy', pace_range_seconds_per_km: [360, 390], confidence: 'high' },
+                  },
+                ],
+              },
+              {
+                type: 'cooldown',
+                duration_seconds: 600,
+                target: { kind: 'rpe', rpe: 3 },
+              },
+            ],
+          },
+        ],
+        recovery: {
+          readiness_label: 'ready',
+          hrv_ms: 52,
+          hrv_delta_percentage: 2,
+        },
+        unavailable_signals: [],
+      },
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-today-section="workout"]').text()).toContain('4 x (800m interval / 400m easy)')
+    await wrapper.get('button[data-testid="today-workout-detail"]').trigger('click')
+
+    const modal = wrapper.get('[data-testid="workout-detail-modal"]')
+    expect(modal.text()).toContain('4 x')
+    expect(modal.text()).toContain('0.8 km')
+    expect(modal.text()).toContain('Interval')
+    expect(modal.text()).toContain('0.4 km')
+    expect(modal.text()).toContain('維持可控')
+  })
+
   it('keeps missing signals in recovery when Today has enough data and no recommendation', async () => {
     mockAuthenticatedToday({
       userId: 'user-auth-missing-signal',

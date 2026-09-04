@@ -60,6 +60,8 @@ import type {
   RaceGoalCreatePayload,
   AthleteProfileResponse,
   AthleteProfileSavePayload,
+  WorkoutStep,
+  WorkoutTarget,
 } from './types'
 
 const props = withDefaults(
@@ -227,6 +229,15 @@ const todayRecommendationStrip = computed(() =>
   ),
 )
 const raceTrainingRationale = computed(() => buildRaceTrainingRationale(todayWorkout.value))
+const selectedWorkoutId = ref<string | null>(null)
+const selectedWorkoutDetail = computed(() => {
+  const id = selectedWorkoutId.value
+  if (!id) {
+    return null
+  }
+  return [todayWorkout.value, ...displayWorkouts.value].find((workout) => workout.id === id) ?? null
+})
+const selectedWorkoutRows = computed(() => (selectedWorkoutDetail.value ? buildWorkoutStepRows(selectedWorkoutDetail.value.steps ?? []) : []))
 
 type RecoveryDecision = {
   label: '可以照課表' | '建議保守' | '建議休息'
@@ -238,6 +249,15 @@ type TodayRecommendationStrip = {
   actionLabel?: string
   actionView?: ViewKey
   actionTone?: 'primary' | 'neutral'
+}
+
+type WorkoutStepRow = {
+  key: string
+  label: string
+  load: string
+  target: string
+  note: string
+  depth: number
 }
 
 type AthleteSettingsForm = {
@@ -1342,6 +1362,7 @@ function mapWorkout(raw: unknown): WorkoutSummary | null {
   }
   const workout = raw as Record<string, unknown>
   const scheduledFor = String(workout.scheduled_for || '')
+  const steps = mapWorkoutSteps(workout.steps)
   return {
     id: String(workout.id || scheduledFor || crypto.randomUUID()),
     weekday: formatWeekday(scheduledFor),
@@ -1350,9 +1371,162 @@ function mapWorkout(raw: unknown): WorkoutSummary | null {
     purpose: String(workout.purpose || workout.workout_type || 'Training session'),
     distance: workout.planned_distance_meters ? formatDistance(Number(workout.planned_distance_meters)) : undefined,
     duration: workout.planned_duration_minutes ? `${workout.planned_duration_minutes} 分` : undefined,
+    pace: formatPaceRange(workout.pace_range_seconds_per_km),
     heartRateZone: workout.heart_rate_zone ? String(workout.heart_rate_zone) : undefined,
+    phase: workout.phase ? String(workout.phase) : undefined,
+    coachNote: workout.coach_note ? String(workout.coach_note) : undefined,
+    stepSummary: workout.compact_summary ? String(workout.compact_summary) : undefined,
+    steps,
     status: String(workout.status || 'planned'),
   }
+}
+
+function mapWorkoutSteps(raw: unknown): WorkoutStep[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined
+  }
+  const steps = raw.map(mapWorkoutStep).filter((step): step is WorkoutStep => step !== null)
+  return steps.length ? steps : undefined
+}
+
+function mapWorkoutStep(raw: unknown): WorkoutStep | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+  const step = raw as Record<string, unknown>
+  const type = String(step.type || '')
+  if (!type) {
+    return null
+  }
+  return {
+    type: type as WorkoutStep['type'],
+    durationSeconds: optionalNumber(step.duration_seconds),
+    distanceMeters: optionalNumber(step.distance_meters),
+    target: mapWorkoutTarget(step.target),
+    repeatCount: optionalNumber(step.repeat_count),
+    steps: mapWorkoutSteps(step.steps) ?? [],
+    notes: step.notes ? String(step.notes) : undefined,
+    gradeNotes: step.grade_notes ? String(step.grade_notes) : undefined,
+  }
+}
+
+function mapWorkoutTarget(raw: unknown): WorkoutTarget | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined
+  }
+  const target = raw as Record<string, unknown>
+  const kind = String(target.kind || '')
+  if (!kind) {
+    return undefined
+  }
+  return {
+    kind: kind as WorkoutTarget['kind'],
+    zone: target.zone ? String(target.zone) : undefined,
+    heartRateZone: target.heart_rate_zone ? String(target.heart_rate_zone) : undefined,
+    rpe: optionalNumber(target.rpe),
+    paceRangeSecondsPerKm: optionalNumberArray(target.pace_range_seconds_per_km),
+    heartRateRangeBpm: optionalNumberArray(target.heart_rate_range_bpm),
+    confidence: target.confidence ? (String(target.confidence) as WorkoutTarget['confidence']) : undefined,
+  }
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '') {
+    return undefined
+  }
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : undefined
+}
+
+function optionalNumberArray(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+  const numbers = value.map(Number).filter((item) => Number.isFinite(item))
+  return numbers.length === value.length ? numbers : undefined
+}
+
+function hasWorkoutDetails(workout: WorkoutSummary): boolean {
+  return Boolean((workout.steps && workout.steps.length) || workout.coachNote)
+}
+
+function openWorkoutDetails(workout: WorkoutSummary) {
+  if (hasWorkoutDetails(workout)) {
+    selectedWorkoutId.value = workout.id
+  }
+}
+
+function closeWorkoutDetails() {
+  selectedWorkoutId.value = null
+}
+
+function buildWorkoutStepRows(steps: WorkoutStep[], depth = 0, prefix = 'step'): WorkoutStepRow[] {
+  return steps.flatMap((step, index) => {
+    const key = `${prefix}-${index}`
+    if (step.type === 'repeat') {
+      return [
+        {
+          key,
+          label: `${step.repeatCount || 1} x`,
+          load: '重複組',
+          target: '',
+          note: step.notes || '',
+          depth,
+        },
+        ...buildWorkoutStepRows(step.steps ?? [], depth + 1, key),
+      ]
+    }
+    return [
+      {
+        key,
+        label: formatWorkoutStepLabel(step.type),
+        load: formatWorkoutStepLoad(step),
+        target: formatWorkoutTarget(step.target),
+        note: [step.notes, step.gradeNotes].filter(Boolean).join(' · '),
+        depth,
+      },
+    ]
+  })
+}
+
+function formatWorkoutStepLabel(value: WorkoutStep['type']): string {
+  const labels: Record<WorkoutStep['type'], string> = {
+    warmup: 'Warmup',
+    work: 'Work',
+    recovery: 'Recovery',
+    cooldown: 'Cooldown',
+    repeat: 'Repeat',
+    drill: 'Drill',
+    stride: 'Stride',
+    hill: 'Hill',
+    free_run: 'Free run',
+  }
+  return labels[value] ?? value
+}
+
+function formatWorkoutStepLoad(step: WorkoutStep): string {
+  const parts = []
+  if (step.distanceMeters) {
+    parts.push(formatDistance(step.distanceMeters))
+  }
+  if (step.durationSeconds) {
+    parts.push(formatSecondsDuration(step.durationSeconds))
+  }
+  return parts.join(' / ')
+}
+
+function formatWorkoutTarget(target?: WorkoutTarget | null): string {
+  if (!target) {
+    return ''
+  }
+  if (target.kind === 'pace') {
+    return [formatPaceZone(target.zone), formatPaceRange(target.paceRangeSecondsPerKm)].filter(Boolean).join(' · ')
+  }
+  if (target.kind === 'heart_rate') {
+    const range = target.heartRateRangeBpm && target.heartRateRangeBpm.length >= 2 ? `${target.heartRateRangeBpm[0]}-${target.heartRateRangeBpm[1]} bpm` : ''
+    return [target.heartRateZone || 'Heart rate', range].filter(Boolean).join(' · ')
+  }
+  return target.rpe ? `RPE ${target.rpe}` : 'RPE'
 }
 
 function mapRecommendation(raw: Record<string, unknown>): InboxRecommendation | null {
@@ -1472,6 +1646,46 @@ function formatWorkoutType(value: string): string {
 
 function formatDistance(meters: number): string {
   return formatRaceDistance(meters)
+}
+
+function formatSecondsDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return ''
+  }
+  if (seconds % 60 === 0) {
+    return `${seconds / 60} 分`
+  }
+  return `${seconds} 秒`
+}
+
+function formatPaceRange(value: unknown): string | undefined {
+  const range = optionalNumberArray(value)
+  if (!range || range.length < 2) {
+    return undefined
+  }
+  return `${formatPace(range[0])}-${formatPace(range[1])} /km`
+}
+
+function formatPace(secondsPerKm: number): string {
+  const minutes = Math.floor(secondsPerKm / 60)
+  const seconds = Math.round(secondsPerKm % 60)
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function formatPaceZone(value?: string | null): string {
+  if (!value) {
+    return ''
+  }
+  const labels: Record<string, string> = {
+    easy: 'Easy',
+    steady: 'Steady',
+    marathon: 'Marathon',
+    threshold: 'Threshold',
+    interval: 'Interval',
+    repetition: 'Repetition',
+    rpe_only: 'RPE only',
+  }
+  return labels[value] ?? value
 }
 
 function formatTargetFinish(value: unknown): string {
@@ -1673,10 +1887,17 @@ function shouldRequireAuth(): boolean {
           <p class="section-label">今日課表</p>
           <h3>{{ todayWorkout.type }}</h3>
           <p>{{ todayWorkout.purpose }}</p>
+          <p v-if="todayWorkout.stepSummary" class="workout-step-summary">{{ todayWorkout.stepSummary }}</p>
           <div class="metric-row">
-            <span>{{ todayWorkout.distance }}</span>
-            <span>{{ todayWorkout.pace }}</span>
-            <span>{{ todayWorkout.heartRateZone }}</span>
+            <span v-if="todayWorkout.distance">{{ todayWorkout.distance }}</span>
+            <span v-if="todayWorkout.duration">{{ todayWorkout.duration }}</span>
+            <span v-if="todayWorkout.pace">{{ todayWorkout.pace }}</span>
+            <span v-if="todayWorkout.heartRateZone">{{ todayWorkout.heartRateZone }}</span>
+          </div>
+          <div v-if="hasWorkoutDetails(todayWorkout)" class="workout-card__actions">
+            <AppButton tone="neutral" type="button" data-testid="today-workout-detail" @click="openWorkoutDetails(todayWorkout)">
+              查看細節
+            </AppButton>
           </div>
         </article>
 
@@ -1814,12 +2035,24 @@ function shouldRequireAuth(): boolean {
             <div>
               <h3>{{ workout.type }}</h3>
               <p>{{ workout.purpose }}</p>
+              <p v-if="workout.stepSummary" class="workout-step-summary">{{ workout.stepSummary }}</p>
             </div>
-            <div class="metric-row">
-              <span v-if="workout.distance">{{ workout.distance }}</span>
-              <span v-if="workout.duration">{{ workout.duration }}</span>
-              <span v-if="workout.pace">{{ workout.pace }}</span>
-              <span>{{ workout.status }}</span>
+            <div class="schedule-row__meta">
+              <div class="metric-row">
+                <span v-if="workout.distance">{{ workout.distance }}</span>
+                <span v-if="workout.duration">{{ workout.duration }}</span>
+                <span v-if="workout.pace">{{ workout.pace }}</span>
+                <span>{{ workout.status }}</span>
+              </div>
+              <AppButton
+                v-if="hasWorkoutDetails(workout)"
+                tone="neutral"
+                type="button"
+                :data-testid="`workout-detail-${workout.id}`"
+                @click="openWorkoutDetails(workout)"
+              >
+                細節
+              </AppButton>
             </div>
           </article>
         </div>
@@ -2288,5 +2521,50 @@ function shouldRequireAuth(): boolean {
         <p>這個工作流會依照對應 OpenSpec change 補上完整互動。</p>
       </section>
     </main>
+
+    <div
+      v-if="selectedWorkoutDetail"
+      class="app-dialog"
+      role="presentation"
+      data-testid="workout-detail-modal"
+      @click.self="closeWorkoutDetails"
+      @keydown.esc="closeWorkoutDetails"
+    >
+      <section class="app-dialog__panel workout-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="workout-detail-title" tabindex="-1">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">{{ selectedWorkoutDetail.dateLabel }} · {{ selectedWorkoutDetail.weekday }}</p>
+            <h3 id="workout-detail-title">{{ selectedWorkoutDetail.type }}</h3>
+          </div>
+          <AppButton tone="neutral" type="button" data-testid="workout-detail-close" @click="closeWorkoutDetails">關閉</AppButton>
+        </div>
+        <p>{{ selectedWorkoutDetail.purpose }}</p>
+        <p v-if="selectedWorkoutDetail.stepSummary" class="workout-detail-summary">{{ selectedWorkoutDetail.stepSummary }}</p>
+        <div class="metric-row">
+          <span v-if="selectedWorkoutDetail.distance">{{ selectedWorkoutDetail.distance }}</span>
+          <span v-if="selectedWorkoutDetail.duration">{{ selectedWorkoutDetail.duration }}</span>
+          <span v-if="selectedWorkoutDetail.pace">{{ selectedWorkoutDetail.pace }}</span>
+          <span v-if="selectedWorkoutDetail.heartRateZone">{{ selectedWorkoutDetail.heartRateZone }}</span>
+          <span v-if="selectedWorkoutDetail.phase">{{ selectedWorkoutDetail.phase }}</span>
+        </div>
+        <div v-if="selectedWorkoutRows.length" class="workout-step-list" aria-label="課表步驟">
+          <div
+            v-for="row in selectedWorkoutRows"
+            :key="row.key"
+            class="workout-step-row"
+            :class="`workout-step-row--depth-${row.depth}`"
+          >
+            <strong>{{ row.label }}</strong>
+            <span>{{ row.load }}</span>
+            <span v-if="row.target">{{ row.target }}</span>
+            <small v-if="row.note">{{ row.note }}</small>
+          </div>
+        </div>
+        <article v-if="selectedWorkoutDetail.coachNote" class="coach-note">
+          <p class="section-label">Coach note</p>
+          <p>{{ selectedWorkoutDetail.coachNote }}</p>
+        </article>
+      </section>
+    </div>
   </div>
 </template>
