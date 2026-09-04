@@ -181,6 +181,40 @@ def test_recommendation_repository_loads_legacy_action_type_payload(sqlite_sessi
         assert loaded[0].proposed_action.to_payload()["type"] == "no_plan_change"
 
 
+def test_recommendation_repository_downgrades_historical_training_plan_creation_action(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="legacy-plan-action@example.com", display_name="Legacy Plan Action")
+        uow.session.add(user)
+        uow.session.flush()
+        uow.session.add(
+            RecommendationModel(
+                user_id=user.id,
+                title="Review generated plan",
+                rationale="Stored before direct active training-plan generation.",
+                evidence={
+                    "items": [{"source": "legacy_agent", "metric": "workflow", "value": "training_plan_generation"}],
+                    "recommendation": {"type": "training_plan_creation", "priority": "medium"},
+                    "proposed_action": {
+                        "type": "create_training_plan",
+                        "draft_training_plan_id": "draft-plan-1",
+                        "reason": "Approve generated plan.",
+                    },
+                },
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded = SqlAlchemyRecommendationRepository(uow.session).list_recommendations_for_user(user.id)
+
+        assert len(loaded) == 1
+        assert loaded[0].recommendation_type == "informational"
+        assert loaded[0].proposed_action.action_type == "no_plan_change"
+        assert loaded[0].proposed_action.payload["legacy_action"]["type"] == "create_training_plan"
+
+
 def test_plan_adjustment_repository_preserves_applied_status_and_payload_history(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
 

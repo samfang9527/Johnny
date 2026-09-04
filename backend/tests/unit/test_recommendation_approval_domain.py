@@ -111,6 +111,37 @@ def test_proposed_action_accepts_legacy_action_type_payload_key() -> None:
     assert action.to_payload() == {"type": "no_plan_change", "reason": "Legacy informational row"}
 
 
+def test_proposed_action_accepts_legacy_nested_payload_wrapper() -> None:
+    action = ProposedAction.from_payload({"action_type": "no_plan_change", "payload": {"reason": "Nested legacy row"}})
+
+    assert action.action_type == "no_plan_change"
+    assert action.to_payload() == {"type": "no_plan_change", "reason": "Nested legacy row"}
+
+
+def test_recommendation_from_payload_downgrades_historical_training_plan_creation_action() -> None:
+    recommendation = Recommendation.from_payload(
+        id="recommendation-legacy-plan",
+        user_id="user-1",
+        title="Review generated plan",
+        rationale="Legacy draft-plan recommendation.",
+        status="pending",
+        decision=None,
+        evidence_payload={
+            "items": [{"source": "legacy_agent", "metric": "workflow", "value": "training_plan_generation"}],
+            "recommendation": {"type": "training_plan_creation", "priority": "medium"},
+            "proposed_action": {
+                "type": "create_training_plan",
+                "draft_training_plan_id": "draft-plan-1",
+                "reason": "Approve generated plan.",
+            },
+        },
+    )
+
+    assert recommendation.recommendation_type == "informational"
+    assert recommendation.proposed_action.action_type == "no_plan_change"
+    assert recommendation.proposed_action.payload["legacy_action"]["type"] == "create_training_plan"
+
+
 def test_recommendation_rejects_training_plan_creation_type_and_action() -> None:
     with pytest.raises(DomainValidationError, match="action type"):
         ProposedAction.create(

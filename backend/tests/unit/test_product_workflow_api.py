@@ -141,6 +141,78 @@ def test_today_and_recommendations_routes_accept_legacy_action_type_payload() ->
     assert today.json()["data"]["current_recommendation"]["title"] == "Legacy action"
 
 
+def test_today_and_recommendations_routes_read_historical_training_plan_creation_action() -> None:
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from src.api.dependencies import get_session
+    from src.infrastructure.database.models import Base, RecommendationModel, UserModel
+    from src.main import create_app
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, connection_record) -> None:  # noqa: ANN001
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_session():
+        session = session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_session
+    client = TestClient(app)
+    with session_factory() as session:
+        user = UserModel(
+            id="historical-plan-action-user",
+            email="historical-plan-action@example.com",
+            display_name="Historical Plan Action",
+        )
+        session.add(user)
+        session.flush()
+        session.add(
+            RecommendationModel(
+                user_id=user.id,
+                title="Review generated plan",
+                rationale="Legacy draft-plan recommendation.",
+                evidence={
+                    "items": [{"source": "legacy_agent", "metric": "workflow", "value": "training_plan_generation"}],
+                    "recommendation": {"type": "training_plan_creation", "priority": "medium"},
+                    "proposed_action": {
+                        "type": "create_training_plan",
+                        "draft_training_plan_id": "draft-plan-1",
+                        "reason": "Approve generated plan.",
+                    },
+                },
+            )
+        )
+        session.commit()
+
+    headers = {"X-Johnny-User-Id": "historical-plan-action-user"}
+    listed = client.get("/api/v1/recommendations", headers=headers)
+    today = client.get("/api/v1/today?anchor_date=2027-01-02", headers=headers)
+
+    assert listed.status_code == 200
+    assert listed.json()["data"][0]["recommendation_type"] == "informational"
+    assert listed.json()["data"][0]["proposed_action"]["type"] == "no_plan_change"
+    assert today.status_code == 200
+    assert today.json()["data"]["current_recommendation"]["title"] == "Review generated plan"
+
+
 def test_conversation_route_rejects_empty_and_returns_run_reference() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 

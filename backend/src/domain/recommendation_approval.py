@@ -121,8 +121,44 @@ class ProposedAction:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ProposedAction:
         action_type = payload.get("type") or payload.get("action_type") or ""
-        normalized_payload = {key: value for key, value in payload.items() if key not in {"type", "action_type"}}
+        action_payload = _action_payload_body(payload)
+        if action_payload is not payload:
+            action_type = action_type or action_payload.get("type") or action_payload.get("action_type") or ""
+            normalized_payload = {
+                key: value
+                for key, value in action_payload.items()
+                if key not in {"type", "action_type"}
+            }
+        else:
+            normalized_payload = {
+                key: value
+                for key, value in payload.items()
+                if key not in {"type", "action_type"}
+            }
         return cls.create(action_type=action_type, payload=normalized_payload)
+
+    @classmethod
+    def from_persisted_payload(cls, payload: dict[str, Any]) -> ProposedAction:
+        try:
+            return cls.from_payload(payload)
+        except DomainValidationError as exc:
+            if str(exc) != "action type is not supported":
+                raise
+            action_payload = _action_payload_body(payload)
+            action_type = (
+                payload.get("type")
+                or payload.get("action_type")
+                or action_payload.get("type")
+                or action_payload.get("action_type")
+                or "unknown"
+            )
+            reason = (
+                payload.get("reason")
+                or action_payload.get("reason")
+                or action_payload.get("summary")
+                or f"Historical action '{action_type}' is no longer supported."
+            )
+            return cls.no_plan_change(reason=reason).with_metadata({"legacy_action": dict(payload)})
 
     def with_metadata(self, metadata: dict[str, Any]) -> ProposedAction:
         return replace(self, payload={**self.payload, **metadata})
@@ -230,21 +266,23 @@ class Recommendation:
         training_plan_id: str | None = None,
         created_at: datetime | None = None,
     ) -> Recommendation:
-        metadata = evidence_payload.get("recommendation", {})
+        metadata_payload = evidence_payload.get("recommendation", {})
+        metadata = metadata_payload if isinstance(metadata_payload, dict) else {}
         action_payload = evidence_payload.get("proposed_action") or evidence_payload.get("action") or {"type": "no_plan_change", "reason": "No action."}
+        proposed_action = ProposedAction.from_persisted_payload(action_payload)
         return cls.create(
             id=id,
             user_id=user_id,
-            recommendation_type=metadata.get("type", "informational"),
-            priority=metadata.get("priority", "medium"),
+            recommendation_type=_persisted_recommendation_type(metadata.get("type")),
+            priority=_persisted_priority(metadata.get("priority")),
             title=title,
             rationale=rationale,
             evidence=tuple(EvidenceItem.from_payload(item) for item in evidence_payload.get("items", ())),
-            proposed_action=ProposedAction.from_payload(action_payload),
+            proposed_action=proposed_action,
             status=status,
             decision=decision,
             training_plan_id=training_plan_id,
-            workout_id=action_payload.get("workout_id"),
+            workout_id=proposed_action.payload.get("workout_id"),
             agent_run_id=metadata.get("agent_run_id"),
             created_at=created_at,
         )
@@ -315,3 +353,22 @@ def _validate_adjust_workout(payload: dict[str, Any]) -> None:
         raise DomainValidationError("workout adjustment requires after payload")
     if not payload.get("reason"):
         raise DomainValidationError("workout adjustment requires reason")
+
+
+def _action_payload_body(payload: dict[str, Any]) -> dict[str, Any]:
+    raw_payload = payload.get("payload")
+    if isinstance(raw_payload, dict):
+        return raw_payload
+    return payload
+
+
+def _persisted_recommendation_type(value: Any) -> str:
+    if value in RECOMMENDATION_TYPES:
+        return value
+    return "informational"
+
+
+def _persisted_priority(value: Any) -> str:
+    if value in PRIORITIES:
+        return value
+    return "medium"
