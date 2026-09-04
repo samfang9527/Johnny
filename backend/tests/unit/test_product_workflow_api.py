@@ -113,6 +113,34 @@ def test_recommendation_routes_list_accept_reject_edit_and_discuss() -> None:
     assert discussed.json()["data"]["message"]["content"] == "Why this recommendation?"
 
 
+def test_today_and_recommendations_routes_accept_legacy_action_type_payload() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "legacy-action-user"}
+    created = client.post(
+        "/api/v1/recommendations",
+        headers=headers,
+        json={
+            "recommendation_type": "informational",
+            "priority": "medium",
+            "title": "Legacy action",
+            "rationale": "Stored clients may still send action_type.",
+            "evidence": [{"source": "legacy", "metric": "readiness_label", "value": "ready"}],
+            "proposed_action": {"action_type": "no_plan_change", "reason": "Informational only"},
+        },
+    )
+    listed = client.get("/api/v1/recommendations", headers=headers)
+    today = client.get("/api/v1/today?anchor_date=2027-01-02", headers=headers)
+
+    assert created.status_code == 200
+    assert created.json()["data"]["proposed_action"]["type"] == "no_plan_change"
+    assert listed.status_code == 200
+    assert listed.json()["data"][0]["proposed_action"]["type"] == "no_plan_change"
+    assert today.status_code == 200
+    assert today.json()["data"]["current_recommendation"]["title"] == "Legacy action"
+
+
 def test_conversation_route_rejects_empty_and_returns_run_reference() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 

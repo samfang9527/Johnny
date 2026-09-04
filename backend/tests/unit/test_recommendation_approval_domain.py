@@ -104,6 +104,13 @@ def test_informational_recommendation_allows_no_plan_change_action() -> None:
     assert recommendation.proposed_action.action_type == "no_plan_change"
 
 
+def test_proposed_action_accepts_legacy_action_type_payload_key() -> None:
+    action = ProposedAction.from_payload({"action_type": "no_plan_change", "reason": "Legacy informational row"})
+
+    assert action.action_type == "no_plan_change"
+    assert action.to_payload() == {"type": "no_plan_change", "reason": "Legacy informational row"}
+
+
 def test_recommendation_rejects_training_plan_creation_type_and_action() -> None:
     with pytest.raises(DomainValidationError, match="action type"):
         ProposedAction.create(

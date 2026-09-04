@@ -120,7 +120,9 @@ class ProposedAction:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> ProposedAction:
-        return cls.create(action_type=payload.get("type", ""), payload=payload)
+        action_type = payload.get("type") or payload.get("action_type") or ""
+        normalized_payload = {key: value for key, value in payload.items() if key not in {"type", "action_type"}}
+        return cls.create(action_type=action_type, payload=normalized_payload)
 
     def with_metadata(self, metadata: dict[str, Any]) -> ProposedAction:
         return replace(self, payload={**self.payload, **metadata})
@@ -229,7 +231,7 @@ class Recommendation:
         created_at: datetime | None = None,
     ) -> Recommendation:
         metadata = evidence_payload.get("recommendation", {})
-        action_payload = evidence_payload.get("proposed_action", {"type": "no_plan_change", "reason": "No action."})
+        action_payload = evidence_payload.get("proposed_action") or evidence_payload.get("action") or {"type": "no_plan_change", "reason": "No action."}
         return cls.create(
             id=id,
             user_id=user_id,

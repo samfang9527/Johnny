@@ -2,7 +2,7 @@ from datetime import date
 
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
 from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout
-from src.infrastructure.database.models import Base, UserModel
+from src.infrastructure.database.models import Base, RecommendationModel, UserModel
 from src.infrastructure.database.recommendation_repository import SqlAlchemyRecommendationRepository
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
@@ -149,6 +149,36 @@ def test_recommendation_repository_saves_decisions_and_preserves_edited_action_h
         assert revised_loaded.status == "pending"
         assert revised_loaded.proposed_action.payload["after_payload"]["planned_duration_minutes"] == 20
         assert revised_loaded.proposed_action.payload["supersedes_recommendation_id"] == saved.id
+
+
+def test_recommendation_repository_loads_legacy_action_type_payload(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="legacy-action@example.com", display_name="Legacy Action")
+        uow.session.add(user)
+        uow.session.flush()
+        uow.session.add(
+            RecommendationModel(
+                user_id=user.id,
+                title="Legacy recommendation",
+                rationale="Stored before action payloads used type.",
+                evidence={
+                    "items": [{"source": "legacy", "metric": "readiness_label", "value": "ready"}],
+                    "recommendation": {"type": "informational", "priority": "medium"},
+                    "proposed_action": {"action_type": "no_plan_change", "reason": "Informational only"},
+                },
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded = SqlAlchemyRecommendationRepository(uow.session).list_recommendations_for_user(user.id)
+
+        assert len(loaded) == 1
+        assert loaded[0].title == "Legacy recommendation"
+        assert loaded[0].proposed_action.action_type == "no_plan_change"
+        assert loaded[0].proposed_action.to_payload()["type"] == "no_plan_change"
 
 
 def test_plan_adjustment_repository_preserves_applied_status_and_payload_history(sqlite_session_factory) -> None:
