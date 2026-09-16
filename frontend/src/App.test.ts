@@ -719,8 +719,15 @@ describe('Johnny product shell', () => {
 
     await wrapper.get('button[data-view="plan"]').trigger('click')
 
-    expect(wrapper.get('[data-testid="plan-journey"]').text()).toContain('Build')
-    expect(wrapper.get('[data-testid="plan-journey"]').text()).toContain('Race')
+    const journey = wrapper.get('[data-testid="plan-journey"]')
+    const phases = journey.findAll('.plan-phase')
+
+    expect(phases).toHaveLength(5)
+    expect(phases[0].classes()).toContain('plan-phase--done')
+    expect(phases[1].classes()).toContain('plan-phase--current')
+    expect(phases.slice(2).every((phase) => phase.classes().includes('plan-phase--next'))).toBe(true)
+    expect(journey.text()).toContain('Build')
+    expect(journey.text()).toContain('Race')
     expect(wrapper.text()).toContain('接下來課表')
   })
 
