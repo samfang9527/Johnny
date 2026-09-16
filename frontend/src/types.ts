@@ -126,6 +126,17 @@ export interface RecommendationSummary {
   status: string
 }
 
+export type TodayDecisionState = 'run' | 'adjust' | 'rest'
+
+export interface TodayDecision {
+  state: TodayDecisionState
+  label: '我可以' | '不太對勁' | '先收一下'
+  actionLabel: '開始跑步' | '接受調整' | '記錄休息'
+  tone: 'run' | 'adjust' | 'rest'
+  voice: string
+  memoryInsight?: string
+}
+
 export type RecommendationPriority = 'low' | 'medium' | 'high'
 
 export type RecommendationStatus = 'pending' | 'accepted' | 'rejected' | 'edited' | 'expired' | 'applied'

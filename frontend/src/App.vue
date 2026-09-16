@@ -52,6 +52,7 @@ import type {
   RecommendationStatus,
   RecommendationSummary,
   RaceSummary,
+  TodayDecision,
   ViewKey,
   WorkoutSummary,
   EvidenceItem,
@@ -226,6 +227,8 @@ const recoveryFooterText = computed(() => {
   return ''
 })
 const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
+const todayDecision = computed(() => buildTodayDecision(recommendation.value, recoveryEvidence.value))
+const todayEvidenceChips = computed(() => recoveryEvidence.value.slice(0, 3))
 const todayRecommendationStrip = computed(() =>
   buildTodayRecommendationStrip(
     recommendation.value,
@@ -303,6 +306,41 @@ const injuryAreaOptions = [
   { value: 'other', label: '其他' },
 ]
 const KILOMETERS_PER_MILE = 1.60934
+
+function buildTodayDecision(recommendation: RecommendationSummary | null, evidence: EvidenceItem[]): TodayDecision {
+  const hasDangerEvidence = evidence.some((item) => item.tone === 'danger')
+  const hasWarningRecommendation = recommendation?.priority === 'warning' || recommendation?.priority === 'danger'
+
+  if (recommendation && (hasDangerEvidence || recommendation.priority === 'danger')) {
+    return {
+      state: 'rest',
+      label: '先收一下',
+      actionLabel: '記錄休息',
+      tone: 'rest',
+      voice: '今天不要硬撐，跑鞋先放假。',
+      memoryInsight: '依照你過去的恢復模式，今天建議保守。',
+    }
+  }
+
+  if (recommendation && hasWarningRecommendation) {
+    return {
+      state: 'adjust',
+      label: '不太對勁',
+      actionLabel: '接受調整',
+      tone: 'adjust',
+      voice: '今天先穩住節奏，保留訓練目的就好。',
+      memoryInsight: '依照你過去的恢復模式，今天建議保守。',
+    }
+  }
+
+  return {
+    state: 'run',
+    label: '我可以',
+    actionLabel: '開始跑步',
+    tone: 'run',
+    voice: '狀態可以，照計畫跑，節奏不要偷加。',
+  }
+}
 
 function buildRecoveryDecision(
   currentRecommendation: RecommendationSummary | null,
@@ -1891,6 +1929,32 @@ function shouldRequireAuth(): boolean {
         </article>
 
         <template v-else>
+        <article
+          class="today-decision-card"
+          :class="`today-decision-card--${todayDecision.tone}`"
+          data-testid="today-decision-card"
+        >
+          <div class="today-decision-card__header">
+            <span class="card-kicker">Johnny 今天看起來</span>
+            <strong>{{ todayDecision.label }}</strong>
+          </div>
+          <p>{{ todayDecision.voice }}</p>
+          <div class="today-decision-card__workout">
+            <span>{{ todayWorkout.type }}</span>
+            <strong>{{ todayWorkout.distance || todayWorkout.duration || '今日訓練' }}</strong>
+            <small>{{ todayWorkout.pace || todayWorkout.heartRateZone || todayWorkout.purpose }}</small>
+          </div>
+          <div class="today-evidence-chip-list" aria-label="今日決策證據">
+            <span v-for="item in todayEvidenceChips" :key="`${item.source}-${item.metric}`" class="today-evidence-chip" data-testid="today-evidence-chip">
+              <span>{{ item.metric }}</span>
+              <strong>{{ item.value }}</strong>
+              <small>{{ item.summary }}</small>
+            </span>
+          </div>
+          <p v-if="todayDecision.memoryInsight" class="memory-insight">{{ todayDecision.memoryInsight }}</p>
+          <AppButton tone="primary" data-testid="today-decision-action">{{ todayDecision.actionLabel }}</AppButton>
+        </article>
+
         <article class="surface-card today-top-card today-card--primary workout-card" data-today-section="workout">
           <p class="section-label">今日課表</p>
           <h3>{{ todayWorkout.type }}</h3>

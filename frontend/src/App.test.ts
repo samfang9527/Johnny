@@ -80,6 +80,16 @@ describe('Johnny product shell', () => {
     )
   })
 
+  it('renders Today as a Run Adjust Rest decision card with evidence', () => {
+    const wrapper = mount(App)
+
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('不太對勁')
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('今天不要硬撐，跑鞋先放假。')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('接受調整')
+    expect(wrapper.findAll('[data-testid="today-evidence-chip"]').length).toBeGreaterThanOrEqual(3)
+    expect(wrapper.text()).toContain('依照你過去的恢復模式')
+  })
+
   it('shows the login screen when the session is missing or expired', async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: false,
