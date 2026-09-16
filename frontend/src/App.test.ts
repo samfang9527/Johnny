@@ -400,7 +400,7 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('訓練安排')
+    expect(wrapper.text()).toContain('計畫')
     expect(wrapper.text()).not.toContain('Sydney Marathon')
     expect(wrapper.text()).not.toContain('Taipei Half Tune-up')
     expect(wrapper.text()).not.toContain('Tokyo Marathon Prep Race')
@@ -714,14 +714,23 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('.workout-card').find('button').exists()).toBe(false)
   })
 
-  it('opens training arrangements as a six-month race calendar with workout context', async () => {
+  it('shows Plan as a race-track journey with schedule underneath', async () => {
     const wrapper = mount(App)
 
     await wrapper.get('button[data-view="plan"]').trigger('click')
 
-    expect(wrapper.text()).toContain('訓練安排')
-    expect(wrapper.text()).toContain('未來六個月')
-    expect(wrapper.findAll('[data-testid="race-month"]').length).toBe(6)
+    expect(wrapper.get('[data-testid="plan-journey"]').text()).toContain('Build')
+    expect(wrapper.get('[data-testid="plan-journey"]').text()).toContain('Race')
+    expect(wrapper.text()).toContain('接下來課表')
+  })
+
+  it('opens Plan with journey phases, race goals, and workout context', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="plan"]').trigger('click')
+
+    expect(wrapper.text()).toContain('Race journey')
+    expect(wrapper.get('[data-testid="plan-journey"]').text()).toContain('Build')
     expect(wrapper.text()).toContain('Taipei Half Tune-up')
     expect(wrapper.text()).toContain('週三')
     expect(wrapper.text()).toContain('Easy Run')
@@ -838,7 +847,7 @@ describe('Johnny product shell', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('訓練安排')
+    expect(wrapper.text()).toContain('計畫')
     expect(wrapper.text()).toContain('目前沒有已排定課表')
   })
 

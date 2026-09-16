@@ -2,6 +2,7 @@ import type {
   ConversationThread,
   InboxRecommendation,
   EvidenceItem,
+  PlanPhase,
   ProviderOption,
   RaceSummary,
   RecommendationSummary,
@@ -43,6 +44,14 @@ export const futureRaces: RaceSummary[] = [
     goal: '檢查補給與節奏',
     daysRemaining: 155,
   },
+]
+
+export const planPhases: PlanPhase[] = [
+  { id: 'base', label: 'Base', status: 'done', summary: '穩定跑量' },
+  { id: 'build', label: 'Build', status: 'current', summary: '累積馬拉松節奏' },
+  { id: 'peak', label: 'Peak', status: 'next', summary: '最高訓練週' },
+  { id: 'taper', label: 'Taper', status: 'next', summary: '降低疲勞' },
+  { id: 'race', label: 'Race', status: 'next', summary: '比賽執行' },
 ]
 
 export const recoveryEvidence: EvidenceItem[] = [

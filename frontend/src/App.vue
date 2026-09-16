@@ -35,6 +35,7 @@ import {
   conversationThreads as fixtureConversationThreads,
   futureRaces as fixtureFutureRaces,
   inboxRecommendations as fixtureInboxRecommendations,
+  planPhases as fixturePlanPhases,
   plannedWorkouts as fixtureWorkouts,
   providers,
   raceSummary as fixtureRaceSummary,
@@ -198,6 +199,7 @@ const unavailableSignals = computed(() => {
 })
 const recommendation = computed(() => apiRecommendation.value ?? (shouldRequireAuth() ? null : fixtureRecommendation))
 const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : shouldRequireAuth() ? [] : fixtureWorkouts))
+const planPhases = computed(() => fixturePlanPhases)
 const displayThreads = computed(() => props.conversationThreads ?? fixtureConversationThreads)
 const displayInboxItems = computed(() => {
   const source = props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : shouldRequireAuth() ? [] : fixtureInboxRecommendations)
@@ -210,8 +212,8 @@ const activeThreadId = ref(displayThreads.value[0]?.id ?? '')
 const activeThread = computed(() => displayThreads.value.find((thread) => thread.id === activeThreadId.value) ?? displayThreads.value[0])
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
 const historicalInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status !== 'pending'))
-const raceCalendarMonths = computed(() => buildRaceCalendarMonths(raceEntries.value))
 const todayIsoDate = computed(() => new Date().toISOString().slice(0, 10))
+const upcomingRaceEntries = computed(() => raceEntries.value.filter((race) => race.date >= todayIsoDate.value))
 const dataSourceNeedsAttention = computed(() =>
   Boolean(
     garminConnection.value &&
@@ -1669,23 +1671,6 @@ function statusLabel(status: RecommendationStatus): string {
   return '已套用'
 }
 
-function buildRaceCalendarMonths(races: RaceSummary[]) {
-  const anchor = new Date()
-  const firstMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
-  return Array.from({ length: 6 }, (_, offset) => {
-    const monthStart = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + offset, 1)
-    const monthKey = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`
-    return {
-      key: monthKey,
-      label: monthStart.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long' }),
-      races: races
-        .filter((race) => race.date.startsWith(monthKey))
-        .map((race) => ({ ...race, daysRemaining: daysUntil(race.date) }))
-        .sort((a, b) => a.date.localeCompare(b.date)),
-    }
-  })
-}
-
 function formatWorkoutType(value: string): string {
   return value
     .split('_')
@@ -2071,38 +2056,29 @@ function shouldRequireAuth(): boolean {
         </template>
       </section>
 
-      <section v-else-if="activeView === 'plan'" class="page-stack" aria-labelledby="calendar-title">
+      <section v-else-if="activeView === 'plan'" class="page-stack plan-page" aria-labelledby="plan-title">
         <div class="page-heading page-heading--with-action">
           <div>
-            <p class="section-label">訓練安排</p>
-            <h2 id="calendar-title">未來六個月</h2>
-            <p>把未來目標、重要活動與接下來的課表放在同一個時間脈絡裡。</p>
+            <span>Race journey</span>
+            <h2 id="plan-title">計畫</h2>
             <p v-if="raceFormError" class="field-error" role="alert">{{ raceFormError }}</p>
             <p v-else-if="raceFormMessage" class="inline-note" role="status">{{ raceFormMessage }}</p>
           </div>
           <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
         </div>
 
-        <section class="race-calendar" aria-label="未來六個月訓練安排">
-          <article v-for="month in raceCalendarMonths" :key="month.key" class="race-month" data-testid="race-month">
-            <div class="race-month__header">
-              <p class="section-label">{{ month.key }}</p>
-              <h3>{{ month.label }}</h3>
-            </div>
-            <div v-if="month.races.length" class="race-list">
-              <article v-for="race in month.races" :key="`${race.name}-${race.date}`" class="race-entry">
-                <div>
-                  <strong>{{ race.name }}</strong>
-                  <p>{{ race.distance }} · {{ race.goal }}</p>
-                </div>
-                <div class="race-entry__date">
-                  <span>{{ formatDateLabel(race.date) }}</span>
-                  <small>{{ race.daysRemaining }} 天</small>
-                </div>
-              </article>
-            </div>
-            <p v-else class="race-month__empty">尚未設定目標</p>
+        <section class="surface-card plan-journey" data-testid="plan-journey" aria-label="訓練階段">
+          <article v-for="phase in planPhases" :key="phase.id" class="plan-phase" :class="`plan-phase--${phase.status}`">
+            <span>{{ phase.label }}</span>
+            <strong>{{ phase.summary }}</strong>
           </article>
+          <template v-if="upcomingRaceEntries.length">
+            <article v-for="race in upcomingRaceEntries" :key="`${race.name}-${race.date}`" class="plan-race-goal">
+              <strong>{{ race.name }}</strong>
+              <span>{{ race.distance }} · {{ race.goal }}</span>
+            </article>
+          </template>
+          <p v-else>尚未設定目標</p>
         </section>
 
         <RaceGoalModal
@@ -2124,49 +2100,51 @@ function shouldRequireAuth(): boolean {
           @confirm="confirmRaceGoalDiscard"
         />
 
-        <div class="section-heading">
-          <div>
-            <p class="section-label">Workout context</p>
-            <h3>接下來的課表</h3>
-          </div>
-          <StatusBadge tone="info">{{ displayWorkouts.length }} 項</StatusBadge>
-        </div>
-
-        <div v-if="displayWorkouts.length" class="schedule-list">
-          <article v-for="workout in displayWorkouts" :key="workout.id" class="schedule-row">
-            <div class="schedule-row__date">
-              <strong>{{ workout.weekday }}</strong>
-              <span>{{ workout.dateLabel }}</span>
-            </div>
+        <section class="schedule-section" aria-labelledby="schedule-title">
+          <div class="section-heading">
             <div>
-              <h3>{{ workout.type }}</h3>
-              <p>{{ workout.purpose }}</p>
-              <p v-if="workout.stepSummary" class="workout-step-summary">{{ workout.stepSummary }}</p>
+              <p class="section-label">Workout context</p>
+              <h3 id="schedule-title">接下來課表</h3>
             </div>
-            <div class="schedule-row__meta">
-              <div class="metric-row">
-                <span v-if="workout.distance">{{ workout.distance }}</span>
-                <span v-if="workout.duration">{{ workout.duration }}</span>
-                <span v-if="workout.pace">{{ workout.pace }}</span>
-                <span>{{ workout.status }}</span>
+            <StatusBadge tone="info">{{ displayWorkouts.length }} 項</StatusBadge>
+          </div>
+
+          <div v-if="displayWorkouts.length" class="schedule-list">
+            <article v-for="workout in displayWorkouts" :key="workout.id" class="schedule-row">
+              <div class="schedule-row__date">
+                <strong>{{ workout.weekday }}</strong>
+                <span>{{ workout.dateLabel }}</span>
               </div>
-              <AppButton
-                v-if="hasWorkoutDetails(workout)"
-                tone="neutral"
-                type="button"
-                :data-testid="`workout-detail-${workout.id}`"
-                @click="openWorkoutDetails(workout)"
-              >
-                細節
-              </AppButton>
-            </div>
+              <div>
+                <h3>{{ workout.type }}</h3>
+                <p>{{ workout.purpose }}</p>
+                <p v-if="workout.stepSummary" class="workout-step-summary">{{ workout.stepSummary }}</p>
+              </div>
+              <div class="schedule-row__meta">
+                <div class="metric-row">
+                  <span v-if="workout.distance">{{ workout.distance }}</span>
+                  <span v-if="workout.duration">{{ workout.duration }}</span>
+                  <span v-if="workout.pace">{{ workout.pace }}</span>
+                  <span>{{ workout.status }}</span>
+                </div>
+                <AppButton
+                  v-if="hasWorkoutDetails(workout)"
+                  tone="neutral"
+                  type="button"
+                  :data-testid="`workout-detail-${workout.id}`"
+                  @click="openWorkoutDetails(workout)"
+                >
+                  細節
+                </AppButton>
+              </div>
+            </article>
+          </div>
+          <article v-else class="state-panel">
+            <p class="section-label">Empty</p>
+            <h3>目前沒有已排定課表</h3>
+            <p>建立訓練計畫後，Johnny 會在這裡依日期整理接下來的課表。</p>
           </article>
-        </div>
-        <article v-else class="state-panel">
-          <p class="section-label">Empty</p>
-          <h3>目前沒有已排定課表</h3>
-          <p>建立訓練計畫後，Johnny 會在這裡依日期整理接下來的課表。</p>
-        </article>
+        </section>
       </section>
 
       <section v-else-if="activeView === 'johnny'" class="page-stack" aria-labelledby="inbox-title">

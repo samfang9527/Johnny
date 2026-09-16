@@ -65,6 +65,13 @@ export interface WeeklyActivityPoint {
   loadLabel: string
 }
 
+export interface PlanPhase {
+  id: string
+  label: string
+  status: 'done' | 'current' | 'next'
+  summary: string
+}
+
 export interface RaceGoalCreatePayload {
   name: string
   race_date: string
