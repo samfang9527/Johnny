@@ -113,9 +113,15 @@ describe('Johnny product shell', () => {
 
     await wrapper.get('button[data-view="data"]').trigger('click')
 
-    expect(wrapper.get('[data-testid="signal-coverage"]').text()).toContain('Johnny 已有')
-    expect(wrapper.get('[data-testid="signal-coverage"]').text()).toContain('Activity')
-    expect(wrapper.get('[data-testid="signal-coverage"]').text()).toContain('Athlete Baseline')
+    const signalCoverage = wrapper.get('[data-testid="signal-coverage"]')
+    const providerDetails = wrapper.get('.provider-grid')
+
+    expect(signalCoverage.text()).toContain('Johnny 已有')
+    expect(signalCoverage.text()).toContain('Activity')
+    expect(signalCoverage.text()).toContain('Athlete Baseline')
+    expect(signalCoverage.findAll('.signal-pill')).toHaveLength(6)
+    expect(signalCoverage.findAll('.signal-pill--covered').length).toBeGreaterThan(0)
+    expect(signalCoverage.element.compareDocumentPosition(providerDetails.element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('renders rest guidance for a high-priority Today recommendation', async () => {

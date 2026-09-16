@@ -952,6 +952,56 @@ button:disabled {
   gap: var(--space-shell-gap);
 }
 
+.signal-coverage__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.signal-pill {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px dashed rgba(246, 239, 228, 0.34);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted-chalk);
+}
+
+.signal-pill::after {
+  content: "待補";
+  font-family: var(--font-data);
+  font-size: 0.72rem;
+}
+
+.signal-pill strong,
+.signal-pill small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.signal-pill strong {
+  color: var(--color-lane-chalk);
+}
+
+.signal-pill small {
+  color: var(--color-muted-chalk);
+  font-family: var(--font-data);
+  font-size: 0.72rem;
+}
+
+.signal-pill--covered {
+  border-style: solid;
+  border-color: rgba(131, 183, 165, 0.6);
+  background: rgba(131, 183, 165, 0.1);
+}
+
+.signal-pill--covered::after {
+  content: "已就緒";
+  color: var(--color-primary);
+}
+
 .provider-card {
   display: grid;
   gap: 1rem;
