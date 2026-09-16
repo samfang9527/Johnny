@@ -91,6 +91,13 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('依照你過去的恢復模式')
   })
 
+  it('shows weekly activity rhythm below the Today decision', () => {
+    const wrapper = mount(App)
+
+    expect(wrapper.get('[data-testid="weekly-activity"]').text()).toContain('本週活動')
+    expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').length).toBe(7)
+  })
+
   it('renders rest guidance for a high-priority Today recommendation', async () => {
     mockAuthenticatedToday({
       userId: 'user-auth-rest-decision',

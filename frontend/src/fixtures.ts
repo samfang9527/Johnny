@@ -1,4 +1,13 @@
-import type { ConversationThread, InboxRecommendation, EvidenceItem, ProviderOption, RaceSummary, RecommendationSummary, WorkoutSummary } from './types'
+import type {
+  ConversationThread,
+  InboxRecommendation,
+  EvidenceItem,
+  ProviderOption,
+  RaceSummary,
+  RecommendationSummary,
+  WeeklyActivityPoint,
+  WorkoutSummary,
+} from './types'
 
 export const raceSummary: RaceSummary = {
   name: 'Sydney Marathon',
@@ -7,6 +16,16 @@ export const raceSummary: RaceSummary = {
   goal: 'Sub 4:00',
   daysRemaining: 16,
 }
+
+export const weeklyActivity: WeeklyActivityPoint[] = [
+  { dayLabel: '一', distanceKm: 6, loadLabel: 'Easy' },
+  { dayLabel: '二', distanceKm: 0, loadLabel: 'Rest' },
+  { dayLabel: '三', distanceKm: 8, loadLabel: 'Easy' },
+  { dayLabel: '四', distanceKm: 10, loadLabel: 'Tempo' },
+  { dayLabel: '五', distanceKm: 0, loadLabel: 'Rest' },
+  { dayLabel: '六', distanceKm: 5, loadLabel: 'Easy' },
+  { dayLabel: '日', distanceKm: 18, loadLabel: 'Long' },
+]
 
 export const futureRaces: RaceSummary[] = [
   raceSummary,

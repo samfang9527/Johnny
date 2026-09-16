@@ -59,6 +59,12 @@ export interface RaceSummary {
   daysRemaining: number
 }
 
+export interface WeeklyActivityPoint {
+  dayLabel: string
+  distanceKm: number
+  loadLabel: string
+}
+
 export interface RaceGoalCreatePayload {
   name: string
   race_date: string

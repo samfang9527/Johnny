@@ -42,6 +42,7 @@ import {
   recoveryEvidence as fixtureRecoveryEvidence,
   todayWorkout as fixtureTodayWorkout,
   unavailableSignals as fixtureUnavailableSignals,
+  weeklyActivity as fixtureWeeklyActivity,
 } from './fixtures'
 import type {
   ConversationThread,
@@ -229,6 +230,8 @@ const recoveryFooterText = computed(() => {
 const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
 const todayDecision = computed(() => buildTodayDecision(recommendation.value, recoveryEvidence.value))
 const todayEvidenceChips = computed(() => recoveryEvidence.value.slice(0, 3))
+const weeklyActivityPoints = computed(() => fixtureWeeklyActivity)
+const maxWeeklyDistance = computed(() => Math.max(...weeklyActivityPoints.value.map((point) => point.distanceKm), 1))
 const todayRecommendationStrip = computed(() =>
   buildTodayRecommendationStrip(
     recommendation.value,
@@ -1954,6 +1957,37 @@ function shouldRequireAuth(): boolean {
           <p v-if="todayDecision.memoryInsight" class="memory-insight">{{ todayDecision.memoryInsight }}</p>
           <AppButton tone="primary" data-testid="today-decision-action">{{ todayDecision.actionLabel }}</AppButton>
         </article>
+
+        <section class="surface-card weekly-activity" data-testid="weekly-activity" aria-labelledby="weekly-activity-title">
+          <div class="section-heading-row">
+            <h3 id="weekly-activity-title">本週活動</h3>
+            <span>跑量節奏</span>
+          </div>
+          <div class="weekly-activity__bars" aria-label="本週跑步距離">
+            <div v-for="point in weeklyActivityPoints" :key="point.dayLabel" class="weekly-activity__day">
+              <span
+                class="weekly-activity__bar"
+                data-testid="weekly-activity-bar"
+                :style="{ '--bar-size': `${Math.round((point.distanceKm / maxWeeklyDistance) * 100)}%` }"
+              ></span>
+              <strong>{{ point.dayLabel }}</strong>
+              <small>{{ point.distanceKm }} km</small>
+            </div>
+          </div>
+        </section>
+
+        <aside class="today-context-rail" aria-label="今日脈絡">
+          <section class="surface-card">
+            <span class="card-kicker">目標賽事</span>
+            <strong>{{ raceSummary.name }}</strong>
+            <p>{{ raceSummary.daysRemaining }} 天後 · {{ raceSummary.goal }}</p>
+          </section>
+          <section class="surface-card">
+            <span class="card-kicker">Johnny 待決定</span>
+            <strong>{{ pendingInboxItems.length }}</strong>
+            <p>目前待處理建議</p>
+          </section>
+        </aside>
 
         <article class="surface-card today-top-card today-card--primary workout-card" data-today-section="workout">
           <p class="section-label">今日課表</p>
