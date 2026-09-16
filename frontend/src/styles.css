@@ -1,32 +1,43 @@
 :root {
-  --color-primary: #83b7a5;
-  --color-track-night: #171b1a;
-  --color-pit-black: #111514;
-  --color-rubber-gray: #2f3430;
-  --color-lane-chalk: #f6efe4;
-  --color-muted-chalk: #c8c0b3;
-  --color-recovery-blue: #83b7a5;
-  --color-split-amber: #e8b86d;
+  --color-mint-track: #eef9f1;
+  --color-mint-surface: #f8fcf8;
+  --color-card-white: #ffffff;
+  --color-deep-green: #0f4a32;
+  --color-lane-green: #2d7a58;
+  --color-soft-mint: #bfe8d2;
+  --color-split-amber: #d89422;
+  --color-rest-blue: #6c9ecf;
   --color-effort-red: #b85a50;
-  --color-easy-green: #8fb879;
-  --color-line-white: #ffffff;
+  --color-ink-green: #14382a;
+  --color-muted-green: #5f7b6b;
+  --color-line-mint: #d9ecdd;
+  --color-primary: var(--color-deep-green);
+  --color-track-night: var(--color-mint-track);
+  --color-pit-black: var(--color-deep-green);
+  --color-rubber-gray: var(--color-card-white);
+  --color-lane-chalk: var(--color-ink-green);
+  --color-muted-chalk: var(--color-muted-green);
+  --color-recovery-blue: var(--color-rest-blue);
+  --color-easy-green: var(--color-soft-mint);
+  --color-line-white: var(--color-card-white);
   --font-body: "IBM Plex Sans", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
   --font-display: "IBM Plex Sans Condensed", "Noto Sans TC", "PingFang TC", system-ui, sans-serif;
   --font-data: "IBM Plex Mono", "Noto Sans Mono CJK TC", "SFMono-Regular", ui-monospace, monospace;
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.35rem;
   --radius-full: 999px;
-  --space-page-max: 76rem;
-  --space-shell-gap: 1.5rem;
-  --space-section-gap: 2rem;
-  --space-card-pad: 1.25rem;
+  --space-page-max: 72rem;
+  --space-shell-gap: 1.25rem;
+  --space-section-gap: 1.6rem;
+  --space-card-pad: 1.1rem;
   --space-control-y: 0.75rem;
   --space-control-x: 1rem;
   font-family: var(--font-body);
-  color: var(--color-lane-chalk);
-  background: var(--color-track-night);
-  scrollbar-color: color-mix(in srgb, var(--color-recovery-blue) 70%, var(--color-pit-black)) var(--color-pit-black);
+  color: var(--color-ink-green);
+  background: var(--color-mint-track);
+  scrollbar-color: color-mix(in srgb, var(--color-lane-green) 70%, var(--color-mint-track)) var(--color-mint-track);
   scrollbar-width: thin;
 }
 
@@ -40,13 +51,13 @@
 }
 
 *::-webkit-scrollbar-track {
-  background: var(--color-pit-black);
+  background: var(--color-mint-track);
 }
 
 *::-webkit-scrollbar-thumb {
-  border: 3px solid var(--color-pit-black);
+  border: 3px solid var(--color-mint-track);
   border-radius: var(--radius-full);
-  background: var(--color-recovery-blue);
+  background: var(--color-lane-green);
 }
 
 body {
@@ -55,8 +66,8 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   background:
-    linear-gradient(90deg, rgba(246, 239, 228, 0.026) 1px, transparent 1px) 0 0 / 4.5rem 100%,
-    var(--color-track-night);
+    linear-gradient(90deg, rgba(15, 74, 50, 0.035) 1px, transparent 1px) 0 0 / 4.5rem 100%,
+    var(--color-mint-track);
 }
 
 button,
@@ -84,7 +95,7 @@ button:disabled {
 
 .app-shell {
   min-height: 100vh;
-  color: var(--color-lane-chalk);
+  color: var(--color-ink-green);
 }
 
 .top-bar {
@@ -93,8 +104,8 @@ button:disabled {
   z-index: 10;
   min-height: 4rem;
   padding: 0.8rem 0;
-  border-bottom: 1px solid rgba(246, 239, 228, 0.12);
-  background: color-mix(in srgb, var(--color-pit-black) 94%, transparent);
+  border-bottom: 1px solid var(--color-line-mint);
+  background: color-mix(in srgb, var(--color-mint-track) 88%, white);
   backdrop-filter: blur(14px);
 }
 
@@ -126,9 +137,10 @@ button:disabled {
   gap: 0.35rem;
   justify-content: flex-end;
   padding: 0.25rem;
-  border: 1px solid rgba(246, 239, 228, 0.1);
+  border: 1px solid var(--color-line-mint);
   border-radius: var(--radius-lg);
-  background: rgba(246, 239, 228, 0.045);
+  background: var(--color-card-white);
+  box-shadow: 0 1rem 2.4rem rgba(15, 74, 50, 0.08);
 }
 
 .top-nav__item {
@@ -136,19 +148,19 @@ button:disabled {
   padding: 0.55rem 0.75rem;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  color: var(--color-muted-chalk);
+  color: var(--color-muted-green);
   background: transparent;
 }
 
 .top-nav__item:hover {
-  border-color: rgba(246, 239, 228, 0.22);
-  color: var(--color-lane-chalk);
+  border-color: var(--color-line-mint);
+  color: var(--color-deep-green);
 }
 
 .top-nav__item--active {
-  border-color: rgba(242, 184, 75, 0.7);
-  color: var(--color-lane-chalk);
-  background: rgba(242, 184, 75, 0.12);
+  border-color: color-mix(in srgb, var(--color-deep-green) 65%, var(--color-line-mint));
+  color: var(--color-deep-green);
+  background: var(--color-soft-mint);
 }
 
 .main-surface {
@@ -1649,6 +1661,686 @@ button:disabled {
   font-weight: 700;
 }
 
+/* Light runtime surfaces keep the existing semantic components readable. */
+.surface-card,
+.provider-card,
+.schedule-row,
+.empty-panel,
+.state-panel,
+.auth-panel,
+.race-month,
+.message-card,
+.inbox-card {
+  border-color: var(--color-line-mint);
+  background: var(--color-card-white);
+  box-shadow: 0 0.7rem 1.8rem rgba(15, 74, 50, 0.06);
+}
+
+.app-button--primary {
+  color: var(--color-card-white);
+  background: var(--color-deep-green);
+}
+
+.app-button--neutral {
+  color: var(--color-deep-green);
+  border-color: var(--color-line-mint);
+  background: var(--color-mint-surface);
+}
+
+.today-decision-card {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1rem, 3vw, 1.4rem);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 1.2rem 2.8rem rgba(15, 74, 50, 0.18);
+}
+
+.today-decision-card--run {
+  color: var(--color-card-white);
+  background: var(--color-deep-green);
+}
+
+.today-decision-card--adjust {
+  color: var(--color-ink-green);
+  background: var(--color-split-amber);
+}
+
+.today-decision-card--rest {
+  color: var(--color-card-white);
+  background: var(--color-rest-blue);
+}
+
+.today-decision-card .app-button--primary {
+  color: var(--color-ink-green);
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.today-evidence-chip-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.today-evidence-chip {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.today-evidence-chip strong,
+.today-evidence-chip small,
+.today-evidence-chip span {
+  overflow-wrap: anywhere;
+}
+
+.weekly-activity__bars,
+.signal-coverage__grid,
+.plan-journey,
+.athlete-baseline dl {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.weekly-activity__bars {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: end;
+  min-height: 10rem;
+}
+
+.weekly-activity__day {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  justify-items: center;
+  text-align: center;
+}
+
+.weekly-activity__bar {
+  display: block;
+  width: min(1.6rem, 100%);
+  height: max(0.5rem, var(--bar-size));
+  border-radius: var(--radius-full);
+  background: var(--color-lane-green);
+}
+
+.plan-journey {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-color: var(--color-line-mint);
+  background: var(--color-card-white);
+}
+
+.plan-phase {
+  border: 1px solid var(--color-line-mint);
+  border-radius: var(--radius-lg);
+  padding: 0.8rem;
+  background: var(--color-mint-surface);
+}
+
+.plan-phase--current {
+  border-color: var(--color-deep-green);
+  background: var(--color-soft-mint);
+  box-shadow: none;
+}
+
+.plan-phase strong,
+.signal-pill strong {
+  color: var(--color-ink-green);
+}
+
+.signal-pill {
+  border: 1px solid var(--color-line-mint);
+  border-radius: var(--radius-full);
+  padding: 0.55rem 0.75rem;
+  background: var(--color-mint-surface);
+}
+
+.signal-pill--covered {
+  border-color: var(--color-lane-green);
+  background: var(--color-soft-mint);
+}
+
+.athlete-baseline dl {
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  margin: 0;
+}
+
+.athlete-baseline dl div {
+  padding: 0.75rem;
+  border: 1px solid var(--color-line-mint);
+  border-radius: var(--radius-md);
+  background: var(--color-mint-surface);
+}
+
+.athlete-baseline dt {
+  color: var(--color-muted-green);
+  font-size: 0.82rem;
+}
+
+.athlete-baseline dd {
+  margin: 0.35rem 0 0;
+  color: var(--color-ink-green);
+  font-family: var(--font-data);
+  font-weight: 700;
+}
+
+.today-layout,
+.today-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+  gap: var(--space-shell-gap);
+  align-items: start;
+}
+
+.today-main-column,
+.today-context-rail {
+  display: grid;
+  gap: var(--space-shell-gap);
+}
+
+.today-grid > .page-heading,
+.today-grid > .state-panel {
+  grid-column: 1 / -1;
+}
+
+.today-grid > .today-decision-card,
+.today-grid > .weekly-activity,
+.today-grid > .workout-card,
+.today-grid > .race-card,
+.today-grid > .inbox-nudge {
+  grid-column: 1;
+  grid-row: auto;
+}
+
+.today-grid > .today-context-rail {
+  grid-column: 2;
+  grid-row: 2 / span 3;
+}
+
+/* Johnny light-mint runtime reconciliation. Older dark-shell selectors remain
+   for structure, while this block maps their surfaces to the approved theme. */
+.card-kicker,
+.section-heading-row span {
+  color: var(--color-lane-green);
+  font-family: var(--font-data);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.section-heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.auth-panel,
+.surface-card,
+.provider-card,
+.schedule-row,
+.empty-panel,
+.state-panel,
+.race-month,
+.linked-context,
+.message-card,
+.inbox-card,
+.composer-form,
+.provider-dialog__panel,
+.app-dialog__panel,
+.sync-result {
+  border-color: var(--color-line-mint);
+  color: var(--color-ink-green);
+  background: var(--color-card-white);
+  box-shadow: 0 0.75rem 2rem rgba(15, 74, 50, 0.07);
+}
+
+.surface-card h3,
+.provider-card h3,
+.schedule-row h3,
+.recommendation-card h3,
+.auth-panel h1,
+.inbox-card h3,
+.message-card h3,
+.linked-context h3 {
+  color: var(--color-ink-green);
+}
+
+.page-heading p,
+.surface-card p,
+.provider-card p,
+.empty-panel p,
+.state-panel p,
+.schedule-row p,
+.thread-button span,
+.thread-button small,
+.message-card p,
+.linked-context p,
+.proposed-action p,
+.inbox-card p,
+.composer-form__footer p,
+.race-entry p,
+.race-month__empty,
+.form-footer p,
+.provider-card__account span,
+.provider-card__sync-summary ul,
+.sync-result__list,
+.unavailable-signals ul,
+.signal-list {
+  color: var(--color-muted-green);
+}
+
+.auth-mode-switch,
+.choice-fieldset,
+.target-time-fieldset,
+.date-picker__calendar,
+.provider-card__account,
+.provider-card__sync-summary,
+.sync-result,
+.evidence-row,
+.workout-step-row,
+.coach-note,
+.decision-strip > div,
+.recovery-signal-chip,
+.race-entry,
+.thread-button,
+.composer-form,
+.provider-card__confirm {
+  border-color: var(--color-line-mint);
+  background: var(--color-mint-surface);
+}
+
+.provider-card__confirm {
+  border-color: color-mix(in srgb, var(--color-effort-red) 50%, var(--color-line-mint));
+}
+
+.recommendation-strip {
+  border-color: color-mix(in srgb, var(--color-split-amber) 42%, var(--color-line-mint));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-split-amber) 16%, transparent), transparent 42%),
+    var(--color-card-white);
+}
+
+.recommendation-card,
+.inbox-card {
+  border-color: color-mix(in srgb, var(--color-split-amber) 48%, var(--color-line-mint));
+  background: var(--color-card-white);
+}
+
+.decision-strip {
+  border-color: var(--color-line-mint);
+  background: var(--color-line-mint);
+}
+
+.decision-strip > div {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62), transparent),
+    var(--color-mint-surface);
+}
+
+.data-chip,
+.metric-row span {
+  border: 1px solid var(--color-line-mint);
+  color: var(--color-lane-green);
+  background: var(--color-mint-surface);
+}
+
+.recovery-signal-chip {
+  border-color: color-mix(in srgb, var(--color-lane-green) 24%, var(--color-line-mint));
+}
+
+.recovery-signal-chip span,
+.recovery-signal-chip small,
+.compact-card-footer,
+.evidence-row__label,
+.race-entry__date small,
+.schedule-row__date span,
+.form-grid label,
+.race-form label,
+.athlete-settings-form label,
+.choice-fieldset,
+.provider-form label,
+.target-time-fieldset legend,
+.date-picker__weekdays span,
+.signal-pill,
+.signal-pill small,
+.plan-phase span {
+  color: var(--color-muted-green);
+}
+
+.evidence-row__value,
+.provider-card__account strong,
+.choice-fieldset legend,
+.workout-step-summary,
+.race-card__count,
+.workout-detail-summary,
+.date-picker__header strong,
+.plan-phase strong,
+.decision-strip strong {
+  color: var(--color-ink-green) !important;
+}
+
+.compact-card-footer,
+.race-card__rationale,
+.proposed-action {
+  border-color: var(--color-line-mint);
+}
+
+.app-button--primary {
+  color: var(--color-card-white);
+  background: var(--color-deep-green);
+  box-shadow: 0 0.55rem 1.1rem rgba(15, 74, 50, 0.16);
+}
+
+.app-button--neutral {
+  color: var(--color-deep-green);
+  border-color: var(--color-line-mint);
+  background: var(--color-mint-surface);
+}
+
+.app-button--warning {
+  color: var(--color-ink-green);
+  background: var(--color-split-amber);
+}
+
+.app-button--danger {
+  color: var(--color-card-white);
+  background: var(--color-effort-red);
+}
+
+.status-badge--info {
+  color: var(--color-ink-green);
+  background: color-mix(in srgb, var(--color-rest-blue) 54%, white);
+}
+
+.status-badge--warning {
+  color: var(--color-ink-green);
+  background: color-mix(in srgb, var(--color-split-amber) 74%, white);
+}
+
+.status-badge--success {
+  color: var(--color-deep-green);
+  background: var(--color-soft-mint);
+}
+
+.today-decision-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.today-decision-card::after {
+  position: absolute;
+  inset: auto -12% -35% auto;
+  z-index: -1;
+  width: 55%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  content: "";
+}
+
+.today-decision-card__header {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.today-decision-card__header strong {
+  font-family: var(--font-display);
+  font-size: clamp(2.1rem, 9vw, 4rem);
+  line-height: 1;
+}
+
+.today-decision-card__workout {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.today-decision-card__workout span,
+.today-decision-card__workout small,
+.today-evidence-chip span,
+.today-evidence-chip small,
+.memory-insight {
+  color: currentColor;
+  opacity: 0.78;
+}
+
+.today-decision-card__workout strong {
+  font-family: var(--font-data);
+  font-size: 1.2rem;
+}
+
+.today-decision-card--rest {
+  color: var(--color-ink-green);
+}
+
+.today-decision-card .card-kicker {
+  color: currentColor;
+  opacity: 0.72;
+}
+
+.today-decision-card .app-button--primary {
+  color: var(--color-ink-green);
+  border-color: rgba(255, 255, 255, 0.46);
+  background: color-mix(in srgb, var(--color-card-white) 88%, transparent);
+  box-shadow: none;
+}
+
+.weekly-activity {
+  overflow: hidden;
+}
+
+.weekly-activity__bars {
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--color-line-mint);
+}
+
+.weekly-activity__bar {
+  background:
+    linear-gradient(180deg, var(--color-lane-green), var(--color-deep-green));
+  box-shadow: 0 0.35rem 0.8rem rgba(15, 74, 50, 0.14);
+}
+
+.weekly-activity__day strong {
+  color: var(--color-ink-green);
+  font-family: var(--font-data);
+  font-size: 0.8rem;
+}
+
+.weekly-activity__day small {
+  color: var(--color-muted-green);
+  font-family: var(--font-data);
+  font-size: 0.72rem;
+}
+
+.today-context-rail {
+  align-self: stretch;
+}
+
+.today-context-rail .surface-card {
+  min-height: 8rem;
+  border-color: color-mix(in srgb, var(--color-lane-green) 20%, var(--color-line-mint));
+}
+
+.plan-journey {
+  position: relative;
+  grid-template-columns: repeat(5, minmax(9rem, 1fr));
+  overflow-x: auto;
+  border-color: var(--color-line-mint);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-soft-mint) 42%, transparent), transparent 48%),
+    var(--color-card-white);
+}
+
+.plan-phase {
+  min-height: 8rem;
+  border-color: var(--color-line-mint);
+  border-radius: var(--radius-lg);
+  background: var(--color-mint-surface);
+}
+
+.plan-phase::before {
+  background: var(--color-line-mint);
+}
+
+.plan-phase--done {
+  border-color: color-mix(in srgb, var(--color-lane-green) 48%, var(--color-line-mint));
+  background: color-mix(in srgb, var(--color-soft-mint) 56%, var(--color-card-white));
+}
+
+.plan-phase--done::before {
+  background: var(--color-lane-green);
+}
+
+.plan-phase--current {
+  border-color: var(--color-deep-green);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-soft-mint) 70%, transparent), transparent),
+    var(--color-mint-surface);
+}
+
+.plan-phase--current::before {
+  background: var(--color-deep-green);
+}
+
+.plan-phase--next {
+  opacity: 1;
+}
+
+.plan-race-goal {
+  border-color: color-mix(in srgb, var(--color-split-amber) 48%, var(--color-line-mint));
+  color: var(--color-muted-green);
+}
+
+.plan-race-goal strong {
+  color: var(--color-deep-green);
+}
+
+.signal-pill {
+  min-height: 4.15rem;
+  border-radius: var(--radius-lg);
+  background: var(--color-mint-surface);
+}
+
+.signal-pill--covered {
+  border-color: var(--color-lane-green);
+  color: var(--color-deep-green);
+  background: color-mix(in srgb, var(--color-soft-mint) 66%, var(--color-card-white));
+}
+
+.signal-pill::after {
+  color: var(--color-muted-green);
+}
+
+.signal-pill--covered::after {
+  color: var(--color-deep-green);
+}
+
+.athlete-baseline dl div {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62), transparent),
+    var(--color-mint-surface);
+}
+
+.provider-form input,
+.provider-form select,
+.race-form input,
+.race-form select,
+.athlete-settings-form input,
+.athlete-settings-form select,
+.athlete-settings-form textarea,
+.composer-form textarea {
+  border-color: var(--color-line-mint);
+  color: var(--color-ink-green);
+  background: var(--color-card-white);
+}
+
+.provider-form input:hover,
+.provider-form select:hover,
+.race-form input:hover,
+.race-form select:hover,
+.athlete-settings-form input:hover,
+.athlete-settings-form select:hover,
+.athlete-settings-form textarea:hover,
+.composer-form textarea:hover {
+  border-color: color-mix(in srgb, var(--color-lane-green) 58%, var(--color-line-mint));
+}
+
+.provider-form input:focus-visible,
+.provider-form select:focus-visible,
+.race-form input:focus-visible,
+.race-form select:focus-visible,
+.athlete-settings-form input:focus-visible,
+.athlete-settings-form select:focus-visible,
+.athlete-settings-form textarea:focus-visible,
+.composer-form textarea:focus-visible {
+  border-color: var(--color-deep-green);
+}
+
+.date-picker__header button,
+.date-picker__grid button,
+.icon-button,
+.google-auth-button,
+.auth-mode-switch button,
+.user-menu button {
+  border-color: var(--color-line-mint);
+  color: var(--color-deep-green);
+  background: var(--color-card-white);
+}
+
+.date-picker__header button:hover:not(:disabled),
+.date-picker__grid button:hover:not(:disabled),
+.icon-button:hover,
+.google-auth-button:hover,
+.auth-mode-switch button:hover,
+.user-menu button:hover {
+  border-color: color-mix(in srgb, var(--color-lane-green) 58%, var(--color-line-mint));
+  background: var(--color-mint-surface);
+}
+
+.date-picker__day--selected,
+.auth-mode-switch__item--active {
+  color: var(--color-card-white) !important;
+  border-color: var(--color-deep-green) !important;
+  background: var(--color-deep-green) !important;
+}
+
+.provider-dialog,
+.app-dialog {
+  background: rgba(15, 74, 50, 0.34);
+  backdrop-filter: blur(8px);
+}
+
+.thread-button--active {
+  border-color: var(--color-split-amber);
+  background: color-mix(in srgb, var(--color-split-amber) 16%, var(--color-card-white));
+}
+
+.message-card--johnny {
+  border-left-color: var(--color-rest-blue);
+}
+
+.message-card--user {
+  background: var(--color-mint-surface);
+}
+
+.field-error {
+  color: var(--color-effort-red);
+}
+
+.inline-note,
+.provider-card__warning,
+.sync-result__warning {
+  color: var(--color-split-amber);
+}
+
 @media (max-width: 780px) {
   .top-bar__inner {
     align-items: flex-start;
@@ -1748,6 +2440,52 @@ button:disabled {
 
   .message-panel {
     order: 1;
+  }
+}
+
+@media (max-width: 860px) {
+  .today-layout,
+  .today-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .today-grid > .today-context-rail {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .today-evidence-chip-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 780px) {
+  .top-nav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0;
+    width: 100%;
+    padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom));
+    border: 1px solid var(--color-line-mint);
+    border-radius: 0;
+    box-shadow: 0 -0.5rem 1.5rem rgba(15, 74, 50, 0.1);
+  }
+
+  .top-nav__item {
+    min-height: 2.75rem;
+    padding: 0.45rem 0.25rem;
+    font-size: 0.78rem;
+  }
+
+  .main-surface {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
   }
 }
 
