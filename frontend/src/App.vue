@@ -63,6 +63,8 @@ import type {
   RaceGoalCreatePayload,
   AthleteProfileResponse,
   AthleteProfileSavePayload,
+  AthleteBaselineSnapshot,
+  SignalCoverageItem,
   WorkoutStep,
   WorkoutTarget,
 } from './types'
@@ -197,6 +199,25 @@ const unavailableSignals = computed(() => {
   }
   return shouldRequireAuth() ? [] : fixtureUnavailableSignals
 })
+const athleteBaselineSnapshot = computed<AthleteBaselineSnapshot>(() => ({
+  weeklyMileage: `${athleteSettings.value.currentWeeklyMileage || '0'} ${athleteMileageDisplayUnit.value === 'imperial' ? 'mi' : 'km'}`,
+  experience: athleteSettings.value.experienceLevel || '未設定',
+  injuryStatus: formatInjuryStatusLabel(athleteSettings.value.injuryStatus),
+  rhythm: `${athleteSettings.value.preferredTrainingDays.length} 天訓練 · 長跑 ${formatWeekdayLabel(athleteSettings.value.preferredLongRunDay)}`,
+  recentMetrics: recoveryEvidence.value.slice(0, 3).map((item) => `${item.metric} ${item.value}`),
+}))
+const signalCoverage = computed<SignalCoverageItem[]>(() => {
+  const metrics = new Set(recoveryEvidence.value.map((item) => item.metric.toLowerCase()))
+  return [
+    { id: 'activity', label: 'Activity', covered: hasActiveDataProvider.value, source: 'Garmin' },
+    { id: 'sleep', label: 'Sleep', covered: metrics.has('睡眠') || metrics.has('sleep'), source: 'Garmin' },
+    { id: 'hrv', label: 'HRV', covered: metrics.has('hrv'), source: 'Garmin' },
+    { id: 'resting_hr', label: 'Resting HR', covered: !unavailableSignals.value.some((item) => item.includes('靜息心率')), source: 'Garmin' },
+    { id: 'training_load', label: 'Training Load', covered: recoveryEvidence.value.some((item) => item.metric.includes('負荷')), source: 'Johnny Analytics' },
+    { id: 'athlete_baseline', label: 'Athlete Baseline', covered: Boolean(athleteSettings.value.timezone), source: '運動員' },
+  ]
+})
+const coveredSignalCount = computed(() => signalCoverage.value.filter((item) => item.covered).length)
 const recommendation = computed(() => apiRecommendation.value ?? (shouldRequireAuth() ? null : fixtureRecommendation))
 const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : shouldRequireAuth() ? [] : fixtureWorkouts))
 const planPhases = computed(() => fixturePlanPhases)
@@ -1210,6 +1231,29 @@ function isInjuryStatus(value: unknown): value is AthleteSettingsForm['injurySta
 
 function isExperienceLevel(value: unknown): value is AthleteSettingsForm['experienceLevel'] {
   return value === 'beginner' || value === 'intermediate' || value === 'advanced'
+}
+
+function formatInjuryStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    none: '無目前傷痛',
+    current: '目前有傷痛',
+    recent: '近期傷痛觀察',
+    recurring: '反覆傷痛觀察',
+  }
+  return labels[status] ?? '未設定'
+}
+
+function formatWeekdayLabel(day: string): string {
+  const labels: Record<string, string> = {
+    monday: '週一',
+    tuesday: '週二',
+    wednesday: '週三',
+    thursday: '週四',
+    friday: '週五',
+    saturday: '週六',
+    sunday: '週日',
+  }
+  return labels[day] ?? day
 }
 
 function formatMileageForUnit(kilometers: number, unit: 'metric' | 'imperial'): string {
@@ -2382,6 +2426,18 @@ function shouldRequireAuth(): boolean {
           <p>這些設定會成為 Johnny 產生建議與訓練計畫時的個人限制與偏好。</p>
         </div>
 
+        <section class="surface-card athlete-baseline" data-testid="athlete-baseline" aria-labelledby="athlete-baseline-title">
+          <span class="card-kicker">Athlete Baseline</span>
+          <h3 id="athlete-baseline-title">Johnny 用來個人化你的基準</h3>
+          <dl>
+            <div><dt>週跑量</dt><dd>{{ athleteBaselineSnapshot.weeklyMileage }}</dd></div>
+            <div><dt>經驗</dt><dd>{{ athleteBaselineSnapshot.experience }}</dd></div>
+            <div><dt>傷痛狀態</dt><dd>{{ athleteBaselineSnapshot.injuryStatus }}</dd></div>
+            <div><dt>訓練節奏</dt><dd>{{ athleteBaselineSnapshot.rhythm }}</dd></div>
+          </dl>
+          <p>{{ athleteBaselineSnapshot.recentMetrics.join(' · ') }}</p>
+        </section>
+
         <form class="surface-card athlete-settings-form" data-testid="athlete-settings-form" novalidate @submit.prevent="submitAthleteSettings">
           <div class="form-grid">
             <label>
@@ -2522,6 +2578,17 @@ function shouldRequireAuth(): boolean {
           <h2 id="sources-title">連接資料來源</h2>
           <p>Johnny 會用近期訓練、睡眠、HRV 和恢復訊號判斷今天是否該調整課表。</p>
         </div>
+
+        <section class="surface-card signal-coverage" data-testid="signal-coverage" aria-labelledby="signal-coverage-title">
+          <span class="card-kicker">Signal Coverage</span>
+          <h3 id="signal-coverage-title">Johnny 已有 {{ coveredSignalCount }}/{{ signalCoverage.length }} 個訓練訊號</h3>
+          <div class="signal-coverage__grid">
+            <span v-for="item in signalCoverage" :key="item.id" class="signal-pill" :class="{ 'signal-pill--covered': item.covered }">
+              <strong>{{ item.label }}</strong>
+              <small>{{ item.source }}</small>
+            </span>
+          </div>
+        </section>
 
         <div class="provider-grid">
           <ProviderCard

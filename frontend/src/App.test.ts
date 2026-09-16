@@ -98,6 +98,26 @@ describe('Johnny product shell', () => {
     expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').length).toBe(7)
   })
 
+  it('shows Athlete baseline before the settings form', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="athlete-baseline"]').text()).toContain('Athlete Baseline')
+    expect(wrapper.get('[data-testid="athlete-baseline"]').text()).toContain('週跑量')
+    expect(wrapper.find('[data-testid="athlete-baseline"]').element.compareDocumentPosition(wrapper.get('[data-testid="athlete-settings-form"]').element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('shows Data signal coverage before provider details', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="data"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="signal-coverage"]').text()).toContain('Johnny 已有')
+    expect(wrapper.get('[data-testid="signal-coverage"]').text()).toContain('Activity')
+    expect(wrapper.get('[data-testid="signal-coverage"]').text()).toContain('Athlete Baseline')
+  })
+
   it('renders rest guidance for a high-priority Today recommendation', async () => {
     mockAuthenticatedToday({
       userId: 'user-auth-rest-decision',

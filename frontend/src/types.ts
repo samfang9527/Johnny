@@ -88,6 +88,21 @@ export interface EvidenceItem {
   tone?: 'info' | 'warning' | 'danger' | 'success'
 }
 
+export interface AthleteBaselineSnapshot {
+  weeklyMileage: string
+  experience: string
+  injuryStatus: string
+  rhythm: string
+  recentMetrics: string[]
+}
+
+export interface SignalCoverageItem {
+  id: 'activity' | 'sleep' | 'hrv' | 'resting_hr' | 'training_load' | 'athlete_baseline'
+  label: string
+  covered: boolean
+  source: string
+}
+
 export type WorkoutStepType = 'warmup' | 'work' | 'recovery' | 'cooldown' | 'repeat' | 'drill' | 'stride' | 'hill' | 'free_run'
 export type WorkoutTargetKind = 'pace' | 'heart_rate' | 'rpe'
 export type WorkoutTargetConfidence = 'high' | 'medium' | 'low'
