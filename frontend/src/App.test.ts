@@ -251,7 +251,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Johnny Chen')
     expect(wrapper.text()).toContain('今天的訓練決策')
     expect(wrapper.text()).not.toContain('Sydney Marathon')
-    expect(wrapper.text()).toContain('連接資料來源後')
+    expect(wrapper.text()).toContain('連接資料後')
   })
 
   it('shows the Chinese-first navigation and Today as the primary surface', () => {
@@ -347,7 +347,7 @@ describe('Johnny product shell', () => {
 
     await wrapper.get('button[data-view="athlete"]').trigger('click')
 
-    expect(wrapper.text()).toContain('運動員設定')
+    expect(wrapper.text()).toContain('運動員')
     expect(wrapper.get('select[name="experienceLevel"]').text()).toContain('未設定')
     expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('32.2')
 
@@ -369,7 +369,7 @@ describe('Johnny product shell', () => {
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('運動員設定已更新')
+    expect(wrapper.text()).toContain('運動員已更新')
   })
 
   it('does not show the connect-source empty block after a provider is connected', async () => {
@@ -486,7 +486,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
     const noRecommendationStrip = noRecommendation.get('[data-testid="today-recommendation-strip"]')
     expect(noRecommendationStrip.text()).toContain('目前可以照課表執行')
-    expect(noRecommendationStrip.text()).toContain('查看 Agent 收件匣')
+    expect(noRecommendationStrip.text()).toContain('查看 Johnny 建議')
     expect(noRecommendation.text()).not.toContain('readiness_label')
 
     mockAuthenticatedToday({
@@ -502,7 +502,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
     const insufficientDataStrip = insufficientData.get('[data-testid="today-recommendation-strip"]')
     expect(insufficientDataStrip.text()).toContain('目前資料不足')
-    expect(insufficientDataStrip.text()).not.toContain('連接資料來源')
+    expect(insufficientDataStrip.text()).not.toContain('連接資料')
   })
 
   it('shows structured workout steps from Today in a detail modal', async () => {
@@ -686,10 +686,10 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('檢查資料來源')
-    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('檢查資料來源')
+    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('檢查資料')
+    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('檢查資料')
     await wrapper.get('[data-testid="today-recovery-source-action"]').trigger('click')
-    expect(wrapper.text()).toContain('連接資料來源')
+    expect(wrapper.text()).toContain('連接資料')
   })
 
   it('shows only accept and keep buttons on Agent Inbox recommendation cards', () => {
@@ -727,7 +727,7 @@ describe('Johnny product shell', () => {
   it('shows Today loading, error, and empty states with Chinese guidance', () => {
     expect(mount(App, { props: { todayState: 'loading' } }).text()).toContain('正在整理今天的訓練資料')
     expect(mount(App, { props: { todayState: 'error' } }).text()).toContain('今天資料載入失敗')
-    expect(mount(App, { props: { todayState: 'empty' } }).text()).toContain('連接資料來源後')
+    expect(mount(App, { props: { todayState: 'empty' } }).text()).toContain('連接資料後')
   })
 
   it('keeps the Today recovery card compact with fixed action-oriented labels', () => {
@@ -835,7 +835,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Taipei Half')
     expect(wrapper.text()).toContain('21.1 km')
     expect(wrapper.text()).toContain('1:45:00')
-    expect(wrapper.text()).toContain('賽事已加入訓練安排')
+    expect(wrapper.text()).toContain('賽事已加入訓練計畫')
     expect(wrapper.find('[data-testid="race-goal-modal"]').exists()).toBe(false)
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/races',
@@ -910,7 +910,7 @@ describe('Johnny product shell', () => {
 
     await wrapper.get('button[data-view="data"]').trigger('click')
 
-    expect(wrapper.text()).toContain('資料來源')
+    expect(wrapper.text()).toContain('資料連接')
     expect(wrapper.text()).toContain('Garmin Connect experimental login')
     expect(wrapper.text()).not.toContain('Apple Health')
     expect(wrapper.text()).not.toContain('Strava')
@@ -1319,7 +1319,7 @@ describe('Johnny product shell', () => {
   it('renders Agent Inbox as a pending decision queue with quieter history', () => {
     const wrapper = mount(App, { props: { initialView: 'johnny' } })
 
-    expect(wrapper.text()).toContain('Agent 收件匣')
+    expect(wrapper.text()).toContain('Johnny 建議')
     expect(wrapper.text()).toContain('高優先')
     expect(wrapper.text()).toContain('今天 21:00 前決定')
     expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"]').text()).toContain('待決定')

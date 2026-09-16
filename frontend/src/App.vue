@@ -406,14 +406,14 @@ function buildTodayRecommendationStrip(
   if (!evidence.length || workout.status === 'empty') {
     return {
       summary: '目前資料不足，連接睡眠或 HRV 後 Johnny 會給出更穩定判斷。',
-      actionLabel: sourceNeedsAttention ? '檢查資料來源' : hasConnectedSource ? undefined : '連接資料來源',
+      actionLabel: sourceNeedsAttention ? '檢查資料' : hasConnectedSource ? undefined : '連接資料',
       actionView: sourceNeedsAttention || !hasConnectedSource ? 'data' : undefined,
       actionTone: 'neutral',
     }
   }
   return {
     summary: recoveryLabel === '可以照課表' ? '目前可以照課表執行，Johnny 沒有新的待決定調整。' : '目前沒有新的待決定調整，請依恢復狀態保守執行。',
-    actionLabel: '查看 Agent 收件匣',
+    actionLabel: '查看 Johnny 建議',
     actionView: 'johnny',
     actionTone: 'neutral',
   }
@@ -794,7 +794,7 @@ async function submitProvider() {
   providerMessage.value = ''
   pendingDisconnectConnectionId.value = ''
   if (selectedProvider.value.id !== 'garmin_connect') {
-    providerError.value = '這個資料來源尚未開放連接。'
+    providerError.value = '這個資料整合尚未開放。'
     return
   }
   if (!garminEmail.value.trim()) {
@@ -1069,7 +1069,7 @@ async function handleInboxKeep(item: InboxRecommendation) {
 }
 
 function handleActionPlaceholder() {
-  providerMessage.value = '這個決策會在下一階段同步到訓練安排。'
+  providerMessage.value = '這個決策會在下一階段同步到訓練計畫。'
 }
 
 function openRaceGoalModal() {
@@ -1104,7 +1104,7 @@ async function submitRaceEntry(payload: RaceGoalCreatePayload) {
       raceEntries.value = [...raceEntries.value.filter((race) => `${race.name}-${race.date}` !== `${created.name}-${created.date}`), created]
     }
     isRaceGoalModalOpen.value = false
-    raceFormMessage.value = '賽事已加入訓練安排'
+    raceFormMessage.value = '賽事已加入訓練計畫'
     if (raceSuccessTimer) {
       clearTimeout(raceSuccessTimer)
     }
@@ -1113,7 +1113,7 @@ async function submitRaceEntry(payload: RaceGoalCreatePayload) {
     }, 3500)
   } catch (error) {
     if (!handleSessionExpiry(error)) {
-      raceFormError.value = '訓練安排儲存失敗，請稍後再試。'
+      raceFormError.value = '訓練計畫儲存失敗，請稍後再試。'
     }
   } finally {
     raceGoalBusy.value = false
@@ -1344,10 +1344,10 @@ async function submitAthleteSettings() {
   try {
     const response = await saveAthleteProfile(payload)
     applyAthleteProfilePayload(response.data)
-    athleteSettingsMessage.value = '運動員設定已更新'
+    athleteSettingsMessage.value = '運動員已更新'
   } catch (error) {
     if (!handleSessionExpiry(error)) {
-      athleteSettingsError.value = '運動員設定儲存失敗，請檢查欄位後再試。'
+      athleteSettingsError.value = '運動員儲存失敗，請檢查欄位後再試。'
     }
   } finally {
     athleteSettingsBusy.value = false
@@ -1824,7 +1824,7 @@ function emptyWorkoutSummary(): WorkoutSummary {
     weekday: '待排',
     dateLabel: '',
     type: '尚未有今日課表',
-    purpose: '連接資料來源或建立訓練計畫後，Johnny 會在這裡顯示今天的安排。',
+    purpose: '連接資料或建立訓練計畫後，Johnny 會在這裡顯示今天的安排。',
     status: 'empty',
   }
 }
@@ -1851,7 +1851,7 @@ function shouldRequireAuth(): boolean {
         <div class="auth-panel__header">
           <p class="section-label">Running Companion</p>
           <h1 id="auth-title">登入 Johnny</h1>
-          <p>登入後 Johnny 才會讀取你的訓練安排、資料來源與 Agent 建議。</p>
+          <p>登入後 Johnny 才會讀取你的訓練計畫、資料連接與 Johnny 建議。</p>
         </div>
 
         <div class="auth-mode-switch" role="tablist" aria-label="登入方式">
@@ -1949,15 +1949,15 @@ function shouldRequireAuth(): boolean {
         <article v-else-if="effectiveTodayState === 'error'" class="state-panel state-panel--danger today-grid__wide" role="alert">
           <p class="section-label">Error</p>
           <h3>今天資料載入失敗</h3>
-          <p>請稍後再試，或先前往資料來源檢查同步狀態。</p>
-          <AppButton tone="neutral" @click="showView('data')">檢查資料來源</AppButton>
+          <p>請稍後再試，或先前往資料連接檢查同步狀態。</p>
+          <AppButton tone="neutral" @click="showView('data')">檢查資料</AppButton>
         </article>
 
         <article v-else-if="effectiveTodayState === 'empty'" class="state-panel today-grid__wide">
           <p class="section-label">Empty</p>
           <h3>尚未有足夠資料建立今日建議</h3>
-          <p>連接資料來源後，Johnny 會用近期訓練、睡眠與 HRV 判斷恢復狀態。</p>
-          <AppButton tone="primary" @click="showView('data')">連接資料來源</AppButton>
+          <p>連接資料後，Johnny 會用近期訓練、睡眠與 HRV 判斷恢復狀態。</p>
+          <AppButton tone="primary" @click="showView('data')">連接資料</AppButton>
         </article>
 
         <template v-else>
@@ -2076,7 +2076,7 @@ function shouldRequireAuth(): boolean {
           <div class="compact-card-footer">
             <span v-if="recoveryFooterText">{{ recoveryFooterText }}</span>
             <AppButton v-if="dataSourceNeedsAttention" data-testid="today-recovery-source-action" tone="neutral" @click="showView('data')">
-              檢查資料來源
+              檢查資料
             </AppButton>
           </div>
         </article>
@@ -2091,9 +2091,9 @@ function shouldRequireAuth(): boolean {
 
         <article class="surface-card today-grid__wide inbox-nudge" data-today-section="inbox">
           <div>
-            <p class="section-label">Agent 收件匣</p>
+            <p class="section-label">Johnny 建議</p>
             <h3>所有需要確認的調整集中處理</h3>
-            <p>所有需要你確認的調整都會集中在 Agent 收件匣。</p>
+            <p>所有需要你確認的調整都會集中在 Johnny 建議。</p>
           </div>
           <AppButton tone="neutral" @click="showView('johnny')">查看待決定建議</AppButton>
         </article>
@@ -2193,20 +2193,20 @@ function shouldRequireAuth(): boolean {
 
       <section v-else-if="activeView === 'johnny'" class="page-stack johnny-page" data-testid="johnny-page" aria-labelledby="johnny-title">
         <div class="page-heading">
-          <p class="section-label">Agent 收件匣</p>
+          <p class="section-label">Johnny 建議</p>
           <h2 id="johnny-title">Johnny</h2>
           <p>Johnny 只把需要你做訓練決策的建議放在這裡，對話問題仍留在對話。</p>
         </div>
 
         <article v-if="props.inboxState === 'loading'" class="state-panel" aria-live="polite">
           <p class="section-label">Loading</p>
-          <h3>正在整理 Agent 收件匣</h3>
+          <h3>正在整理 Johnny 建議</h3>
           <p>Johnny 正在比對課表、恢復訊號和待決定建議。</p>
         </article>
 
         <article v-else-if="props.inboxState === 'error'" class="state-panel state-panel--danger" role="alert">
           <p class="section-label">Error</p>
-          <h3>Agent 收件匣載入失敗</h3>
+          <h3>Johnny 建議載入失敗</h3>
           <p>請稍後再試，或先回到今日檢查主要訓練決策。</p>
           <AppButton tone="neutral" @click="showView('today')">回到今日</AppButton>
         </article>
@@ -2214,7 +2214,7 @@ function shouldRequireAuth(): boolean {
         <article v-else-if="props.inboxState === 'empty' || displayInboxItems.length === 0" class="state-panel">
           <p class="section-label">Empty</p>
           <h3>目前沒有新的主動建議</h3>
-          <p>Johnny 之後會把需要你決定的主動建議放在 Agent 收件匣，已處理的建議會保留在歷史區。</p>
+          <p>Johnny 之後會把需要你決定的主動建議放在 Johnny 建議，已處理的建議會保留在歷史區。</p>
         </article>
 
         <div v-else class="inbox-layout">
@@ -2318,7 +2318,7 @@ function shouldRequireAuth(): boolean {
         <article v-else-if="props.conversationState === 'empty' || !activeThread" class="state-panel">
           <p class="section-label">Empty</p>
           <h3>還沒有對話紀錄</h3>
-          <p>當你想追問訓練安排、恢復證據或建議原因時，可以從這裡開始。</p>
+          <p>當你想追問訓練計畫、恢復證據或建議原因時，可以從這裡開始。</p>
         </article>
 
         <div v-else class="conversation-layout">
@@ -2422,7 +2422,7 @@ function shouldRequireAuth(): boolean {
       <section v-else-if="activeView === 'athlete'" class="page-stack" aria-labelledby="athlete-settings-title">
         <div class="page-heading">
           <p class="section-label">Athlete Profile</p>
-          <h2 id="athlete-settings-title">運動員設定</h2>
+          <h2 id="athlete-settings-title">運動員</h2>
           <p>這些設定會成為 Johnny 產生建議與訓練計畫時的個人限制與偏好。</p>
         </div>
 
@@ -2574,8 +2574,8 @@ function shouldRequireAuth(): boolean {
 
       <section v-else-if="activeView === 'data'" class="page-stack" aria-labelledby="sources-title">
         <div class="page-heading">
-          <p class="section-label">資料來源</p>
-          <h2 id="sources-title">連接資料來源</h2>
+          <p class="section-label">資料連接</p>
+          <h2 id="sources-title">連接資料</h2>
           <p>Johnny 會用近期訓練、睡眠、HRV 和恢復訊號判斷今天是否該調整課表。</p>
         </div>
 

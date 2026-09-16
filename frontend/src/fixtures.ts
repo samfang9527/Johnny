@@ -274,7 +274,7 @@ export const inboxRecommendations: InboxRecommendation[] = [
     title: '同步課表調整',
     summary: '已套用你接受的 Easy Run 調整，課表保留原本訓練目的。',
     proposedAction: '更新今日課表',
-    rationale: '資料來源同步完成，Johnny 已把訓練決策反映到課表。',
+    rationale: '資料連接同步完成，Johnny 已把訓練決策反映到課表。',
     priority: 'low',
     priorityLabel: '低優先',
     status: 'applied',
