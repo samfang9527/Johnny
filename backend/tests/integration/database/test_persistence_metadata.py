@@ -218,3 +218,29 @@ def test_async_agent_tables_define_status_and_idempotency_constraints() -> None:
     assert "uq_agent_tasks_idempotency_key" in {constraint.name for constraint in agent_tasks.constraints}
     assert "ck_agent_runs_agent_run_status" in {constraint.name for constraint in agent_runs.constraints}
     assert "ck_training_plans_training_plan_status" in {constraint.name for constraint in training_plans.constraints}
+
+
+def test_agent_run_children_cascade_when_agent_run_is_deleted() -> None:
+    child_tables = (
+        Base.metadata.tables["agent_run_steps"],
+        Base.metadata.tables["agent_context_sources"],
+    )
+
+    for table in child_tables:
+        agent_run_fk = next(
+            fk_constraint
+            for fk_constraint in table.foreign_key_constraints
+            if {element.parent.name for element in fk_constraint.elements} == {"agent_run_id"}
+        )
+        assert agent_run_fk.ondelete == "CASCADE"
+
+
+def test_workouts_cascade_when_training_plan_is_deleted() -> None:
+    workouts = Base.metadata.tables["workouts"]
+
+    training_plan_fk = next(
+        fk_constraint
+        for fk_constraint in workouts.foreign_key_constraints
+        if {element.parent.name for element in fk_constraint.elements} == {"training_plan_id"}
+    )
+    assert training_plan_fk.ondelete == "CASCADE"

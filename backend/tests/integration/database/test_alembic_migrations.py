@@ -4,7 +4,7 @@ import runpy
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, create_engine, inspect, text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, MetaData, String, Table, create_engine, inspect, text
 
 
 def test_migration_revision_ids_fit_default_alembic_version_column() -> None:
@@ -163,3 +163,101 @@ def test_profile_experience_migration_converts_unknown_and_weekly_mileage_key(tm
     assert profile["experience_level"] is None
     assert metadata_json["current_weekly_mileage_km"] == 42
     assert "current_weekly_mileage" not in metadata_json
+
+
+def test_child_foreign_key_migration_adds_cascade_delete(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "johnny_existing_child_cascades.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    engine = create_engine(database_url)
+    metadata = MetaData()
+    Table(
+        "agent_runs",
+        metadata,
+        Column("id", String(36), primary_key=True),
+    )
+    Table(
+        "agent_run_steps",
+        metadata,
+        Column("id", String(36), primary_key=True),
+        Column("agent_run_id", String(36), ForeignKey("agent_runs.id"), nullable=False),
+    )
+    Table(
+        "agent_context_sources",
+        metadata,
+        Column("id", String(36), primary_key=True),
+        Column("agent_run_id", String(36), ForeignKey("agent_runs.id"), nullable=False),
+    )
+    Table(
+        "training_plans",
+        metadata,
+        Column("id", String(36), primary_key=True),
+    )
+    Table(
+        "workouts",
+        metadata,
+        Column("id", String(36), primary_key=True),
+        Column("training_plan_id", String(36), ForeignKey("training_plans.id"), nullable=False),
+    )
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"))
+        connection.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0008_training_plan_metadata')"))
+
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(engine)
+    expected_foreign_keys = (
+        ("agent_run_steps", "agent_runs", ["agent_run_id"]),
+        ("agent_context_sources", "agent_runs", ["agent_run_id"]),
+        ("workouts", "training_plans", ["training_plan_id"]),
+    )
+    for table_name, referred_table, constrained_columns in expected_foreign_keys:
+        agent_run_fk = next(
+            foreign_key
+            for foreign_key in inspector.get_foreign_keys(table_name)
+            if foreign_key["referred_table"] == referred_table
+            and foreign_key["constrained_columns"] == constrained_columns
+        )
+        assert agent_run_fk["options"]["ondelete"] == "CASCADE"
+
+
+def test_workout_cascade_migration_runs_from_existing_agent_run_cascade_revision(
+    tmp_path: Path, monkeypatch
+) -> None:
+    database_path = tmp_path / "johnny_existing_0009_revision.db"
+    database_url = f"sqlite:///{database_path}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    engine = create_engine(database_url)
+    metadata = MetaData()
+    Table(
+        "training_plans",
+        metadata,
+        Column("id", String(36), primary_key=True),
+    )
+    Table(
+        "workouts",
+        metadata,
+        Column("id", String(36), primary_key=True),
+        Column("training_plan_id", String(36), ForeignKey("training_plans.id"), nullable=False),
+    )
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"))
+        connection.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0009_agent_run_child_cascade')"))
+
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(config, "head")
+
+    workout_fk = next(
+        foreign_key
+        for foreign_key in inspect(engine).get_foreign_keys("workouts")
+        if foreign_key["referred_table"] == "training_plans"
+        and foreign_key["constrained_columns"] == ["training_plan_id"]
+    )
+    assert workout_fk["options"]["ondelete"] == "CASCADE"

@@ -176,7 +176,7 @@ class WorkoutModel(TimestampMixin, Base):
     __tablename__ = "workouts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
-    training_plan_id: Mapped[str] = mapped_column(ForeignKey("training_plans.id"), nullable=False)
+    training_plan_id: Mapped[str] = mapped_column(ForeignKey("training_plans.id", ondelete="CASCADE"), nullable=False)
     scheduled_for: Mapped[date] = mapped_column(Date, nullable=False)
     workout_type: Mapped[str] = mapped_column(String(80), nullable=False)
     planned_duration_minutes: Mapped[int | None] = mapped_column(Integer)
@@ -402,7 +402,7 @@ class AgentRunStepModel(TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("agent_run_id", "sequence_number", name="uq_agent_run_step_sequence"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
-    agent_run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id"), nullable=False)
+    agent_run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False)
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     step_type: Mapped[str] = mapped_column(String(80), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -424,7 +424,7 @@ class AgentContextSourceModel(TimestampMixin, Base):
     __tablename__ = "agent_context_sources"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
-    agent_run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id"), nullable=False)
+    agent_run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False)
     source_type: Mapped[str] = mapped_column(String(80), nullable=False)
     source_id: Mapped[str | None] = mapped_column(String(120))
     source_summary: Mapped[str | None] = mapped_column(String(2000))
