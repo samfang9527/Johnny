@@ -45,7 +45,7 @@ export const recoveryEvidence: EvidenceItem[] = [
     source: 'Johnny Analytics',
     metric: '7 日負荷',
     value: '+21%',
-    summary: '今天不要硬撐，跑鞋先放假。',
+    summary: '近期訓練負荷偏高',
     tone: 'warning',
   },
 ]

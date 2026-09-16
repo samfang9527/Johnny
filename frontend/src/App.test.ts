@@ -80,14 +80,58 @@ describe('Johnny product shell', () => {
     )
   })
 
-  it('renders Today as a Run Adjust Rest decision card with evidence', () => {
+  it('renders the Today adjust decision card with factual evidence', () => {
     const wrapper = mount(App)
+    const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
 
-    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('不太對勁')
-    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('今天不要硬撐，跑鞋先放假。')
+    expect(decisionCard.text()).toContain('不太對勁')
     expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('接受調整')
     expect(wrapper.findAll('[data-testid="today-evidence-chip"]').length).toBeGreaterThanOrEqual(3)
+    expect(decisionCard.text()).toContain('近期訓練負荷偏高')
     expect(wrapper.text()).toContain('依照你過去的恢復模式')
+  })
+
+  it('renders rest guidance for a high-priority Today recommendation', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-rest-decision',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-rest',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            heart_rate_zone: 'Zone 2',
+            status: 'planned',
+          },
+        ],
+        recovery: {
+          hrv_ms: 52,
+          hrv_delta_percentage: -18,
+        },
+        unavailable_signals: [],
+      },
+      recommendations: [
+        {
+          id: 'rest-recommendation',
+          priority: 'high',
+          title: '今天先休息',
+          rationale: '恢復訊號需要更多時間消化。',
+          status: 'pending',
+          evidence: [],
+          proposed_action: { type: 'rest', reason: '今天先休息' },
+        },
+      ],
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
+    expect(decisionCard.text()).toContain('先收一下')
+    expect(decisionCard.text()).toContain('今天不要硬撐，跑鞋先放假。')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('記錄休息')
   })
 
   it('shows the login screen when the session is missing or expired', async () => {
