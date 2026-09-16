@@ -99,6 +99,22 @@ const navItems: Array<{ key: ViewKey; label: string }> = [
   { key: 'data', label: '資料' },
 ]
 
+const timezoneOptions = [
+  { value: 'Asia/Taipei', label: '台北 (Asia/Taipei)' },
+  { value: 'Asia/Tokyo', label: '東京 (Asia/Tokyo)' },
+  { value: 'Asia/Hong_Kong', label: '香港 (Asia/Hong_Kong)' },
+  { value: 'Asia/Shanghai', label: '上海 (Asia/Shanghai)' },
+  { value: 'Asia/Singapore', label: '新加坡 (Asia/Singapore)' },
+  { value: 'UTC', label: 'UTC' },
+  { value: 'America/Los_Angeles', label: '洛杉磯 (America/Los_Angeles)' },
+  { value: 'America/Denver', label: '丹佛 (America/Denver)' },
+  { value: 'America/Chicago', label: '芝加哥 (America/Chicago)' },
+  { value: 'America/New_York', label: '紐約 (America/New_York)' },
+  { value: 'Europe/London', label: '倫敦 (Europe/London)' },
+  { value: 'Europe/Paris', label: '巴黎 (Europe/Paris)' },
+  { value: 'Australia/Sydney', label: '雪梨 (Australia/Sydney)' },
+]
+
 const legacyViewMap: Partial<Record<string, ViewKey>> = {
   calendar: 'plan',
   inbox: 'johnny',
@@ -267,6 +283,13 @@ const currentPlanPhase = computed(() => planPhases.value.find((phase) => phase.s
 const signalCoverageSummary = computed(() => `Johnny 已有 ${coveredSignalCount.value}/${signalCoverage.value.length} 個訓練訊號`)
 const weeklyActivityPoints = computed(() => fixtureWeeklyActivity)
 const maxWeeklyDistance = computed(() => Math.max(...weeklyActivityPoints.value.map((point) => point.distanceKm), 1))
+const athleteTimezoneOptions = computed(() => {
+  const currentTimezone = athleteSettings.value.timezone
+  if (currentTimezone && !timezoneOptions.some((option) => option.value === currentTimezone)) {
+    return [{ value: currentTimezone, label: `${currentTimezone}（目前）` }, ...timezoneOptions]
+  }
+  return timezoneOptions
+})
 const todayRecommendationStrip = computed(() =>
   buildTodayRecommendationStrip(
     recommendation.value,
@@ -1302,6 +1325,10 @@ function formatWeekdayLabel(day: string): string {
   return labels[day] ?? day
 }
 
+function formatPlanPhaseLabel(label: string): string {
+  return label === 'Race' ? 'Goal week' : label
+}
+
 function formatMileageForUnit(kilometers: number, unit: 'metric' | 'imperial'): string {
   const value = unit === 'imperial' ? kilometers / KILOMETERS_PER_MILE : kilometers
   return value.toFixed(1)
@@ -1335,7 +1362,7 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   const normalizedDays = form.preferredTrainingDays.map((day) => day.trim().toLowerCase())
   const uniqueDays = new Set(normalizedDays)
   if (!form.timezone.trim() || !isValidTimezone(form.timezone.trim())) {
-    setAthleteSettingsError('timezone', '請輸入有效的時區')
+    setAthleteSettingsError('timezone', '請選擇有效的時區')
     return null
   }
   if (mileageKm === null) {
@@ -1924,19 +1951,19 @@ function shouldRequireAuth(): boolean {
         <form class="auth-form" data-testid="auth-form" novalidate @submit.prevent="submitAuth">
           <label v-if="authMode === 'signup'">
             顯示名稱
-            <input v-model="authDisplayName" name="displayName" autocomplete="name" :aria-invalid="authError ? 'true' : 'false'" />
+            <input v-model="authDisplayName" class="auth-form__input" name="displayName" autocomplete="name" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
           <label>
             Email
-            <input v-model="authEmail" name="authEmail" type="email" autocomplete="email" :aria-invalid="authError ? 'true' : 'false'" />
+            <input v-model="authEmail" class="auth-form__input" name="authEmail" type="email" autocomplete="email" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
           <label>
             密碼
-            <input v-model="authPassword" name="authPassword" type="password" :autocomplete="authMode === 'signup' ? 'new-password' : 'current-password'" :aria-invalid="authError ? 'true' : 'false'" />
+            <input v-model="authPassword" class="auth-form__input" name="authPassword" type="password" :autocomplete="authMode === 'signup' ? 'new-password' : 'current-password'" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
           <label v-if="authMode === 'signup'">
             確認密碼
-            <input v-model="authPasswordConfirm" name="authPasswordConfirm" type="password" autocomplete="new-password" :aria-invalid="authError ? 'true' : 'false'" />
+            <input v-model="authPasswordConfirm" class="auth-form__input" name="authPasswordConfirm" type="password" autocomplete="new-password" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
           <p v-if="authError" class="field-error" role="alert">{{ authError }}</p>
           <p v-else-if="authMessage" class="inline-note">{{ authMessage }}</p>
@@ -2037,14 +2064,20 @@ function shouldRequireAuth(): boolean {
             <span>跑量節奏</span>
           </div>
           <div class="weekly-activity__bars" aria-label="本週跑步距離">
-            <div v-for="point in weeklyActivityPoints" :key="point.dayLabel" class="weekly-activity__day">
+            <div class="weekly-activity__plot" data-testid="weekly-activity-plot" aria-hidden="true">
               <span
+                v-for="point in weeklyActivityPoints"
+                :key="`${point.dayLabel}-bar`"
                 class="weekly-activity__bar"
                 data-testid="weekly-activity-bar"
                 :style="{ '--bar-size': `${Math.round((point.distanceKm / maxWeeklyDistance) * 100)}%` }"
               ></span>
-              <strong>{{ point.dayLabel }}</strong>
-              <small>{{ point.distanceKm }} km</small>
+            </div>
+            <div class="weekly-activity__labels">
+              <div v-for="point in weeklyActivityPoints" :key="point.dayLabel" class="weekly-activity__day">
+                <strong>{{ point.dayLabel }}</strong>
+                <small>{{ point.distanceKm }} km</small>
+              </div>
             </div>
           </div>
         </section>
@@ -2157,7 +2190,7 @@ function shouldRequireAuth(): boolean {
       <section v-else-if="activeView === 'plan'" class="page-stack plan-page" aria-labelledby="plan-title">
         <div class="page-heading page-heading--with-action">
           <div>
-            <span>Race journey</span>
+            <span>Training journey</span>
             <h2 id="plan-title">計畫</h2>
             <p v-if="raceFormError" class="field-error" role="alert">{{ raceFormError }}</p>
             <p v-else-if="raceFormMessage" class="inline-note" role="status">{{ raceFormMessage }}</p>
@@ -2165,9 +2198,14 @@ function shouldRequireAuth(): boolean {
           <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
         </div>
 
-        <section class="surface-card plan-journey" data-testid="plan-journey" aria-label="訓練階段">
+        <section class="surface-card plan-journey plan-training-journey" data-testid="plan-training-journey" aria-label="訓練旅程">
+          <div class="plan-journey__intro">
+            <span class="card-kicker">目前訓練週期</span>
+            <strong>{{ currentPlanPhase.label }}</strong>
+            <p>{{ currentPlanPhase.summary }}。有比賽時 Johnny 會把目標放進旅程；沒有比賽時，這裡仍會用訓練週期安排接下來的節奏。</p>
+          </div>
           <article v-for="phase in planPhases" :key="phase.id" class="plan-phase" :class="`plan-phase--${phase.status}`">
-            <span>{{ phase.label }}</span>
+            <span>{{ formatPlanPhaseLabel(phase.label) }}</span>
             <strong>{{ phase.summary }}</strong>
           </article>
           <template v-if="upcomingRaceEntries.length">
@@ -2495,13 +2533,15 @@ function shouldRequireAuth(): boolean {
           <div class="form-grid">
             <label>
               時區
-              <input
+              <select
                 v-model="athleteSettings.timezone"
                 name="athleteTimezone"
                 autocomplete="off"
                 :aria-invalid="athleteSettingsFieldErrors.timezone ? 'true' : 'false'"
                 aria-describedby="athlete-timezone-error athlete-settings-status"
-              />
+              >
+                <option v-for="timezone in athleteTimezoneOptions" :key="timezone.value" :value="timezone.value">{{ timezone.label }}</option>
+              </select>
               <span v-if="athleteSettingsFieldErrors.timezone" id="athlete-timezone-error" class="field-error">{{ athleteSettingsFieldErrors.timezone }}</span>
             </label>
 

@@ -187,10 +187,10 @@ button:disabled {
   gap: 1rem;
   width: 100%;
   padding: clamp(1.25rem, 4vw, 2rem);
-  border: 1px solid rgba(246, 239, 228, 0.16);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-rubber-gray) 78%, var(--color-pit-black));
-  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--color-line-mint);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-card-white) 92%, var(--color-mint-surface));
+  box-shadow: 0 1.25rem 3rem rgba(15, 74, 50, 0.12);
 }
 
 .auth-panel__header {
@@ -259,14 +259,24 @@ button:disabled {
   font-size: 0.9rem;
 }
 
-.auth-form input {
+.auth-form input,
+.auth-form__input {
   min-height: 2.75rem;
   width: 100%;
-  border: 1px solid rgba(246, 239, 228, 0.16);
+  border: 1px solid var(--color-line-mint);
   border-radius: var(--radius-md);
-  color: var(--color-lane-chalk);
-  background: rgba(17, 21, 20, 0.76);
+  color: var(--color-ink-green);
+  background: var(--color-card-white);
   padding: 0.7rem 0.8rem;
+}
+
+.auth-form__input::placeholder {
+  color: var(--color-muted-green);
+}
+
+.auth-form__input:focus-visible {
+  border-color: var(--color-deep-green);
+  background: var(--color-card-white);
 }
 
 .auth-hint {
@@ -1746,10 +1756,29 @@ button:disabled {
   gap: 0.75rem;
 }
 
-.weekly-activity__bars {
+.weekly-activity__bars,
+.weekly-activity__plot,
+.weekly-activity__labels {
   grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.weekly-activity__bars {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.weekly-activity__plot {
+  display: grid;
   align-items: end;
-  min-height: 10rem;
+  height: 8.5rem;
+  min-height: 8.5rem;
+  padding: 0 0 0.55rem;
+  border-bottom: 1px solid var(--color-line-mint);
+}
+
+.weekly-activity__labels {
+  display: grid;
+  align-items: start;
 }
 
 .weekly-activity__day {
@@ -1763,8 +1792,9 @@ button:disabled {
 .weekly-activity__bar {
   display: block;
   width: min(1.6rem, 100%);
-  height: max(0.5rem, var(--bar-size));
-  border-radius: var(--radius-full);
+  height: max(0.35rem, var(--bar-size));
+  justify-self: center;
+  border-radius: var(--radius-full) var(--radius-full) 0 0;
   background: var(--color-lane-green);
 }
 
@@ -2139,7 +2169,10 @@ button:disabled {
 
 .weekly-activity__bars {
   padding-top: 0.7rem;
-  border-top: 1px solid var(--color-line-mint);
+}
+
+.weekly-activity__plot {
+  align-items: end;
 }
 
 .weekly-activity__bar {
@@ -2177,6 +2210,27 @@ button:disabled {
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--color-soft-mint) 42%, transparent), transparent 48%),
     var(--color-card-white);
+}
+
+.plan-journey__intro {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.35rem;
+  padding: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--color-lane-green) 28%, var(--color-line-mint));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-soft-mint) 44%, var(--color-card-white));
+}
+
+.plan-journey__intro strong {
+  color: var(--color-deep-green);
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+}
+
+.plan-journey__intro p {
+  margin: 0;
+  color: var(--color-muted-green);
 }
 
 .plan-phase {

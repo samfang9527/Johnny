@@ -95,7 +95,30 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App)
 
     expect(wrapper.get('[data-testid="weekly-activity"]').text()).toContain('本週活動')
+    expect(wrapper.find('[data-testid="weekly-activity-plot"]').exists()).toBe(true)
     expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').length).toBe(7)
+    expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').map((bar) => bar.attributes('style'))).toEqual([
+      '--bar-size: 33%;',
+      '--bar-size: 0%;',
+      '--bar-size: 44%;',
+      '--bar-size: 56%;',
+      '--bar-size: 0%;',
+      '--bar-size: 28%;',
+      '--bar-size: 100%;',
+    ])
+  })
+
+  it('marks auth inputs with the readable light input treatment', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ error: { code: 'unauthorized', message: 'Authentication required', details: [] } }),
+    } as Response)
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.get('input[name="authEmail"]').classes()).toContain('auth-form__input')
+    expect(wrapper.get('input[name="authPassword"]').classes()).toContain('auth-form__input')
   })
 
   it('fills the desktop Today context rail with plan and signal context', () => {
@@ -118,6 +141,19 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('[data-testid="athlete-baseline"]').text()).toContain('Athlete Baseline')
     expect(wrapper.get('[data-testid="athlete-baseline"]').text()).toContain('週跑量')
     expect(wrapper.find('[data-testid="athlete-baseline"]').element.compareDocumentPosition(wrapper.get('[data-testid="athlete-settings-form"]').element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('uses a fixed timezone dropdown in Athlete settings', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
+
+    const timezone = wrapper.get('select[name="athleteTimezone"]')
+    expect(wrapper.find('input[name="athleteTimezone"]').exists()).toBe(false)
+    expect(timezone.text()).toContain('台北')
+    expect(timezone.text()).toContain('UTC')
+    await timezone.setValue('America/Los_Angeles')
+    expect((timezone.element as HTMLSelectElement).value).toBe('America/Los_Angeles')
   })
 
   it('shows Data signal coverage before provider details', async () => {
@@ -874,12 +910,12 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('.workout-card').find('button').exists()).toBe(false)
   })
 
-  it('shows Plan as a race-track journey with schedule underneath', async () => {
+  it('shows Plan as an inclusive training journey with schedule underneath', async () => {
     const wrapper = mount(App)
 
     await wrapper.get('button[data-view="plan"]').trigger('click')
 
-    const journey = wrapper.get('[data-testid="plan-journey"]')
+    const journey = wrapper.get('[data-testid="plan-training-journey"]')
     const phases = journey.findAll('.plan-phase')
 
     expect(phases).toHaveLength(5)
@@ -887,7 +923,7 @@ describe('Johnny product shell', () => {
     expect(phases[1].classes()).toContain('plan-phase--current')
     expect(phases.slice(2).every((phase) => phase.classes().includes('plan-phase--next'))).toBe(true)
     expect(journey.text()).toContain('Build')
-    expect(journey.text()).toContain('Race')
+    expect(journey.text()).toContain('目前訓練週期')
     expect(wrapper.text()).toContain('接下來課表')
   })
 
@@ -896,8 +932,9 @@ describe('Johnny product shell', () => {
 
     await wrapper.get('button[data-view="plan"]').trigger('click')
 
-    expect(wrapper.text()).toContain('Race journey')
-    expect(wrapper.get('[data-testid="plan-journey"]').text()).toContain('Build')
+    expect(wrapper.text()).toContain('Training journey')
+    expect(wrapper.text()).not.toContain('Race journey')
+    expect(wrapper.get('[data-testid="plan-training-journey"]').text()).toContain('Build')
     expect(wrapper.text()).toContain('Taipei Half Tune-up')
     expect(wrapper.text()).toContain('週三')
     expect(wrapper.text()).toContain('Easy Run')
