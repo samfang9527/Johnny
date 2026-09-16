@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   acceptRecommendation,
   ApiRequestError,
@@ -172,6 +172,7 @@ const athleteSettingsBusy = ref(false)
 const athleteMileageDisplayUnit = ref<'metric' | 'imperial'>('metric')
 
 const activeTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label || '今日')
+watch(activeTitle, updateDocumentTitle, { immediate: true })
 const isAuthenticated = computed(() => authStatus.value === 'authenticated')
 const hasActiveDataProvider = computed(() =>
   Boolean(garminConnection.value && garminConnection.value.status !== 'disconnected' && garminConnection.value.credential_status !== 'deleted'),
@@ -206,14 +207,23 @@ const athleteBaselineSnapshot = computed<AthleteBaselineSnapshot>(() => ({
   rhythm: `${athleteSettings.value.preferredTrainingDays.length} 天訓練 · 長跑 ${formatWeekdayLabel(athleteSettings.value.preferredLongRunDay)}`,
   recentMetrics: recoveryEvidence.value.slice(0, 3).map((item) => `${item.metric} ${item.value}`),
 }))
+const unavailableSignalKeys = computed(() => new Set(unavailableSignals.value.map(normalizeSignalKey)))
+const hasRecoverySignal = computed(() => {
+  const metrics = new Set(recoveryEvidence.value.map((item) => normalizeSignalKey(item.metric)))
+  return {
+    sleep: metrics.has('睡眠') || metrics.has('sleep'),
+    hrv: metrics.has('hrv'),
+    restingHeartRate: metrics.has('靜息心率') || metrics.has('resting_heart_rate') || metrics.has('resting_hr'),
+    trainingLoad: metrics.has('負荷比') || metrics.has('7_日負荷') || metrics.has('training_load'),
+  }
+})
 const signalCoverage = computed<SignalCoverageItem[]>(() => {
-  const metrics = new Set(recoveryEvidence.value.map((item) => item.metric.toLowerCase()))
   return [
     { id: 'activity', label: 'Activity', covered: hasActiveDataProvider.value, source: 'Garmin' },
-    { id: 'sleep', label: 'Sleep', covered: metrics.has('睡眠') || metrics.has('sleep'), source: 'Garmin' },
-    { id: 'hrv', label: 'HRV', covered: metrics.has('hrv'), source: 'Garmin' },
-    { id: 'resting_hr', label: 'Resting HR', covered: !unavailableSignals.value.some((item) => item.includes('靜息心率')), source: 'Garmin' },
-    { id: 'training_load', label: 'Training Load', covered: recoveryEvidence.value.some((item) => item.metric.includes('負荷')), source: 'Johnny Analytics' },
+    { id: 'sleep', label: 'Sleep', covered: hasRecoverySignal.value.sleep && !isSignalUnavailable('sleep'), source: 'Garmin' },
+    { id: 'hrv', label: 'HRV', covered: hasRecoverySignal.value.hrv && !isSignalUnavailable('hrv'), source: 'Garmin' },
+    { id: 'resting_hr', label: 'Resting HR', covered: hasRecoverySignal.value.restingHeartRate && !isSignalUnavailable('resting_heart_rate'), source: 'Garmin' },
+    { id: 'training_load', label: 'Training Load', covered: hasRecoverySignal.value.trainingLoad && !isSignalUnavailable('training_load'), source: 'Johnny Analytics' },
     { id: 'athlete_baseline', label: 'Athlete Baseline', covered: Boolean(athleteSettings.value.timezone), source: '運動員' },
   ]
 })
@@ -253,6 +263,8 @@ const recoveryFooterText = computed(() => {
 const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
 const todayDecision = computed(() => buildTodayDecision(recommendation.value, recoveryEvidence.value))
 const todayEvidenceChips = computed(() => recoveryEvidence.value.slice(0, 3))
+const currentPlanPhase = computed(() => planPhases.value.find((phase) => phase.status === 'current') ?? planPhases.value[0])
+const signalCoverageSummary = computed(() => `Johnny 已有 ${coveredSignalCount.value}/${signalCoverage.value.length} 個訓練訊號`)
 const weeklyActivityPoints = computed(() => fixtureWeeklyActivity)
 const maxWeeklyDistance = computed(() => Math.max(...weeklyActivityPoints.value.map((point) => point.distanceKm), 1))
 const todayRecommendationStrip = computed(() =>
@@ -335,9 +347,10 @@ const KILOMETERS_PER_MILE = 1.60934
 
 function buildTodayDecision(recommendation: RecommendationSummary | null, evidence: EvidenceItem[]): TodayDecision {
   const hasDangerEvidence = evidence.some((item) => item.tone === 'danger')
+  const hasWarningEvidence = evidence.some((item) => item.tone === 'warning')
   const hasWarningRecommendation = recommendation?.priority === 'warning' || recommendation?.priority === 'danger'
 
-  if (recommendation && (hasDangerEvidence || recommendation.priority === 'danger')) {
+  if (hasDangerEvidence || recommendation?.priority === 'danger') {
     return {
       state: 'rest',
       label: '先收一下',
@@ -348,7 +361,7 @@ function buildTodayDecision(recommendation: RecommendationSummary | null, eviden
     }
   }
 
-  if (recommendation && hasWarningRecommendation) {
+  if (hasWarningEvidence || hasWarningRecommendation) {
     return {
       state: 'adjust',
       label: '不太對勁',
@@ -445,7 +458,7 @@ function buildRecoveryEvidenceItems(recovery: Record<string, unknown>, trainingL
     buildStressEvidence(recovery, asRecord(evidence?.stress)),
     buildTrainingLoadEvidence(trainingLoad),
   ]
-  return items.filter((item): item is EvidenceItem => item !== null).slice(0, 3)
+  return items.filter((item): item is EvidenceItem => item !== null)
 }
 
 function buildHrvEvidence(recovery: Record<string, unknown>, evidence: Record<string, unknown> | undefined): EvidenceItem | null {
@@ -590,6 +603,27 @@ function formatUnavailableSignal(signal: string): string {
   return signalLabels[signal] || signal
 }
 
+function normalizeSignalKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+function isSignalUnavailable(signal: 'sleep' | 'hrv' | 'resting_heart_rate' | 'training_load'): boolean {
+  const aliases: Record<typeof signal, string[]> = {
+    sleep: ['sleep', 'sleep_debt_minutes', 'sleep_duration_minutes', 'sleep_quality'],
+    hrv: ['hrv', 'hrv_delta_percentage', 'hrv_status'],
+    resting_heart_rate: ['resting_heart_rate', 'resting_hr', 'resting_heart_rate_baseline', '靜息心率'],
+    training_load: ['training_load', 'acute_chronic_ratio', 'chronic_load', 'mileage_ramp_percentage', 'load'],
+  }
+  const keys = [...unavailableSignalKeys.value]
+  return aliases[signal].some((alias) => keys.some((key) => key === alias || key.includes(alias)))
+}
+
+function updateDocumentTitle(label: string) {
+  if (typeof document !== 'undefined') {
+    document.title = `${label} — Johnny`
+  }
+}
+
 async function initializeAuth() {
   if (!shouldRequireAuth()) {
     authStatus.value = 'authenticated'
@@ -700,6 +734,18 @@ function showView(view: ViewKey) {
   if (typeof window !== 'undefined') {
     window.history.replaceState(null, '', `#${view}`)
   }
+}
+
+function handleTodayDecisionAction() {
+  if (todayDecision.value.state === 'run') {
+    if (hasWorkoutDetails(todayWorkout.value)) {
+      openWorkoutDetails(todayWorkout.value)
+      return
+    }
+    showView('plan')
+    return
+  }
+  showView('johnny')
 }
 
 async function handleAccept() {
@@ -1390,9 +1436,7 @@ function applyTodayPayload(payload: Record<string, unknown>) {
 
   const recovery = payload.recovery as Record<string, unknown> | undefined
   const trainingLoad = payload.training_load as Record<string, unknown> | undefined
-  if (recovery && Object.keys(recovery).length) {
-    apiRecoveryEvidence.value = buildRecoveryEvidenceItems(recovery, trainingLoad)
-  }
+  apiRecoveryEvidence.value = recovery || trainingLoad ? buildRecoveryEvidenceItems(recovery ?? {}, trainingLoad) : []
 
   const unavailable = Array.isArray(payload.unavailable_signals) ? payload.unavailable_signals : []
   apiUnavailableSignals.value = unavailable.map(String)
@@ -1984,7 +2028,7 @@ function shouldRequireAuth(): boolean {
             </span>
           </div>
           <p v-if="todayDecision.memoryInsight" class="memory-insight">{{ todayDecision.memoryInsight }}</p>
-          <AppButton tone="primary" data-testid="today-decision-action">{{ todayDecision.actionLabel }}</AppButton>
+          <AppButton tone="primary" data-testid="today-decision-action" @click="handleTodayDecisionAction">{{ todayDecision.actionLabel }}</AppButton>
         </article>
 
         <section class="surface-card weekly-activity" data-testid="weekly-activity" aria-labelledby="weekly-activity-title">
@@ -2010,6 +2054,16 @@ function shouldRequireAuth(): boolean {
             <span class="card-kicker">目標賽事</span>
             <strong>{{ raceSummary.name }}</strong>
             <p>{{ raceSummary.daysRemaining }} 天後 · {{ raceSummary.goal }}</p>
+          </section>
+          <section class="surface-card">
+            <span class="card-kicker">目前階段</span>
+            <strong>{{ currentPlanPhase.label }}</strong>
+            <p>{{ currentPlanPhase.summary }}</p>
+          </section>
+          <section class="surface-card">
+            <span class="card-kicker">Signal Coverage</span>
+            <strong>{{ coveredSignalCount }}/{{ signalCoverage.length }}</strong>
+            <p>{{ signalCoverageSummary }}</p>
           </section>
           <section class="surface-card">
             <span class="card-kicker">Johnny 待決定</span>
@@ -2261,12 +2315,6 @@ function shouldRequireAuth(): boolean {
             </div>
           </section>
 
-          <section class="surface-card johnny-review" aria-labelledby="johnny-review-title">
-            <span class="card-kicker">Weekly review</span>
-            <h3 id="johnny-review-title">這週先守住連續性</h3>
-            <p>Johnny 會把待決定建議、恢復訊號和計畫變動放在這裡。Conversation 功能目前尚未公開。</p>
-          </section>
-
           <section v-if="historicalInboxItems.length" class="inbox-section inbox-section--history" data-testid="inbox-history" aria-labelledby="inbox-history-title">
             <div class="section-heading">
               <div>
@@ -2293,6 +2341,11 @@ function shouldRequireAuth(): boolean {
             </div>
           </section>
         </div>
+        <section class="surface-card johnny-review" data-testid="johnny-weekly-review" aria-labelledby="johnny-review-title">
+          <span class="card-kicker">Weekly review</span>
+          <h3 id="johnny-review-title">這週先守住連續性</h3>
+          <p>Johnny 會把待決定建議、恢復訊號和計畫變動放在這裡。Conversation 功能目前尚未公開。</p>
+        </section>
       </section>
 
       <section v-else-if="activeView === 'conversation'" class="page-stack" aria-labelledby="conversation-title">

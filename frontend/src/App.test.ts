@@ -98,6 +98,18 @@ describe('Johnny product shell', () => {
     expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').length).toBe(7)
   })
 
+  it('fills the desktop Today context rail with plan and signal context', () => {
+    const wrapper = mount(App)
+    const rail = wrapper.get('.today-context-rail')
+
+    expect(rail.text()).toContain('目標賽事')
+    expect(rail.text()).toContain('目前階段')
+    expect(rail.text()).toContain('Build')
+    expect(rail.text()).toContain('Signal Coverage')
+    expect(rail.text()).toContain('Johnny 已有')
+    expect(rail.text()).toContain('Johnny 待決定')
+  })
+
   it('shows Athlete baseline before the settings form', async () => {
     const wrapper = mount(App)
 
@@ -122,6 +134,50 @@ describe('Johnny product shell', () => {
     expect(signalCoverage.findAll('.signal-pill')).toHaveLength(6)
     expect(signalCoverage.findAll('.signal-pill--covered').length).toBeGreaterThan(0)
     expect(signalCoverage.element.compareDocumentPosition(providerDetails.element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('derives signal coverage from canonical backend signals', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-signal-coverage',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-signal-coverage',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            status: 'planned',
+          },
+        ],
+        recovery: {
+          hrv_ms: 58,
+          hrv_delta_percentage: 1,
+          sleep_minutes: 480,
+          sleep_debt_minutes: 0,
+          body_battery_score: 72,
+          stress_score: 35,
+        },
+        training_load: {
+          acute_chronic_ratio: 1.6,
+        },
+        unavailable_signals: ['resting_heart_rate_baseline'],
+      },
+      recommendations: [],
+    })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    await wrapper.get('button[data-view="data"]').trigger('click')
+
+    const pills = wrapper.findAll('.signal-pill')
+    const pillByLabel = (label: string) => {
+      const pill = pills.find((item) => item.text().includes(label))
+      expect(pill, `missing ${label}`).toBeTruthy()
+      return pill!
+    }
+    expect(pillByLabel('Training Load').classes()).toContain('signal-pill--covered')
+    expect(pillByLabel('Resting HR').classes()).not.toContain('signal-pill--covered')
   })
 
   it('renders rest guidance for a high-priority Today recommendation', async () => {
@@ -167,6 +223,56 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('記錄休息')
   })
 
+  it('uses all recovery evidence for Today Decision even when dangerous evidence is not displayed', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-danger-load',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-danger-load',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            heart_rate_zone: 'Zone 2',
+            status: 'planned',
+          },
+        ],
+        recovery: {
+          hrv_ms: 58,
+          hrv_delta_percentage: 1,
+          sleep_minutes: 480,
+          sleep_debt_minutes: 0,
+          body_battery_score: 72,
+          stress_score: 35,
+        },
+        training_load: {
+          acute_chronic_ratio: 1.6,
+        },
+        unavailable_signals: [],
+      },
+      recommendations: [],
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
+    expect(decisionCard.text()).toContain('先收一下')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('記錄休息')
+    expect(wrapper.findAll('[data-testid="today-evidence-chip"]')).toHaveLength(3)
+  })
+
+  it('routes the Today adjust action into Johnny recommendations', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('[data-testid="today-decision-action"]').trigger('click')
+
+    expect(wrapper.get('.top-nav__item--active').text()).toContain('Johnny')
+    expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('待決定')
+    expect(document.title).toBe('Johnny — Johnny')
+  })
+
   it('shows the login screen when the session is missing or expired', async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: false,
@@ -181,6 +287,16 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('使用 Google 登入')
     expect(wrapper.text()).toContain('Email 登入')
     expect(wrapper.find('nav').exists()).toBe(false)
+  })
+
+  it('updates the route title when changing public views', async () => {
+    const wrapper = mount(App)
+
+    expect(document.title).toBe('今日 — Johnny')
+    await wrapper.get('button[data-view="plan"]').trigger('click')
+    expect(document.title).toBe('計畫 — Johnny')
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
+    expect(document.title).toBe('運動員 — Johnny')
   })
 
   it('derives the local API host from the active frontend host', () => {
@@ -712,6 +828,13 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('賽前 9 天降低長跑壓力')
     expect(wrapper.text()).not.toContain('送出')
     expect(wrapper.text()).not.toContain('今天原本有 8 km')
+  })
+
+  it('keeps Johnny weekly review visible when there are no recommendations', () => {
+    const wrapper = mount(App, { props: { initialView: 'johnny', inboxItems: [] } })
+
+    expect(wrapper.text()).toContain('目前沒有新的主動建議')
+    expect(wrapper.get('[data-testid="johnny-weekly-review"]').text()).toContain('這週先守住連續性')
   })
 
   it('keeps Agent Inbox recommendation action geometry stable while accept is pending', async () => {
