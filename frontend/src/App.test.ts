@@ -677,6 +677,17 @@ describe('Johnny product shell', () => {
     expect(actions.findAll('button')).toHaveLength(2)
   })
 
+  it('shows Johnny as recommendations first and hides public conversation', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="johnny"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('待決定')
+    expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('賽前 9 天降低長跑壓力')
+    expect(wrapper.text()).not.toContain('送出')
+    expect(wrapper.text()).not.toContain('今天原本有 8 km')
+  })
+
   it('keeps Agent Inbox recommendation action geometry stable while accept is pending', async () => {
     vi.mocked(fetch).mockReturnValue(new Promise(() => undefined) as unknown as Promise<Response>)
     const wrapper = mount(App, { props: { initialView: 'johnny' } })

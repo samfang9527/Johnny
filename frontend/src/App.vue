@@ -2147,10 +2147,10 @@ function shouldRequireAuth(): boolean {
         </section>
       </section>
 
-      <section v-else-if="activeView === 'johnny'" class="page-stack" aria-labelledby="inbox-title">
+      <section v-else-if="activeView === 'johnny'" class="page-stack johnny-page" data-testid="johnny-page" aria-labelledby="johnny-title">
         <div class="page-heading">
           <p class="section-label">Agent 收件匣</p>
-          <h2 id="inbox-title">主動建議決策佇列</h2>
+          <h2 id="johnny-title">Johnny</h2>
           <p>Johnny 只把需要你做訓練決策的建議放在這裡，對話問題仍留在對話。</p>
         </div>
 
@@ -2215,6 +2215,12 @@ function shouldRequireAuth(): boolean {
                 />
               </article>
             </div>
+          </section>
+
+          <section class="surface-card johnny-review" aria-labelledby="johnny-review-title">
+            <span class="card-kicker">Weekly review</span>
+            <h3 id="johnny-review-title">這週先守住連續性</h3>
+            <p>Johnny 會把待決定建議、恢復訊號和計畫變動放在這裡。Conversation 功能目前尚未公開。</p>
           </section>
 
           <section v-if="historicalInboxItems.length" class="inbox-section inbox-section--history" data-testid="inbox-history" aria-labelledby="inbox-history-title">
