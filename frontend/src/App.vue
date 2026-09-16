@@ -88,18 +88,26 @@ const props = withDefaults(
 
 const navItems: Array<{ key: ViewKey; label: string }> = [
   { key: 'today', label: '今日' },
-  { key: 'calendar', label: '訓練安排' },
-  { key: 'inbox', label: 'Agent 收件匣' },
-  { key: 'athlete-settings', label: '運動員設定' },
-  { key: 'sources', label: '資料來源' },
+  { key: 'plan', label: '計畫' },
+  { key: 'johnny', label: 'Johnny' },
+  { key: 'athlete', label: '運動員' },
+  { key: 'data', label: '資料' },
 ]
+
+const legacyViewMap: Partial<Record<string, ViewKey>> = {
+  calendar: 'plan',
+  inbox: 'johnny',
+  'athlete-settings': 'athlete',
+  sources: 'data',
+}
 
 function viewFromHash(): ViewKey | undefined {
   if (typeof window === 'undefined') {
     return undefined
   }
-  const hashView = window.location.hash.replace('#', '') as ViewKey
-  return navItems.some((item) => item.key === hashView) ? hashView : undefined
+  const rawHashView = window.location.hash.replace('#', '')
+  const mappedView = legacyViewMap[rawHashView] ?? (rawHashView as ViewKey)
+  return navItems.some((item) => item.key === mappedView) ? mappedView : undefined
 }
 
 const activeView = ref<ViewKey>(props.initialView ?? viewFromHash() ?? 'today')
@@ -327,7 +335,7 @@ function buildTodayRecommendationStrip(
     return {
       summary: currentRecommendation.title,
       actionLabel: '查看待決定建議',
-      actionView: 'inbox',
+      actionView: 'johnny',
       actionTone: 'primary',
     }
   }
@@ -335,14 +343,14 @@ function buildTodayRecommendationStrip(
     return {
       summary: '目前資料不足，連接睡眠或 HRV 後 Johnny 會給出更穩定判斷。',
       actionLabel: sourceNeedsAttention ? '檢查資料來源' : hasConnectedSource ? undefined : '連接資料來源',
-      actionView: sourceNeedsAttention || !hasConnectedSource ? 'sources' : undefined,
+      actionView: sourceNeedsAttention || !hasConnectedSource ? 'data' : undefined,
       actionTone: 'neutral',
     }
   }
   return {
     summary: recoveryLabel === '可以照課表' ? '目前可以照課表執行，Johnny 沒有新的待決定調整。' : '目前沒有新的待決定調整，請依恢復狀態保守執行。',
     actionLabel: '查看 Agent 收件匣',
-    actionView: 'inbox',
+    actionView: 'johnny',
     actionTone: 'neutral',
   }
 }
@@ -1838,7 +1846,7 @@ function shouldRequireAuth(): boolean {
           <button
             v-for="item in navItems"
             :key="item.key"
-            :data-view="item.key === 'sources' ? 'sources' : item.key"
+            :data-view="item.key"
             :class="{ 'top-nav__item--active': activeView === item.key }"
             class="top-nav__item"
             type="button"
@@ -1872,14 +1880,14 @@ function shouldRequireAuth(): boolean {
           <p class="section-label">Error</p>
           <h3>今天資料載入失敗</h3>
           <p>請稍後再試，或先前往資料來源檢查同步狀態。</p>
-          <AppButton tone="neutral" @click="showView('sources')">檢查資料來源</AppButton>
+          <AppButton tone="neutral" @click="showView('data')">檢查資料來源</AppButton>
         </article>
 
         <article v-else-if="effectiveTodayState === 'empty'" class="state-panel today-grid__wide">
           <p class="section-label">Empty</p>
           <h3>尚未有足夠資料建立今日建議</h3>
           <p>連接資料來源後，Johnny 會用近期訓練、睡眠與 HRV 判斷恢復狀態。</p>
-          <AppButton tone="primary" @click="showView('sources')">連接資料來源</AppButton>
+          <AppButton tone="primary" @click="showView('data')">連接資料來源</AppButton>
         </article>
 
         <template v-else>
@@ -1940,7 +1948,7 @@ function shouldRequireAuth(): boolean {
           </div>
           <div class="compact-card-footer">
             <span v-if="recoveryFooterText">{{ recoveryFooterText }}</span>
-            <AppButton v-if="dataSourceNeedsAttention" data-testid="today-recovery-source-action" tone="neutral" @click="showView('sources')">
+            <AppButton v-if="dataSourceNeedsAttention" data-testid="today-recovery-source-action" tone="neutral" @click="showView('data')">
               檢查資料來源
             </AppButton>
           </div>
@@ -1960,12 +1968,12 @@ function shouldRequireAuth(): boolean {
             <h3>所有需要確認的調整集中處理</h3>
             <p>所有需要你確認的調整都會集中在 Agent 收件匣。</p>
           </div>
-          <AppButton tone="neutral" @click="showView('inbox')">查看待決定建議</AppButton>
+          <AppButton tone="neutral" @click="showView('johnny')">查看待決定建議</AppButton>
         </article>
         </template>
       </section>
 
-      <section v-else-if="activeView === 'calendar'" class="page-stack" aria-labelledby="calendar-title">
+      <section v-else-if="activeView === 'plan'" class="page-stack" aria-labelledby="calendar-title">
         <div class="page-heading page-heading--with-action">
           <div>
             <p class="section-label">訓練安排</p>
@@ -2063,7 +2071,7 @@ function shouldRequireAuth(): boolean {
         </article>
       </section>
 
-      <section v-else-if="activeView === 'inbox'" class="page-stack" aria-labelledby="inbox-title">
+      <section v-else-if="activeView === 'johnny'" class="page-stack" aria-labelledby="inbox-title">
         <div class="page-heading">
           <p class="section-label">Agent 收件匣</p>
           <h2 id="inbox-title">主動建議決策佇列</h2>
@@ -2285,7 +2293,7 @@ function shouldRequireAuth(): boolean {
         </div>
       </section>
 
-      <section v-else-if="activeView === 'athlete-settings'" class="page-stack" aria-labelledby="athlete-settings-title">
+      <section v-else-if="activeView === 'athlete'" class="page-stack" aria-labelledby="athlete-settings-title">
         <div class="page-heading">
           <p class="section-label">Athlete Profile</p>
           <h2 id="athlete-settings-title">運動員設定</h2>
@@ -2426,7 +2434,7 @@ function shouldRequireAuth(): boolean {
         </form>
       </section>
 
-      <section v-else-if="activeView === 'sources'" class="page-stack" aria-labelledby="sources-title">
+      <section v-else-if="activeView === 'data'" class="page-stack" aria-labelledby="sources-title">
         <div class="page-heading">
           <p class="section-label">資料來源</p>
           <h2 id="sources-title">連接資料來源</h2>

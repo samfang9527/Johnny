@@ -1,4 +1,4 @@
-export type ViewKey = 'today' | 'calendar' | 'inbox' | 'conversation' | 'athlete-settings' | 'sources'
+export type ViewKey = 'today' | 'plan' | 'johnny' | 'athlete' | 'data' | 'conversation'
 
 export interface CurrentUser {
   id: string

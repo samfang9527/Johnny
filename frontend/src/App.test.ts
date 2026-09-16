@@ -87,7 +87,7 @@ describe('Johnny product shell', () => {
       json: () => Promise.resolve({ error: { code: 'unauthorized', message: 'Authentication required', details: [] } }),
     } as Response)
 
-    const wrapper = mount(App, { props: { initialView: 'calendar', requireAuth: true } })
+    const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('登入 Johnny')
@@ -171,13 +171,29 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App)
 
     expect(wrapper.get('nav').text()).toContain('今日')
-    expect(wrapper.get('nav').text()).toContain('訓練安排')
-    expect(wrapper.get('nav').text()).toContain('Agent 收件匣')
-    expect(wrapper.get('nav').text()).toContain('運動員設定')
-    expect(wrapper.get('nav').text()).toContain('資料來源')
+    expect(wrapper.get('nav').text()).toContain('計畫')
+    expect(wrapper.get('nav').text()).toContain('Johnny')
+    expect(wrapper.get('nav').text()).toContain('運動員')
+    expect(wrapper.get('nav').text()).toContain('資料')
     expect(wrapper.get('nav').text()).not.toContain('對話')
     expect(wrapper.text()).toContain('今天的訓練決策')
     expect(wrapper.text()).toContain('Sydney Marathon')
+  })
+
+  it('shows the start-line navigation and keeps conversation hidden', () => {
+    const wrapper = mount(App)
+
+    const navText = wrapper.get('nav').text()
+    expect(navText).toContain('今日')
+    expect(navText).toContain('計畫')
+    expect(navText).toContain('Johnny')
+    expect(navText).toContain('運動員')
+    expect(navText).toContain('資料')
+    expect(navText).not.toContain('訓練安排')
+    expect(navText).not.toContain('Agent 收件匣')
+    expect(navText).not.toContain('運動員設定')
+    expect(navText).not.toContain('資料來源')
+    expect(navText).not.toContain('對話')
   })
 
   it('edits athlete settings with structured validation, unit conversion, and canonical km save payload', async () => {
@@ -242,7 +258,7 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App)
     await flushPromises()
 
-    await wrapper.get('button[data-view="athlete-settings"]').trigger('click')
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
 
     expect(wrapper.text()).toContain('運動員設定')
     expect(wrapper.get('select[name="experienceLevel"]').text()).toContain('未設定')
@@ -320,7 +336,7 @@ describe('Johnny product shell', () => {
       } as Response)
     })
 
-    const wrapper = mount(App, { props: { initialView: 'calendar', requireAuth: true } })
+    const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('訓練安排')
@@ -590,7 +606,7 @@ describe('Johnny product shell', () => {
   })
 
   it('shows only accept and keep buttons on Agent Inbox recommendation cards', () => {
-    const inbox = mount(App, { props: { initialView: 'inbox' } })
+    const inbox = mount(App, { props: { initialView: 'johnny' } })
     const actions = inbox.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]')
 
     expect(actions.text()).toContain('接受調整')
@@ -602,7 +618,7 @@ describe('Johnny product shell', () => {
 
   it('keeps Agent Inbox recommendation action geometry stable while accept is pending', async () => {
     vi.mocked(fetch).mockReturnValue(new Promise(() => undefined) as unknown as Promise<Response>)
-    const wrapper = mount(App, { props: { initialView: 'inbox' } })
+    const wrapper = mount(App, { props: { initialView: 'johnny' } })
 
     await wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-action="accept"]').trigger('click')
 
@@ -640,7 +656,7 @@ describe('Johnny product shell', () => {
   it('opens training arrangements as a six-month race calendar with workout context', async () => {
     const wrapper = mount(App)
 
-    await wrapper.get('button[data-view="calendar"]').trigger('click')
+    await wrapper.get('button[data-view="plan"]').trigger('click')
 
     expect(wrapper.text()).toContain('訓練安排')
     expect(wrapper.text()).toContain('未來六個月')
@@ -685,7 +701,7 @@ describe('Johnny product shell', () => {
     })
     const wrapper = mount(App, {
       props: {
-        initialView: 'calendar',
+        initialView: 'plan',
       },
     })
 
@@ -723,7 +739,7 @@ describe('Johnny product shell', () => {
   })
 
   it('requires race priority and confirms before discarding dirty modal changes', async () => {
-    const wrapper = mount(App, { attachTo: document.body, props: { initialView: 'calendar' } })
+    const wrapper = mount(App, { attachTo: document.body, props: { initialView: 'plan' } })
 
     await wrapper.get('button[data-testid="open-race-goal-modal"]').trigger('click')
     await wrapper.get('input[name="raceName"]').setValue('Taipei Half')
@@ -744,7 +760,7 @@ describe('Johnny product shell', () => {
   })
 
   it('validates manually typed race dates on blur', async () => {
-    const wrapper = mount(App, { props: { initialView: 'calendar' } })
+    const wrapper = mount(App, { props: { initialView: 'plan' } })
 
     await wrapper.get('button[data-testid="open-race-goal-modal"]').trigger('click')
     await wrapper.get('input[name="raceDate"]').setValue('2026/11/15')
@@ -756,7 +772,7 @@ describe('Johnny product shell', () => {
   it('shows an empty workout state without losing the training arrangements surface', () => {
     const wrapper = mount(App, {
       props: {
-        initialView: 'calendar',
+        initialView: 'plan',
         workouts: [],
       },
     })
@@ -778,7 +794,7 @@ describe('Johnny product shell', () => {
     })
     const wrapper = mount(App)
 
-    await wrapper.get('button[data-view="sources"]').trigger('click')
+    await wrapper.get('button[data-view="data"]').trigger('click')
 
     expect(wrapper.text()).toContain('資料來源')
     expect(wrapper.text()).toContain('Garmin Connect experimental login')
@@ -824,7 +840,7 @@ describe('Johnny product shell', () => {
   it('keeps Garmin validation in the app instead of submitting empty credentials', async () => {
     const wrapper = mount(App, {
       props: {
-        initialView: 'sources',
+        initialView: 'data',
       },
     })
 
@@ -850,7 +866,7 @@ describe('Johnny product shell', () => {
       } as Response)
     })
 
-    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    const wrapper = mount(App, { props: { initialView: 'data' } })
     await flushPromises()
 
     const garminCard = wrapper.get('[data-testid="provider-card-garmin_connect"]')
@@ -890,7 +906,7 @@ describe('Johnny product shell', () => {
         json: () => Promise.resolve({ data: {} }),
       } as Response)
     })
-    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    const wrapper = mount(App, { props: { initialView: 'data' } })
 
     await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
@@ -931,7 +947,7 @@ describe('Johnny product shell', () => {
         }),
       ),
     )
-    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    const wrapper = mount(App, { props: { initialView: 'data' } })
 
     await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
@@ -970,7 +986,7 @@ describe('Johnny product shell', () => {
         json: () => Promise.resolve({ data: {} }),
       } as Response)
     })
-    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    const wrapper = mount(App, { props: { initialView: 'data' } })
 
     await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
@@ -1172,11 +1188,11 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Backend Half Marathon')
     expect(wrapper.text()).toContain('10 km')
 
-    await wrapper.get('button[data-view="calendar"]').trigger('click')
+    await wrapper.get('button[data-view="plan"]').trigger('click')
     expect(wrapper.text()).toContain('Backend Calendar 10K')
     expect(wrapper.text()).toContain('50:00')
 
-    await wrapper.get('button[data-view="inbox"]').trigger('click')
+    await wrapper.get('button[data-view="johnny"]').trigger('click')
     await wrapper.get('[data-testid="inbox-card-backend-rec-1"] [data-action="accept"]').trigger('click')
     await flushPromises()
 
@@ -1187,7 +1203,7 @@ describe('Johnny product shell', () => {
   })
 
   it('renders Agent Inbox as a pending decision queue with quieter history', () => {
-    const wrapper = mount(App, { props: { initialView: 'inbox' } })
+    const wrapper = mount(App, { props: { initialView: 'johnny' } })
 
     expect(wrapper.text()).toContain('Agent 收件匣')
     expect(wrapper.text()).toContain('高優先')
