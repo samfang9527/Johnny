@@ -2342,6 +2342,15 @@ button:disabled {
 }
 
 @media (max-width: 780px) {
+  .top-bar {
+    position: static;
+    min-height: auto;
+    padding: 0.7rem 0 0;
+    border-bottom: 0;
+    background: transparent;
+    backdrop-filter: none;
+  }
+
   .top-bar__inner {
     align-items: flex-start;
     flex-direction: column;
