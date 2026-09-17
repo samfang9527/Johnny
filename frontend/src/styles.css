@@ -1760,6 +1760,7 @@ button:disabled {
 .weekly-activity__plot,
 .weekly-activity__labels {
   grid-template-columns: repeat(7, minmax(0, 1fr));
+  width: 100%;
 }
 
 .weekly-activity__bars {
@@ -1770,10 +1771,19 @@ button:disabled {
 .weekly-activity__plot {
   display: grid;
   align-items: end;
+  justify-items: stretch;
   height: 8.5rem;
   min-height: 8.5rem;
   padding: 0 0 0.55rem;
   border-bottom: 1px solid var(--color-line-mint);
+}
+
+.weekly-activity__column {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  height: 100%;
 }
 
 .weekly-activity__labels {
@@ -1793,7 +1803,6 @@ button:disabled {
   display: block;
   width: min(1.6rem, 100%);
   height: max(0.35rem, var(--bar-size));
-  justify-self: center;
   border-radius: var(--radius-full) var(--radius-full) 0 0;
   background: var(--color-lane-green);
 }
@@ -2233,39 +2242,69 @@ button:disabled {
   color: var(--color-muted-green);
 }
 
-.plan-phase {
-  min-height: 8rem;
-  border-color: var(--color-line-mint);
-  border-radius: var(--radius-lg);
-  background: var(--color-mint-surface);
-}
-
-.plan-phase::before {
-  background: var(--color-line-mint);
-}
-
-.plan-phase--done {
-  border-color: color-mix(in srgb, var(--color-lane-green) 48%, var(--color-line-mint));
-  background: color-mix(in srgb, var(--color-soft-mint) 56%, var(--color-card-white));
-}
-
-.plan-phase--done::before {
-  background: var(--color-lane-green);
-}
-
-.plan-phase--current {
-  border-color: var(--color-deep-green);
+.plan-journey__track {
+  grid-column: 1 / -1;
+  height: 0.4rem;
+  margin: 0.65rem 0 -0.1rem;
+  border-radius: var(--radius-full);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-soft-mint) 70%, transparent), transparent),
-    var(--color-mint-surface);
+    linear-gradient(90deg, var(--color-lane-green) 0 38%, var(--color-deep-green) 38% 45%, var(--color-line-mint) 45% 100%);
 }
 
-.plan-phase--current::before {
+.plan-journey__stop {
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 0.7rem;
+  min-width: 8.5rem;
+  padding: 0.2rem 0.3rem 0;
+  color: var(--color-muted-green);
+}
+
+.plan-journey__node {
+  display: block;
+  width: 1.15rem;
+  height: 1.15rem;
+  border: 3px solid var(--color-card-white);
+  border-radius: var(--radius-full);
+  background: var(--color-line-mint);
+  box-shadow: 0 0 0 1px var(--color-line-mint), 0 0.45rem 0.9rem rgba(15, 74, 50, 0.08);
+}
+
+.plan-journey__stop--done .plan-journey__node {
+  background: var(--color-lane-green);
+  box-shadow: 0 0 0 1px var(--color-lane-green), 0 0.45rem 0.9rem rgba(15, 74, 50, 0.12);
+}
+
+.plan-journey__stop--current .plan-journey__node {
+  width: 1.55rem;
+  height: 1.55rem;
   background: var(--color-deep-green);
+  box-shadow: 0 0 0 0.35rem var(--color-soft-mint), 0 0.75rem 1.2rem rgba(15, 74, 50, 0.18);
 }
 
-.plan-phase--next {
-  opacity: 1;
+.plan-journey__meta {
+  display: grid;
+  gap: 0.25rem;
+  width: 100%;
+  text-align: center;
+}
+
+.plan-journey__meta span {
+  color: var(--color-muted-green);
+  font-family: var(--font-data);
+  font-size: 0.78rem;
+}
+
+.plan-journey__meta strong {
+  color: var(--color-ink-green);
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+
+.plan-journey__stop--current .plan-journey__meta strong {
+  color: var(--color-deep-green);
+  font-size: 1.08rem;
 }
 
 .plan-race-goal {

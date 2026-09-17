@@ -95,7 +95,9 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App)
 
     expect(wrapper.get('[data-testid="weekly-activity"]').text()).toContain('本週活動')
-    expect(wrapper.find('[data-testid="weekly-activity-plot"]').exists()).toBe(true)
+    const plot = wrapper.get('[data-testid="weekly-activity-plot"]')
+    expect(plot.classes()).toContain('weekly-activity__plot--spread')
+    expect(plot.findAll('[data-testid="weekly-activity-column"]')).toHaveLength(7)
     expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').length).toBe(7)
     expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').map((bar) => bar.attributes('style'))).toEqual([
       '--bar-size: 33%;',
@@ -916,12 +918,15 @@ describe('Johnny product shell', () => {
     await wrapper.get('button[data-view="plan"]').trigger('click')
 
     const journey = wrapper.get('[data-testid="plan-training-journey"]')
-    const phases = journey.findAll('.plan-phase')
+    const stops = journey.findAll('[data-testid="plan-journey-stop"]')
 
-    expect(phases).toHaveLength(5)
-    expect(phases[0].classes()).toContain('plan-phase--done')
-    expect(phases[1].classes()).toContain('plan-phase--current')
-    expect(phases.slice(2).every((phase) => phase.classes().includes('plan-phase--next'))).toBe(true)
+    expect(journey.find('[data-testid="plan-journey-track"]').exists()).toBe(true)
+    expect(journey.findAll('[data-testid="plan-journey-node"]')).toHaveLength(5)
+    expect(stops).toHaveLength(5)
+    expect(stops[0].classes()).toContain('plan-journey__stop--done')
+    expect(stops[1].classes()).toContain('plan-journey__stop--current')
+    expect(stops.slice(2).every((stop) => stop.classes().includes('plan-journey__stop--next'))).toBe(true)
+    expect(journey.findAll('.plan-phase')).toHaveLength(0)
     expect(journey.text()).toContain('Build')
     expect(journey.text()).toContain('目前訓練週期')
     expect(wrapper.text()).toContain('接下來課表')

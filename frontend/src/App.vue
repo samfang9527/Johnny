@@ -2064,14 +2064,19 @@ function shouldRequireAuth(): boolean {
             <span>跑量節奏</span>
           </div>
           <div class="weekly-activity__bars" aria-label="本週跑步距離">
-            <div class="weekly-activity__plot" data-testid="weekly-activity-plot" aria-hidden="true">
+            <div class="weekly-activity__plot weekly-activity__plot--spread" data-testid="weekly-activity-plot" aria-hidden="true">
               <span
                 v-for="point in weeklyActivityPoints"
                 :key="`${point.dayLabel}-bar`"
-                class="weekly-activity__bar"
-                data-testid="weekly-activity-bar"
-                :style="{ '--bar-size': `${Math.round((point.distanceKm / maxWeeklyDistance) * 100)}%` }"
-              ></span>
+                class="weekly-activity__column"
+                data-testid="weekly-activity-column"
+              >
+                <span
+                  class="weekly-activity__bar"
+                  data-testid="weekly-activity-bar"
+                  :style="{ '--bar-size': `${Math.round((point.distanceKm / maxWeeklyDistance) * 100)}%` }"
+                ></span>
+              </span>
             </div>
             <div class="weekly-activity__labels">
               <div v-for="point in weeklyActivityPoints" :key="point.dayLabel" class="weekly-activity__day">
@@ -2204,9 +2209,19 @@ function shouldRequireAuth(): boolean {
             <strong>{{ currentPlanPhase.label }}</strong>
             <p>{{ currentPlanPhase.summary }}。有比賽時 Johnny 會把目標放進旅程；沒有比賽時，這裡仍會用訓練週期安排接下來的節奏。</p>
           </div>
-          <article v-for="phase in planPhases" :key="phase.id" class="plan-phase" :class="`plan-phase--${phase.status}`">
-            <span>{{ formatPlanPhaseLabel(phase.label) }}</span>
-            <strong>{{ phase.summary }}</strong>
+          <div class="plan-journey__track" data-testid="plan-journey-track" aria-hidden="true"></div>
+          <article
+            v-for="phase in planPhases"
+            :key="phase.id"
+            class="plan-journey__stop"
+            :class="`plan-journey__stop--${phase.status}`"
+            data-testid="plan-journey-stop"
+          >
+            <span class="plan-journey__node" data-testid="plan-journey-node"></span>
+            <div class="plan-journey__meta">
+              <span>{{ formatPlanPhaseLabel(phase.label) }}</span>
+              <strong>{{ phase.summary }}</strong>
+            </div>
           </article>
           <template v-if="upcomingRaceEntries.length">
             <article v-for="race in upcomingRaceEntries" :key="`${race.name}-${race.date}`" class="plan-race-goal">
