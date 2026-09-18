@@ -3,6 +3,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Iterable
 
+from src.application.training_plan_generation import (
+    PlanSkeleton,
+    SkeletonWorkout,
+    repair_generated_plan,
+    validate_generated_plan,
+)
 from src.application.training_targets import PaceProfile, enrich_workout_steps
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
@@ -184,12 +190,13 @@ class CreateTrainingPlanTool:
     def run(self, *, user_id: str, arguments: dict) -> dict:
         trusted_context = arguments.get("trusted_context") if isinstance(arguments.get("trusted_context"), dict) else {}
         pace_profile = trusted_context.get("pace_profile")
+        skeleton = _trusted_plan_skeleton(trusted_context)
         workouts = tuple(
             _workout_from_payload({**payload, "_pace_profile": pace_profile}) for payload in arguments.get("workouts", ())
         )
         plan = TrainingPlan.create(
             user_id=user_id,
-            race_id=arguments.get("race_id"),
+            race_id=trusted_context.get("race_id", arguments.get("race_id")),
             name=arguments["name"],
             status="active",
             starts_on=_date_arg(arguments, "starts_on"),
@@ -197,9 +204,33 @@ class CreateTrainingPlanTool:
             metadata=_plan_metadata(arguments=arguments, trusted_context=trusted_context),
             workouts=workouts,
         )
+        completion_repair = None
+        if skeleton is not None:
+            validation_errors = validate_generated_plan(plan, skeleton)
+            if validation_errors:
+                repair_result = repair_generated_plan(plan, skeleton, "; ".join(validation_errors))
+                plan = repair_result.plan
+                completion_repair = {
+                    "repaired_week_indexes": repair_result.repaired_week_indexes,
+                    "repaired_workout_ids": repair_result.repaired_workout_ids,
+                    "reason": repair_result.reason,
+                }
+                repaired_errors = validate_generated_plan(plan, skeleton)
+                if repaired_errors:
+                    raise ValueError(f"completion repair did not produce a valid plan: {'; '.join(repaired_errors)}")
         validate_phase_segments(plan)
-        saved = self._training_plans.create_active_plan(user_id, plan)
-        return {"training_plan": _plan_payload(saved), "applied": True}
+        saved = self._training_plans.create_active_plan(
+            user_id,
+            plan,
+            replace_all_active=(
+                trusted_context.get("manual_regeneration") is True
+                or trusted_context.get("plan_type") == "maintenance"
+            ),
+        )
+        payload = {"training_plan": _plan_payload(saved), "applied": True}
+        if completion_repair is not None:
+            payload["completion_repair"] = completion_repair
+        return payload
 
 
 class MemoryCandidateTool:
@@ -273,12 +304,43 @@ def _workout_from_payload(payload: dict) -> Workout:
 
 def _plan_metadata(*, arguments: dict, trusted_context: dict) -> dict:
     metadata = dict(arguments.get("metadata", {}))
+    skeleton = trusted_context.get("plan_skeleton")
+    if isinstance(skeleton, dict) and isinstance(skeleton.get("phase_segments"), list):
+        metadata["phase_segments"] = [dict(segment) for segment in skeleton["phase_segments"]]
     for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
         value = trusted_context.get(key)
         if value is not None:
             metadata.setdefault(key, value)
     metadata.setdefault("generation_mode", arguments.get("generation_mode", "generated"))
     return metadata
+
+
+def _trusted_plan_skeleton(trusted_context: dict) -> PlanSkeleton | None:
+    payload = trusted_context.get("plan_skeleton")
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError("trusted plan skeleton is invalid")
+    try:
+        workouts = [
+            SkeletonWorkout(
+                scheduled_for=_date_arg(workout, "scheduled_for"),
+                workout_type=str(workout["workout_type"]),
+                phase=str(workout["phase"]),
+                planned_duration_minutes=workout.get("planned_duration_minutes"),
+                planned_distance_meters=workout.get("planned_distance_meters"),
+            )
+            for workout in payload["workouts"]
+        ]
+        phase_segments = [dict(segment) for segment in payload["phase_segments"]]
+        return PlanSkeleton(
+            starts_on=_date_arg(payload, "starts_on"),
+            ends_on=_date_arg(payload, "ends_on"),
+            phase_segments=phase_segments,
+            workouts=workouts,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("trusted plan skeleton is invalid") from exc
 
 
 def _profile_payload(profile) -> dict | None:

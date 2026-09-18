@@ -1,4 +1,5 @@
-from datetime import date, datetime, timezone
+from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -16,6 +17,7 @@ from src.application.agent_tools import (
     WorkoutAdjustmentProposalTool,
 )
 from src.application.training_targets import build_pace_profile
+from src.application.training_plan_generation import build_plan_skeleton
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.athlete_race import AthleteProfile, RaceGoal
@@ -95,7 +97,7 @@ class LeakyActivityStore:
 class FakeTrainingPlanStore:
     def __init__(self, plan: TrainingPlan | None) -> None:
         self.plan = plan
-        self.active_plans: list[TrainingPlan] = []
+        self.active_plans: list[TrainingPlan] = [plan] if plan is not None and plan.status == "active" else []
 
     def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
         return self.plan
@@ -105,7 +107,17 @@ class FakeTrainingPlanStore:
             return None
         return self.plan
 
-    def create_active_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+    def create_active_plan(
+        self,
+        user_id: str,
+        plan: TrainingPlan,
+        replace_all_active: bool = False,
+    ) -> TrainingPlan:
+        if replace_all_active:
+            self.active_plans = [
+                replace(existing, status="superseded") if existing.status == "active" else existing
+                for existing in self.active_plans
+            ]
         saved = TrainingPlan.create(
             id=f"plan-{len(self.active_plans) + 1}",
             user_id=user_id,
@@ -118,6 +130,7 @@ class FakeTrainingPlanStore:
             metadata=plan.metadata,
         )
         self.active_plans.append(saved)
+        self.plan = saved
         return saved
 
 
@@ -223,6 +236,49 @@ def _plan(user_id: str = "user-1") -> TrainingPlan:
             ),
         ),
     )
+
+
+def _eight_week_skeleton():
+    return build_plan_skeleton(
+        starts_on=date(2027, 1, 4),
+        ends_on=date(2027, 2, 28),
+        plan_type="maintenance",
+        race_date=None,
+        preferred_training_days=("tuesday", "thursday", "sunday"),
+        preferred_long_run_day="sunday",
+        max_runs_per_week=3,
+        max_hard_sessions_per_week=0,
+    )
+
+
+def _skeleton_payload(skeleton) -> dict:
+    return {
+        "starts_on": skeleton.starts_on.isoformat(),
+        "ends_on": skeleton.ends_on.isoformat(),
+        "phase_segments": [dict(segment) for segment in skeleton.phase_segments],
+        "workouts": [
+            {
+                "scheduled_for": workout.scheduled_for.isoformat(),
+                "workout_type": workout.workout_type,
+                "phase": workout.phase,
+                "planned_duration_minutes": workout.planned_duration_minutes,
+                "planned_distance_meters": workout.planned_distance_meters,
+            }
+            for workout in skeleton.workouts
+        ],
+    }
+
+
+def _model_workout_payload(workout, *, purpose: str, scheduled_for: date | None = None) -> dict:
+    return {
+        "id": f"model-{workout.scheduled_for.isoformat()}",
+        "scheduled_for": (scheduled_for or workout.scheduled_for).isoformat(),
+        "workout_type": workout.workout_type,
+        "purpose": purpose,
+        "planned_duration_minutes": workout.planned_duration_minutes,
+        "planned_distance_meters": workout.planned_distance_meters,
+        "phase": workout.phase,
+    }
 
 
 def _today_context_handler(activity_store: LeakyActivityStore, plan_store: FakeTrainingPlanStore) -> BuildTodayContextHandler:
@@ -392,6 +448,118 @@ def test_create_training_plan_tool_stores_active_plan_immediately() -> None:
     assert payload["training_plan"]["id"] == "plan-1"
     assert payload["training_plan"]["status"] == "active"
     assert plan_store.active_plans[0].status == "active"
+
+
+def test_create_training_plan_tool_repairs_eight_week_output_and_preserves_valid_weeks() -> None:
+    skeleton = _eight_week_skeleton()
+    skeleton_payload = _skeleton_payload(skeleton)
+    valid_weeks = [workout for workout in skeleton.workouts if workout.scheduled_for < date(2027, 1, 18)]
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=FakeTrainingPlanStore(None))
+
+    payload = tool.run(
+        user_id="user-1",
+        arguments={
+            "name": "Model supplied first two weeks",
+            "starts_on": skeleton.starts_on.isoformat(),
+            "ends_on": skeleton.ends_on.isoformat(),
+            "metadata": {"phase_segments": skeleton.phase_segments},
+            "workouts": [
+                _model_workout_payload(workout, purpose="Model coaching detail") for workout in valid_weeks
+            ],
+            "trusted_context": {"plan_skeleton": skeleton_payload},
+        },
+    )
+
+    saved = payload["training_plan"]
+    repair = payload["completion_repair"]
+    assert len(saved["workouts"]) == len(skeleton.workouts)
+    assert [workout["purpose"] for workout in saved["workouts"][: len(valid_weeks)]] == [
+        "Model coaching detail"
+    ] * len(valid_weeks)
+    assert repair["repaired_week_indexes"] == [2, 3, 4, 5, 6, 7]
+    assert repair == saved["metadata"]["internal"]["completion_repair"]
+
+
+def test_create_training_plan_tool_repairs_a_shifted_but_self_consistent_model_plan() -> None:
+    skeleton = _eight_week_skeleton()
+    skeleton_payload = _skeleton_payload(skeleton)
+    shifted_starts_on = skeleton.starts_on + timedelta(days=1)
+    shifted_ends_on = skeleton.ends_on + timedelta(days=1)
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=FakeTrainingPlanStore(None))
+
+    payload = tool.run(
+        user_id="user-1",
+        arguments={
+            "name": "Shifted model plan",
+            "starts_on": shifted_starts_on.isoformat(),
+            "ends_on": shifted_ends_on.isoformat(),
+            "metadata": {
+                "phase_segments": [
+                    {
+                        "phase": "maintenance",
+                        "starts_on": shifted_starts_on.isoformat(),
+                        "ends_on": shifted_ends_on.isoformat(),
+                    }
+                ]
+            },
+            "workouts": [
+                _model_workout_payload(
+                    workout,
+                    purpose="Shifted model detail",
+                    scheduled_for=workout.scheduled_for + timedelta(days=1),
+                )
+                for workout in skeleton.workouts
+            ],
+            "trusted_context": {"plan_skeleton": skeleton_payload},
+        },
+    )
+
+    saved = payload["training_plan"]
+    assert (saved["starts_on"], saved["ends_on"]) == (
+        skeleton.starts_on.isoformat(),
+        skeleton.ends_on.isoformat(),
+    )
+    assert [workout["scheduled_for"] for workout in saved["workouts"]] == [
+        workout.scheduled_for.isoformat() for workout in skeleton.workouts
+    ]
+    assert payload["completion_repair"]["repaired_week_indexes"] == list(range(8))
+
+
+@pytest.mark.parametrize(
+    "replacement_context",
+    (
+        {"manual_regeneration": True, "plan_type": "race"},
+        {"plan_type": "maintenance"},
+    ),
+    ids=("manual-regeneration", "maintenance-replacement"),
+)
+def test_create_training_plan_tool_supersedes_all_active_projections_when_replacing(
+    replacement_context: dict,
+) -> None:
+    existing = _plan()
+    plan_store = FakeTrainingPlanStore(existing)
+    skeleton = _eight_week_skeleton()
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=plan_store)
+
+    payload = tool.run(
+        user_id="user-1",
+        arguments={
+            "name": "Manual maintenance replacement",
+            "starts_on": skeleton.starts_on.isoformat(),
+            "ends_on": skeleton.ends_on.isoformat(),
+            "metadata": {"phase_segments": skeleton.phase_segments},
+            "workouts": [
+                _model_workout_payload(workout, purpose="Manual plan detail") for workout in skeleton.workouts
+            ],
+            "trusted_context": {
+                "plan_skeleton": _skeleton_payload(skeleton),
+                **replacement_context,
+            },
+        },
+    )
+
+    assert payload["training_plan"]["status"] == "active"
+    assert [plan.status for plan in plan_store.active_plans] == ["superseded", "active"]
 
 
 @pytest.mark.parametrize(

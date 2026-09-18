@@ -15,6 +15,17 @@ from src.domain.agent_runtime import (
 )
 
 
+PRODUCT_RUN_METADATA_KEYS = (
+    "race_id",
+    "plan_type",
+    "starts_on",
+    "plan_horizon_weeks",
+    "client_request_id",
+    "manual_regeneration",
+    "quota_day",
+)
+
+
 READ_TOOL_NAMES = frozenset(
     {
         "getAthleteContext",
@@ -158,8 +169,6 @@ class RunningCompanionAgent:
             "plan_type": canonical_plan_type,
             "goal_notes": goal_notes,
         }
-        if existing_run is not None and "manual_regeneration" in existing_run.metadata:
-            context["manual_regeneration"] = existing_run.metadata["manual_regeneration"]
         context.update(
             self._training_plan_generation_preload_context(
                 user_id=user_id,
@@ -168,6 +177,10 @@ class RunningCompanionAgent:
                 plan_type=canonical_plan_type,
             )
         )
+        if existing_run is not None:
+            for key in PRODUCT_RUN_METADATA_KEYS:
+                if key in existing_run.metadata:
+                    context[key] = existing_run.metadata[key]
         run = self._start_run(
             user_id=user_id,
             trigger_type="manual",
@@ -707,8 +720,9 @@ def _inject_training_plan_trusted_context(arguments: dict, request_context: dict
         trusted_context["plan_skeleton"] = plan_skeleton
         trusted_context["phase_segments"] = plan_skeleton.get("phase_segments", ())
         trusted_context["skeleton_workouts"] = plan_skeleton.get("workouts", ())
-    if "manual_regeneration" in request_context:
-        trusted_context["manual_regeneration"] = request_context.get("manual_regeneration")
+    for key in PRODUCT_RUN_METADATA_KEYS:
+        if key in request_context:
+            trusted_context[key] = request_context.get(key)
     for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
         if key in request_context:
             trusted_context[key] = request_context.get(key)

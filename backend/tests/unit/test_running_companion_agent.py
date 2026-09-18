@@ -603,6 +603,11 @@ def test_training_plan_generation_propagates_manual_regeneration_to_trusted_cont
                         "starts_on": "2027-01-01",
                         "ends_on": "2027-01-28",
                         "workouts": [],
+                        "trusted_context": {
+                            "manual_regeneration": False,
+                            "client_request_id": "model-value",
+                            "quota_day": "2027-01-01",
+                        },
                     },
                 ),
             ),
@@ -620,7 +625,15 @@ def test_training_plan_generation_propagates_manual_regeneration_to_trusted_cont
         trigger_type="manual",
         workflow_name="training_plan_generation",
         prompt_version="running-companion-v1",
-        metadata={"manual_regeneration": True},
+        metadata={
+            "race_id": "race-1",
+            "plan_type": "maintenance",
+            "starts_on": "2027-01-01",
+            "plan_horizon_weeks": 4,
+            "client_request_id": "product-request-1",
+            "manual_regeneration": True,
+            "quota_day": "2027-01-28",
+        },
     )
 
     agent.run_training_plan_generation(
@@ -632,6 +645,54 @@ def test_training_plan_generation_propagates_manual_regeneration_to_trusted_cont
 
     assert model.requests[0].context["manual_regeneration"] is True
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["manual_regeneration"] is True
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["client_request_id"] == "product-request-1"
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["quota_day"] == "2027-01-28"
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_horizon_weeks"] == 4
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_type"] == "maintenance"
+
+
+def test_training_plan_generation_records_completion_repair_in_tool_step_payload() -> None:
+    run_store = FakeRunStore()
+    repair = {
+        "repaired_week_indexes": [2, 3],
+        "repaired_workout_ids": ["workout-1"],
+        "reason": "LLM returned fewer weeks than requested",
+    }
+    plan_tool = StaticTool(
+        "createTrainingPlan",
+        {
+            "training_plan": {"id": "plan-1", "status": "active"},
+            "completion_repair": repair,
+            "applied": True,
+        },
+    )
+    model = FakeModelGateway(
+        ModelResponse(
+            content="Created repaired active plan.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createTrainingPlan",
+                    arguments={
+                        "name": "Generated Plan",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [],
+                    },
+                ),
+            ),
+        )
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((plan_tool,)),
+        prompt_version="running-companion-v1",
+    )
+
+    result = agent.run_training_plan_generation(user_id="user-1", plan_type="maintenance")
+
+    assert result.status == "completed"
+    assert run_store.steps[-1].payload["completion_repair"] == repair
 
 
 def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> None:
