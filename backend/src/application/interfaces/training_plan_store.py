@@ -27,7 +27,12 @@ class TrainingPlanStore(Protocol):
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
         ...
 
-    def create_active_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+    def create_active_plan(
+        self,
+        user_id: str,
+        plan: TrainingPlan,
+        replace_all_active: bool = False,
+    ) -> TrainingPlan:
         ...
 
     def create_draft_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:

@@ -542,7 +542,7 @@ def test_training_plan_generation_preloads_planning_context_and_pace_profile() -
                     tool_name="createTrainingPlan",
                     arguments={
                         "name": "Generated Plan",
-                        "race_id": "race-1",
+                        "race_id": "model-race-id",
                         "starts_on": "2027-01-01",
                         "ends_on": "2027-01-28",
                         "workouts": [],
@@ -587,6 +587,7 @@ def test_training_plan_generation_preloads_planning_context_and_pace_profile() -
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_skeleton"] == skeleton
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["phase_segments"] == skeleton["phase_segments"]
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["skeleton_workouts"] == skeleton["workouts"]
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["race_id"] == "race-1"
 
 
 def test_training_plan_generation_propagates_manual_regeneration_to_trusted_context() -> None:
@@ -866,10 +867,14 @@ def test_training_plan_generation_selects_explicit_primary_future_or_base_target
         return model.requests[0].context
 
     assert run_case(race_id="future-primary", plan_type="race")["selected_race_id"] == "future-primary"
+    assert run_case(race_id="future-primary", plan_type="race")["race_id"] == "future-primary"
     assert run_case(race_id="missing-race", plan_type="race")["selected_race_id"] is None
+    assert run_case(race_id="missing-race", plan_type="race")["race_id"] is None
     assert run_case(race_id="missing-race", plan_type="race")["plan_type"] == "maintenance"
     assert run_case(plan_type="race")["selected_race_id"] == "future-primary"
+    assert run_case(plan_type="race")["race_id"] == "future-primary"
     assert run_case(plan_type="base")["selected_race_id"] is None
+    assert run_case(race_id="future-primary", plan_type="maintenance")["race_id"] is None
 
     race_goals[2]["race_date"] = "2026-12-15"
     assert run_case(plan_type="race")["selected_race_id"] == "future-secondary"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable
 
 from src.application.training_plan_generation import (
@@ -333,7 +333,7 @@ def _trusted_plan_skeleton(trusted_context: dict) -> PlanSkeleton | None:
             for workout in payload["workouts"]
         ]
         phase_segments = [dict(segment) for segment in payload["phase_segments"]]
-        return PlanSkeleton(
+        skeleton = PlanSkeleton(
             starts_on=_date_arg(payload, "starts_on"),
             ends_on=_date_arg(payload, "ends_on"),
             phase_segments=phase_segments,
@@ -341,6 +341,19 @@ def _trusted_plan_skeleton(trusted_context: dict) -> PlanSkeleton | None:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("trusted plan skeleton is invalid") from exc
+    _require_skeleton_workouts_for_every_week(skeleton)
+    return skeleton
+
+
+def _require_skeleton_workouts_for_every_week(skeleton: PlanSkeleton) -> None:
+    if skeleton.ends_on < skeleton.starts_on:
+        raise ValueError("trusted plan skeleton is invalid")
+    week_start = skeleton.starts_on
+    while week_start <= skeleton.ends_on:
+        week_ends_on = min(week_start + timedelta(days=6), skeleton.ends_on)
+        if not any(week_start <= workout.scheduled_for <= week_ends_on for workout in skeleton.workouts):
+            raise ValueError("trusted plan skeleton must include workouts for every week")
+        week_start += timedelta(weeks=1)
 
 
 def _profile_payload(profile) -> dict | None:

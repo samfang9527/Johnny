@@ -181,6 +181,7 @@ class RunningCompanionAgent:
             for key in PRODUCT_RUN_METADATA_KEYS:
                 if key in existing_run.metadata:
                     context[key] = existing_run.metadata[key]
+        context["race_id"] = None if context["plan_type"] == "maintenance" else context["selected_race_id"]
         run = self._start_run(
             user_id=user_id,
             trigger_type="manual",

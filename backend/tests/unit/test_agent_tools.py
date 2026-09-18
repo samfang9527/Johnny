@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+from inspect import signature
 
 import pytest
 
@@ -19,6 +20,7 @@ from src.application.agent_tools import (
 from src.application.training_targets import build_pace_profile
 from src.application.training_plan_generation import build_plan_skeleton
 from src.application.training_analytics import BuildTodayContextHandler
+from src.application.interfaces.training_plan_store import TrainingPlanStore
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.athlete_race import AthleteProfile, RaceGoal
 from src.domain.recommendation_approval import Recommendation
@@ -478,6 +480,47 @@ def test_create_training_plan_tool_repairs_eight_week_output_and_preserves_valid
     ] * len(valid_weeks)
     assert repair["repaired_week_indexes"] == [2, 3, 4, 5, 6, 7]
     assert repair == saved["metadata"]["internal"]["completion_repair"]
+
+
+@pytest.mark.parametrize(
+    "skeleton_workouts",
+    (
+        lambda payload: [],
+        lambda payload: [
+            workout
+            for workout in payload["workouts"]
+            if not date(2027, 1, 18) <= date.fromisoformat(workout["scheduled_for"]) <= date(2027, 1, 24)
+        ],
+    ),
+    ids=("empty-multi-week-skeleton", "week-without-expected-workouts"),
+)
+def test_create_training_plan_tool_rejects_incomplete_trusted_skeleton_before_persistence(skeleton_workouts) -> None:
+    skeleton = _skeleton_payload(_eight_week_skeleton())
+    skeleton["workouts"] = skeleton_workouts(skeleton)
+    plan_store = FakeTrainingPlanStore(None)
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=plan_store)
+
+    with pytest.raises(ValueError, match="trusted plan skeleton must include workouts for every week"):
+        tool.run(
+            user_id="user-1",
+            arguments={
+                "name": "Malformed trusted skeleton",
+                "starts_on": skeleton["starts_on"],
+                "ends_on": skeleton["ends_on"],
+                "metadata": {"phase_segments": skeleton["phase_segments"]},
+                "workouts": [],
+                "trusted_context": {"plan_skeleton": skeleton},
+            },
+        )
+
+    assert plan_store.active_plans == []
+
+
+def test_training_plan_store_exposes_replace_all_active_contract() -> None:
+    parameter = signature(TrainingPlanStore.create_active_plan).parameters["replace_all_active"]
+
+    assert parameter.default is False
+    assert parameter.kind.name == "POSITIONAL_OR_KEYWORD"
 
 
 def test_create_training_plan_tool_repairs_a_shifted_but_self_consistent_model_plan() -> None:
