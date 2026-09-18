@@ -96,6 +96,15 @@ def _plan_arguments(context: dict) -> dict:
         "race_id": context.get("selected_race_id"),
         "starts_on": starts_on.isoformat(),
         "ends_on": ends_on.isoformat(),
+        "metadata": {
+            "phase_segments": [
+                {
+                    "phase": "build",
+                    "starts_on": starts_on.isoformat(),
+                    "ends_on": ends_on.isoformat(),
+                }
+            ]
+        },
         "workouts": workouts,
     }
 

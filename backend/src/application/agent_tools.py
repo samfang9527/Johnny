@@ -6,7 +6,7 @@ from typing import Iterable
 from src.application.training_targets import PaceProfile, enrich_workout_steps
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
-from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep
+from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, validate_phase_segments
 
 
 class AgentToolRegistry:
@@ -197,6 +197,7 @@ class CreateTrainingPlanTool:
             metadata=_plan_metadata(arguments=arguments, trusted_context=trusted_context),
             workouts=workouts,
         )
+        validate_phase_segments(plan)
         saved = self._training_plans.create_active_plan(user_id, plan)
         return {"training_plan": _plan_payload(saved), "applied": True}
 
@@ -305,6 +306,7 @@ def _profile_payload(profile) -> dict | None:
         "preferred_training_days": list(profile.preferences.preferred_training_days),
         "preferred_long_run_day": profile.preferences.preferred_long_run_day,
         "max_runs_per_week": profile.preferences.max_runs_per_week,
+        "max_hard_sessions_per_week": profile.preferences.max_hard_sessions_per_week,
         "unit_preference": profile.preferences.unit_preference,
         "training_preferences": dict(profile.preferences.training_preferences),
         "injury_status": profile.preferences.injury_status,

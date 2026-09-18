@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 
+import pytest
+
 from src.application import agent_tools as agent_tools_module
 from src.application.agent_tools import (
     AgentToolRegistry,
@@ -18,7 +20,7 @@ from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.athlete_race import AthleteProfile, RaceGoal
 from src.domain.recommendation_approval import Recommendation
-from src.domain.training_plan import TrainingPlan, Workout
+from src.domain.training_plan import DomainValidationError, TrainingPlan, Workout
 
 
 ANCHOR = date(2027, 1, 28)
@@ -370,12 +372,18 @@ def test_create_training_plan_tool_stores_active_plan_immediately() -> None:
             "race_id": "race-1",
             "starts_on": "2027-01-01",
             "ends_on": "2027-01-28",
+            "metadata": {
+                "phase_segments": [
+                    {"phase": "base", "starts_on": "2027-01-01", "ends_on": "2027-01-28"}
+                ]
+            },
             "workouts": [
                 {
                     "scheduled_for": "2027-01-03",
                     "workout_type": "easy_run",
                     "purpose": "Aerobic base",
                     "planned_duration_minutes": 40,
+                    "phase": "base",
                 }
             ],
         },
@@ -384,6 +392,76 @@ def test_create_training_plan_tool_stores_active_plan_immediately() -> None:
     assert payload["training_plan"]["id"] == "plan-1"
     assert payload["training_plan"]["status"] == "active"
     assert plan_store.active_plans[0].status == "active"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error_message"),
+    [
+        (
+            {
+                "name": "Missing Phase Segments",
+                "starts_on": "2027-01-01",
+                "ends_on": "2027-01-28",
+                "workouts": [],
+            },
+            "phase segments are required",
+        ),
+        (
+            {
+                "name": "Mismatched Workout Phase",
+                "starts_on": "2027-01-01",
+                "ends_on": "2027-01-28",
+                "metadata": {
+                    "phase_segments": [
+                        {"phase": "base", "starts_on": "2027-01-01", "ends_on": "2027-01-14"},
+                        {"phase": "build", "starts_on": "2027-01-15", "ends_on": "2027-01-28"},
+                    ]
+                },
+                "workouts": [
+                    {
+                        "scheduled_for": "2027-01-20",
+                        "workout_type": "easy_run",
+                        "purpose": "Aerobic base",
+                        "planned_duration_minutes": 40,
+                        "phase": "base",
+                    }
+                ],
+            },
+            "workout phase does not match phase segment",
+        ),
+        (
+            {
+                "name": "Missing Workout Phase",
+                "starts_on": "2027-01-01",
+                "ends_on": "2027-01-28",
+                "metadata": {
+                    "phase_segments": [
+                        {"phase": "base", "starts_on": "2027-01-01", "ends_on": "2027-01-28"}
+                    ]
+                },
+                "workouts": [
+                    {
+                        "scheduled_for": "2027-01-03",
+                        "workout_type": "easy_run",
+                        "purpose": "Aerobic base",
+                        "planned_duration_minutes": 40,
+                    }
+                ],
+            },
+            "workout phase is required",
+        ),
+    ],
+)
+def test_create_training_plan_tool_does_not_persist_invalid_generated_active_plans(
+    arguments: dict, error_message: str
+) -> None:
+    plan_store = FakeTrainingPlanStore(None)
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=plan_store)
+
+    with pytest.raises(DomainValidationError, match=error_message):
+        tool.run(user_id="user-1", arguments=arguments)
+
+    assert plan_store.active_plans == []
 
 
 def test_create_training_plan_tool_enriches_workout_steps_from_trusted_pace_profile() -> None:
@@ -398,6 +476,11 @@ def test_create_training_plan_tool_enriches_workout_steps_from_trusted_pace_prof
             "race_id": "race-1",
             "starts_on": "2027-01-01",
             "ends_on": "2027-01-28",
+            "metadata": {
+                "phase_segments": [
+                    {"phase": "build", "starts_on": "2027-01-01", "ends_on": "2027-01-28"}
+                ]
+            },
             "trusted_context": {"pace_profile": pace_profile.to_payload()},
             "workouts": [
                 {
@@ -405,6 +488,7 @@ def test_create_training_plan_tool_enriches_workout_steps_from_trusted_pace_prof
                     "workout_type": "interval",
                     "purpose": "Improve 5K-specific aerobic power",
                     "planned_duration_minutes": 55,
+                    "phase": "build",
                     "steps": [
                         {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
                         {
@@ -446,7 +530,12 @@ def test_create_training_plan_tool_preserves_trusted_continuity_metadata() -> No
             "race_id": "race-1",
             "starts_on": "2027-02-01",
             "ends_on": "2027-03-01",
-            "metadata": {"weekly_rationales": [{"week_index": 1, "phase": "build"}]},
+            "metadata": {
+                "phase_segments": [
+                    {"phase": "build", "starts_on": "2027-02-01", "ends_on": "2027-03-01"}
+                ],
+                "weekly_rationales": [{"week_index": 1, "phase": "build"}],
+            },
             "trusted_context": {
                 "plan_series_id": "series-1",
                 "previous_plan_id": "plan-previous",

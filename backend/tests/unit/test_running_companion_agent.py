@@ -629,6 +629,14 @@ def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> Non
     assert result.status == "completed"
     assert len(plan_tool.calls) == 3
     assert plan_tool.calls[-1]["arguments"]["name"] == "Fallback Four Week Plan"
+    assert plan_tool.calls[-1]["arguments"]["metadata"]["phase_segments"] == [
+        {
+            "phase": "build",
+            "starts_on": "2027-01-01",
+            "ends_on": "2027-01-28",
+        }
+    ]
+    assert {workout["phase"] for workout in plan_tool.calls[-1]["arguments"]["workouts"]} == {"build"}
 
 
 def test_training_plan_generation_fails_when_model_never_creates_required_plan() -> None:

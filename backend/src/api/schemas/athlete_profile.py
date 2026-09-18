@@ -14,6 +14,7 @@ class AthleteProfileRequest(BaseModel):
     preferred_training_days: list[str]
     preferred_long_run_day: str
     max_runs_per_week: int = Field(ge=1, le=7)
+    max_hard_sessions_per_week: int = Field(default=2, ge=0, le=2)
     unit_preference: Literal["metric", "imperial"] = "metric"
     training_preferences: dict = Field(default_factory=dict)
     injury_status: Literal["none", "current", "recent", "recurring"] = "none"

@@ -744,6 +744,13 @@ def _fallback_training_plan_arguments(context: dict) -> dict:
             "version": context.get("version", 1),
             "generation_mode": "fallback",
             "continuity_summary": "Fallback plan created after generated plan validation failed.",
+            "phase_segments": [
+                {
+                    "phase": "build",
+                    "starts_on": starts_on.isoformat(),
+                    "ends_on": ends_on.isoformat(),
+                }
+            ],
         },
         "workouts": workouts,
     }

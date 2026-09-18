@@ -98,6 +98,35 @@ def test_athlete_preferences_allow_run_frequency_below_preferred_days() -> None:
     assert preferences.max_runs_per_week == 2
 
 
+def test_athlete_preferences_validate_max_hard_sessions_per_week() -> None:
+    default_preferences = AthletePreferences(
+        preferred_training_days=("tuesday",),
+        preferred_long_run_day="tuesday",
+        max_runs_per_week=1,
+    )
+
+    assert default_preferences.max_hard_sessions_per_week == 2
+
+    for max_hard_sessions_per_week in (0, 1, 2):
+        preferences = AthletePreferences(
+            preferred_training_days=("tuesday",),
+            preferred_long_run_day="tuesday",
+            max_runs_per_week=1,
+            max_hard_sessions_per_week=max_hard_sessions_per_week,
+        )
+
+        assert preferences.max_hard_sessions_per_week == max_hard_sessions_per_week
+
+    for max_hard_sessions_per_week in (3, -1):
+        with pytest.raises(DomainValidationError, match="maximum hard sessions per week must be between 0 and 2"):
+            AthletePreferences(
+                preferred_training_days=("tuesday",),
+                preferred_long_run_day="tuesday",
+                max_runs_per_week=1,
+                max_hard_sessions_per_week=max_hard_sessions_per_week,
+            )
+
+
 def test_athlete_preferences_reject_duplicate_days_and_long_run_outside_selected_days() -> None:
     with pytest.raises(DomainValidationError, match="unique"):
         AthletePreferences(

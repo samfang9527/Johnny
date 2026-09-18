@@ -267,6 +267,7 @@ type AthleteSettingsForm = {
   preferredTrainingDays: string[]
   preferredLongRunDay: string
   maxRunsPerWeek: string
+  maxHardSessionsPerWeek: string
   unitPreference: 'metric' | 'imperial'
   injuryStatus: 'none' | 'current' | 'recent' | 'recurring'
   injuryAreas: string[]
@@ -1130,6 +1131,7 @@ function applyAthleteProfilePayload(profile: AthleteProfileResponse) {
     preferredTrainingDays: Array.isArray(profile.preferred_training_days) ? profile.preferred_training_days.map(String) : ['tuesday', 'thursday', 'sunday'],
     preferredLongRunDay: typeof profile.preferred_long_run_day === 'string' ? profile.preferred_long_run_day : 'sunday',
     maxRunsPerWeek: String(numberValue(profile.max_runs_per_week) ?? 3),
+    maxHardSessionsPerWeek: String(numberValue(profile.max_hard_sessions_per_week) ?? 2),
     unitPreference,
     injuryStatus: isInjuryStatus(profile.injury_status) ? profile.injury_status : 'none',
     injuryAreas: Array.isArray(profile.injury_areas) ? profile.injury_areas.map(String) : [],
@@ -1146,6 +1148,7 @@ function defaultAthleteSettingsForm(): AthleteSettingsForm {
     preferredTrainingDays: ['tuesday', 'thursday', 'sunday'],
     preferredLongRunDay: 'sunday',
     maxRunsPerWeek: '3',
+    maxHardSessionsPerWeek: '2',
     unitPreference: 'metric',
     injuryStatus: 'none',
     injuryAreas: [],
@@ -1191,6 +1194,8 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   const form = athleteSettings.value
   const mileageKm = weeklyMileageKilometers()
   const maxRunsPerWeek = Number(form.maxRunsPerWeek)
+  const maxHardSessionsPerWeekRaw = String(form.maxHardSessionsPerWeek ?? '').trim()
+  const maxHardSessionsPerWeek = Number(maxHardSessionsPerWeekRaw)
   const normalizedDays = form.preferredTrainingDays.map((day) => day.trim().toLowerCase())
   const uniqueDays = new Set(normalizedDays)
   if (!form.timezone.trim() || !isValidTimezone(form.timezone.trim())) {
@@ -1203,6 +1208,10 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   }
   if (!Number.isInteger(maxRunsPerWeek) || maxRunsPerWeek < 1 || maxRunsPerWeek > 7) {
     setAthleteSettingsError('maxRunsPerWeek', '每週最多跑步次數必須介於 1 到 7')
+    return null
+  }
+  if (!maxHardSessionsPerWeekRaw || !Number.isInteger(maxHardSessionsPerWeek) || maxHardSessionsPerWeek < 0 || maxHardSessionsPerWeek > 2) {
+    setAthleteSettingsError('maxHardSessionsPerWeek', '質量課表必須介於 0 到 2')
     return null
   }
   if (uniqueDays.size !== normalizedDays.length) {
@@ -1224,6 +1233,7 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
     preferred_training_days: normalizedDays,
     preferred_long_run_day: form.preferredLongRunDay,
     max_runs_per_week: maxRunsPerWeek,
+    max_hard_sessions_per_week: maxHardSessionsPerWeek,
     unit_preference: form.unitPreference,
     injury_status: form.injuryStatus,
     injury_areas: form.injuryAreas.map((area) => area.trim().toLowerCase()),
@@ -2353,6 +2363,23 @@ function shouldRequireAuth(): boolean {
                 aria-describedby="athlete-max-runs-error athlete-settings-status"
               />
               <span v-if="athleteSettingsFieldErrors.maxRunsPerWeek" id="athlete-max-runs-error" class="field-error">{{ athleteSettingsFieldErrors.maxRunsPerWeek }}</span>
+            </label>
+
+            <label>
+              質量課表
+              <input
+                v-model="athleteSettings.maxHardSessionsPerWeek"
+                name="maxHardSessionsPerWeek"
+                type="number"
+                min="0"
+                max="2"
+                step="1"
+                inputmode="numeric"
+                :aria-invalid="athleteSettingsFieldErrors.maxHardSessionsPerWeek ? 'true' : 'false'"
+                aria-describedby="athlete-max-hard-sessions-error athlete-settings-status"
+              />
+              <span>包含間歇、節奏、坡跑與長跑。Johnny 會依恢復與傷痛狀態下修。</span>
+              <span v-if="athleteSettingsFieldErrors.maxHardSessionsPerWeek" id="athlete-max-hard-sessions-error" class="field-error">{{ athleteSettingsFieldErrors.maxHardSessionsPerWeek }}</span>
             </label>
 
             <label>

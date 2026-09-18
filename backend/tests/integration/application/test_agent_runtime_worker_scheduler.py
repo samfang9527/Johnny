@@ -119,6 +119,10 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
     assert training_run.status == "completed"
     assert generated_plan is not None
     assert generated_plan.status == "active"
+    assert generated_plan.metadata_json["phase_segments"] == [
+        {"phase": "build", "starts_on": "2027-01-01", "ends_on": "2027-01-28"}
+    ]
+    assert {workout.details["phase"] for workout in generated_plan.workouts} == {"build"}
     assert recommendation_count == 1
 
 

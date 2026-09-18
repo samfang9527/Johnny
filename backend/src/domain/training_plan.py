@@ -40,12 +40,15 @@ SUPPORTED_WORKOUT_TYPES = frozenset(
         "long_run",
         "tempo",
         "interval",
+        "hill",
         "recovery",
         "rest",
         "strength",
         "cross_training",
     }
 )
+SUPPORTED_PLAN_PHASES = frozenset({"base", "build", "peak", "taper", "race", "maintenance"})
+HARD_SESSION_WORKOUT_TYPES = frozenset({"interval", "tempo", "hill", "long_run"})
 VALID_PLAN_STATUSES = frozenset({"active", "completed", "archived", "draft", "superseded"})
 VALID_WORKOUT_STATUSES = frozenset({"planned", "adjusted", "completed", "skipped"})
 WORKOUT_STATUS_TRANSITIONS = {
@@ -290,6 +293,8 @@ class Workout:
             object.__setattr__(self, "planned_distance_meters", planned_distance_meters)
         if self.workout_type not in SUPPORTED_WORKOUT_TYPES:
             raise DomainValidationError("workout type is not supported")
+        if self.phase is not None and self.phase not in SUPPORTED_PLAN_PHASES:
+            raise DomainValidationError("workout phase is not supported")
         if not self.purpose:
             raise DomainValidationError("workout purpose is required")
         if self.status not in VALID_WORKOUT_STATUSES:
@@ -429,6 +434,66 @@ class TrainingPlan:
             workouts=workouts,
             metadata=metadata or {},
         )
+
+
+def is_hard_session(workout: Workout) -> bool:
+    return workout.workout_type in HARD_SESSION_WORKOUT_TYPES
+
+
+def validate_phase_segments(plan: TrainingPlan) -> None:
+    raw_segments = plan.metadata.get("phase_segments")
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise DomainValidationError("phase segments are required")
+
+    segments = tuple(_phase_segment_from_payload(segment) for segment in raw_segments)
+    ordered_segments = tuple(sorted(segments, key=lambda segment: segment[1]))
+    expected_start = plan.starts_on
+    for phase, starts_on, ends_on in ordered_segments:
+        if starts_on < expected_start:
+            raise DomainValidationError("phase segments overlap")
+        if starts_on != expected_start:
+            raise DomainValidationError("phase segments do not fully cover plan date range")
+        expected_start = date.fromordinal(ends_on.toordinal() + 1)
+    if expected_start != date.fromordinal(plan.ends_on.toordinal() + 1):
+        raise DomainValidationError("phase segments do not fully cover plan date range")
+
+    for workout in plan.workouts:
+        if workout.phase is None:
+            raise DomainValidationError("workout phase is required")
+        segment_phase = next(
+            (
+                phase
+                for phase, starts_on, ends_on in ordered_segments
+                if starts_on <= workout.scheduled_for <= ends_on
+            ),
+            None,
+        )
+        if segment_phase != workout.phase:
+            raise DomainValidationError("workout phase does not match phase segment")
+
+
+def _phase_segment_from_payload(payload: Any) -> tuple[str, date, date]:
+    if not isinstance(payload, dict):
+        raise DomainValidationError("phase segment is invalid")
+    phase = payload.get("phase")
+    if phase not in SUPPORTED_PLAN_PHASES:
+        raise DomainValidationError("plan phase is not supported")
+    starts_on = _phase_segment_date(payload.get("starts_on"))
+    ends_on = _phase_segment_date(payload.get("ends_on"))
+    if ends_on < starts_on:
+        raise DomainValidationError("phase segment end date cannot be before start date")
+    return phase, starts_on, ends_on
+
+
+def _phase_segment_date(value: Any) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise DomainValidationError("phase segment date is invalid") from exc
+    raise DomainValidationError("phase segment date is invalid")
 
 
 @dataclass(frozen=True)

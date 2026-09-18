@@ -5,7 +5,14 @@ from datetime import date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout, WorkoutStep, WorkoutTarget
+from src.domain.training_plan import (
+    PlanAdjustmentProposal,
+    TrainingPlan,
+    Workout,
+    WorkoutStep,
+    WorkoutTarget,
+    validate_phase_segments,
+)
 
 from .models import PlanAdjustmentModel, RaceModel, TrainingPlanModel, WorkoutModel
 
@@ -71,16 +78,22 @@ class SqlAlchemyTrainingPlanRepository:
             raise ValueError("draft plan must have draft status")
         return self.save_plan(user_id, plan)
 
-    def create_active_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+    def create_active_plan(
+        self,
+        user_id: str,
+        plan: TrainingPlan,
+        replace_all_active: bool = False,
+    ) -> TrainingPlan:
         if plan.status != "active":
             raise ValueError("active plan must have active status")
-        conflicts = self._active_conflicts_for_plan(user_id, plan)
-        saved = self.save_plan(user_id, plan)
+        validate_phase_segments(plan)
+        conflicts = self._active_conflicts_for_plan(user_id, plan, replace_all_active=replace_all_active)
+        model = self._save_plan_model(user_id, plan)
         for conflict in conflicts:
-            if conflict.id != saved.id:
+            if conflict.id != model.id:
                 conflict.status = "superseded"
         self._session.flush()
-        return _plan_from_model(self._session.get(TrainingPlanModel, saved.id))
+        return _plan_from_model(model)
 
     def activate_draft_plan(
         self,
@@ -116,6 +129,11 @@ class SqlAlchemyTrainingPlanRepository:
         return _plan_from_model(draft)
 
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+        model = self._save_plan_model(user_id, plan)
+        self._session.flush()
+        return _plan_from_model(model)
+
+    def _save_plan_model(self, user_id: str, plan: TrainingPlan) -> TrainingPlanModel:
         _ensure_matching_user_id(user_id, plan.user_id)
         model = self._get_plan_model(user_id, plan)
         model.user_id = user_id
@@ -126,8 +144,7 @@ class SqlAlchemyTrainingPlanRepository:
         model.ends_on = plan.ends_on
         model.metadata_json = dict(plan.metadata)
         model.workouts = [_workout_model_from_domain(workout) for workout in plan.workouts]
-        self._session.flush()
-        return _plan_from_model(model)
+        return model
 
     def get_plan_for_user(self, user_id: str, plan_id: str | None) -> TrainingPlan | None:
         if plan_id is None:
@@ -261,13 +278,21 @@ class SqlAlchemyTrainingPlanRepository:
             )
         return list(self._session.scalars(statement))
 
-    def _active_conflicts_for_plan(self, user_id: str, plan: TrainingPlan) -> list[TrainingPlanModel]:
+    def _active_conflicts_for_plan(
+        self,
+        user_id: str,
+        plan: TrainingPlan,
+        *,
+        replace_all_active: bool = False,
+    ) -> list[TrainingPlanModel]:
         statement = select(TrainingPlanModel).where(
             TrainingPlanModel.user_id == user_id,
             TrainingPlanModel.status == "active",
         )
         if plan.id is not None:
             statement = statement.where(TrainingPlanModel.id != plan.id)
+        if replace_all_active:
+            return list(self._session.scalars(statement))
         if plan.race_id is None:
             return []
         statement = statement.where(

@@ -14,6 +14,7 @@ export interface AthleteProfileResponse {
   preferred_training_days?: string[] | null
   preferred_long_run_day?: string | null
   max_runs_per_week?: number | null
+  max_hard_sessions_per_week?: number | null
   unit_preference?: 'metric' | 'imperial' | null
   training_preferences?: Record<string, unknown>
   injury_status?: 'none' | 'current' | 'recent' | 'recurring' | null
@@ -28,6 +29,7 @@ export interface AthleteProfileSavePayload {
   preferred_training_days: string[]
   preferred_long_run_day: string
   max_runs_per_week: number
+  max_hard_sessions_per_week: number
   unit_preference: 'metric' | 'imperial'
   injury_status: 'none' | 'current' | 'recent' | 'recurring'
   injury_areas: string[]

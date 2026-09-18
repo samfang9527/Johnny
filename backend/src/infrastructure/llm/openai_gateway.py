@@ -285,6 +285,7 @@ def _workout_payload_schema() -> dict[str, Any]:
                     "long_run",
                     "tempo",
                     "interval",
+                    "hill",
                     "recovery",
                     "rest",
                     "strength",
@@ -299,7 +300,10 @@ def _workout_payload_schema() -> dict[str, Any]:
                 "items": {"type": "integer"},
             },
             "heart_rate_zone": {"type": ["string", "null"]},
-            "phase": {"type": ["string", "null"]},
+            "phase": {
+                "type": "string",
+                "enum": ["base", "build", "peak", "taper", "race", "maintenance"],
+            },
             "coach_note": {"type": ["string", "null"]},
             "steps": {"type": "array", "items": _workout_step_schema(depth=0)},
             "status": {"type": "string", "enum": ["planned", "adjusted", "completed", "skipped"]},
@@ -329,6 +333,7 @@ def _plan_metadata_schema() -> dict[str, Any]:
             "version": {"type": ["integer", "null"]},
             "generation_mode": {"type": ["string", "null"]},
             "continuity_summary": {"type": ["string", "null"]},
+            "phase_segments": {"type": "array", "items": _phase_segment_schema()},
             "weekly_rationales": {"type": "array", "items": _weekly_rationale_schema()},
         },
         required=[
@@ -337,8 +342,21 @@ def _plan_metadata_schema() -> dict[str, Any]:
             "version",
             "generation_mode",
             "continuity_summary",
+            "phase_segments",
             "weekly_rationales",
         ],
+    )
+
+
+def _phase_segment_schema() -> dict[str, Any]:
+    return _object_schema(
+        properties={
+            "phase": {"type": "string", "enum": ["base", "build", "peak", "taper", "race", "maintenance"]},
+            "starts_on": {"type": "string"},
+            "ends_on": {"type": "string"},
+            "focus": {"type": ["string", "null"]},
+        },
+        required=["phase", "starts_on", "ends_on", "focus"],
     )
 
 

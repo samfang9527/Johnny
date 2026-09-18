@@ -626,6 +626,268 @@ def test_garmin_connect_endpoint_returns_reauth_state_when_initial_sync_is_crede
     assert "garmin-password" not in response.text
 
 
+def test_training_plan_regeneration_options_returns_quota_strategy_and_run_slots() -> None:
+    from datetime import date, timedelta
+
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "regeneration-options-user"}
+    race_date = date.today() + timedelta(days=80)
+    race = client.post(
+        "/api/v1/races",
+        headers=headers,
+        json={
+            "name": "Priority Half",
+            "race_date": race_date.isoformat(),
+            "distance_meters": 21097,
+            "priority": "primary",
+        },
+    ).json()["data"]
+
+    response = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["quota"] == {
+        "quota_day": date.today().isoformat(),
+        "limit": 1,
+        "used": 0,
+        "remaining": 1,
+        "available": True,
+        "next_available_at": None,
+    }
+    assert data["default_strategy"]["race_id"] == race["id"]
+    assert data["default_strategy"]["plan_type"] == "race"
+    assert data["default_strategy"]["plan_horizon_weeks"] == 12
+    assert data["in_flight_run"] is None
+    assert data["run"] is None
+
+
+def test_training_plan_regeneration_options_returns_exhausted_quota_payload() -> None:
+    from datetime import date, datetime, timezone
+
+    from src.domain.agent_runtime import AgentRun
+    from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
+
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "quota-exhausted-user"}
+    assert client.get("/api/v1/training-plans/regeneration-options", headers=headers).status_code == 200
+    with session_factory() as session:
+        SqlAlchemyAgentRunRepository(session).create_run(
+            AgentRun(
+                user_id="quota-exhausted-user",
+                trigger_type="manual",
+                workflow_name="training_plan_generation",
+                prompt_version="v1",
+                status="completed",
+                finished_at=datetime.now(timezone.utc),
+                metadata={
+                    "manual_regeneration": True,
+                    "quota_day": date.today().isoformat(),
+                    "created_training_plan_id": "created-plan",
+                },
+            )
+        )
+        session.commit()
+
+    response = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+    blocked = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "blocked-by-quota", "plan_type": "maintenance"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["quota"]["available"] is False
+    assert response.json()["data"]["quota"]["next_available_at"] is not None
+    assert blocked.status_code == 200
+    assert blocked.json()["data"]["run"] is None
+
+
+def test_training_plan_regeneration_options_selects_maintenance_without_future_races() -> None:
+    from datetime import date, timedelta
+
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+
+    response = client.get(
+        "/api/v1/training-plans/regeneration-options",
+        headers={"X-Johnny-User-Id": "maintenance-options-user"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["default_strategy"] == {
+        "race_id": None,
+        "plan_type": "maintenance",
+        "reason": "no_future_race",
+        "starts_on": (date.today() + timedelta(days=1)).isoformat(),
+        "plan_horizon_weeks": 4,
+    }
+
+
+def test_training_plan_regeneration_start_reuses_in_flight_run() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "in-flight-user"}
+
+    first = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "first-confirmation", "plan_type": "maintenance"},
+    )
+    second = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "different-confirmation", "plan_type": "maintenance"},
+    )
+    options = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["data"]["run"] == first.json()["data"]["run"]
+    assert second.json()["data"]["in_flight_run"] == first.json()["data"]["run"]
+    assert options.json()["data"]["in_flight_run"] == first.json()["data"]["run"]
+
+
+def test_training_plan_regeneration_start_locks_user_before_run_admission(monkeypatch) -> None:
+    from sqlalchemy.dialects import postgresql
+
+    from src.api.dependencies import CurrentUser
+    from src.api.routes import training_plan_regeneration as route
+    from src.api.schemas.training_plan_regeneration import TrainingPlanRegenerationRequest
+
+    class LockCapturingSession:
+        locked = False
+
+        def scalar(self, statement):
+            sql = str(statement.compile(dialect=postgresql.dialect()))
+            self.locked = "FOR UPDATE" in sql
+            return object()
+
+    session = LockCapturingSession()
+
+    class AdmissionService:
+        def start(self, user_id, payload, today):
+            assert session.locked is True
+            return object()
+
+    monkeypatch.setattr(route, "ensure_current_user", lambda session, current_user: object())
+    monkeypatch.setattr(route, "_service", lambda session: AdmissionService())
+    monkeypatch.setattr(route, "_response", lambda result: {})
+
+    response = route.start_regeneration(
+        TrainingPlanRegenerationRequest(client_request_id="lock-check", plan_type="maintenance"),
+        CurrentUser(id="lock-user"),
+        session,
+    )
+
+    assert session.locked is True
+    assert response.data == {}
+
+
+def test_training_plan_regeneration_post_validates_and_returns_queued_product_run() -> None:
+    from datetime import date, timedelta
+
+    from sqlalchemy import select
+
+    from src.infrastructure.database.models import AgentRunModel, AgentTaskModel
+
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "regeneration-post-user"}
+    race_date = date.today() + timedelta(days=30)
+    race_id = client.post(
+        "/api/v1/races",
+        headers=headers,
+        json={"name": "Ten K", "race_date": race_date.isoformat(), "distance_meters": 10000},
+    ).json()["data"]["id"]
+
+    empty_id = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "", "race_id": race_id},
+    )
+    invalid_type = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "bad-type", "plan_type": "base"},
+    )
+    queued = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "race-confirmation", "race_id": race_id},
+    )
+
+    assert empty_id.status_code == 422
+    assert invalid_type.status_code == 422
+    assert queued.status_code == 200
+    data = queued.json()["data"]
+    assert data["run"]["status"] == "queued"
+    assert data["run"]["workflow_name"] == "training_plan_generation"
+    assert data["run"]["poll_url"] == f"/api/v1/agent-runs/{data['run']['run_id']}"
+    with session_factory() as session:
+        run = session.scalar(select(AgentRunModel).where(AgentRunModel.id == data["run"]["run_id"]))
+        task = session.scalar(select(AgentTaskModel).where(AgentTaskModel.payload["run_id"].as_string() == run.id))
+        assert run.metadata_json == {
+            "async": True,
+            "race_id": race_id,
+            "plan_type": "race",
+            "starts_on": (date.today() + timedelta(days=1)).isoformat(),
+            "plan_horizon_weeks": 5,
+            "client_request_id": "race-confirmation",
+            "manual_regeneration": True,
+            "quota_day": date.today().isoformat(),
+        }
+        assert task.payload["input"] == {
+            "race_id": race_id,
+            "plan_type": "race",
+            "starts_on": (date.today() + timedelta(days=1)).isoformat(),
+            "plan_horizon_weeks": 5,
+            "client_request_id": "race-confirmation",
+            "manual_regeneration": True,
+            "quota_day": date.today().isoformat(),
+        }
+
+
+def _create_regeneration_api_client():
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from src.api.dependencies import get_session
+    from src.infrastructure.database.models import Base
+    from src.main import create_app
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, connection_record) -> None:  # noqa: ANN001
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_session():
+        session = session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_session
+    return TestClient(app), session_factory
+
+
 def test_garmin_connect_endpoint_reports_partial_failure_after_zero_item_successes() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
     from src.api.routes.integrations import get_garmin_credential_cipher, get_garmin_login_adapter, get_garmin_resource_adapter

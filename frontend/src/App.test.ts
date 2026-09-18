@@ -195,6 +195,7 @@ describe('Johnny product shell', () => {
                 preferred_training_days: ['tuesday', 'thursday', 'sunday'],
                 preferred_long_run_day: 'sunday',
                 max_runs_per_week: 3,
+                max_hard_sessions_per_week: 2,
                 unit_preference: 'metric',
                 training_preferences: { surface: 'trail' },
                 injury_status: 'none',
@@ -212,6 +213,7 @@ describe('Johnny product shell', () => {
           preferred_training_days: ['tuesday', 'thursday', 'sunday'],
           preferred_long_run_day: 'sunday',
           max_runs_per_week: 3,
+          max_hard_sessions_per_week: 0,
           unit_preference: 'imperial',
           injury_status: 'current',
           injury_areas: ['other'],
@@ -228,6 +230,7 @@ describe('Johnny product shell', () => {
                 preferred_training_days: ['tuesday', 'thursday', 'sunday'],
                 preferred_long_run_day: 'sunday',
                 max_runs_per_week: 3,
+                max_hard_sessions_per_week: 0,
                 unit_preference: 'imperial',
                 training_preferences: { surface: 'trail' },
                 injury_status: 'current',
@@ -247,12 +250,21 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('運動員設定')
     expect(wrapper.get('select[name="experienceLevel"]').text()).toContain('未設定')
     expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('32.2')
+    expect((wrapper.get('input[name="maxHardSessionsPerWeek"]').element as HTMLInputElement).value).toBe('2')
+
+    await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('')
+    await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
+
+    expect(wrapper.get('input[name="maxHardSessionsPerWeek"]').attributes('aria-invalid')).toBe('true')
+    expect(wrapper.get('#athlete-max-hard-sessions-error').text()).toBe('質量課表必須介於 0 到 2')
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(0)
 
     await wrapper.get('select[name="unitPreference"]').setValue('imperial')
     expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('20.0')
 
     await wrapper.get('select[name="experienceLevel"]').setValue('intermediate')
     await wrapper.get('input[name="currentWeeklyMileage"]').setValue('25.0')
+    await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('0')
     await wrapper.get('select[name="injuryStatus"]').setValue('current')
     await wrapper.get('input[name="injuryArea-other"]').setValue(true)
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')

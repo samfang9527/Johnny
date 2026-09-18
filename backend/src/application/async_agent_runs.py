@@ -9,6 +9,17 @@ from src.application.interfaces.task_queue import AgentTask, AgentTaskQueue, Tas
 from src.domain.agent_runtime import AgentRun
 
 
+PRODUCT_RUN_METADATA_KEYS = (
+    "race_id",
+    "plan_type",
+    "starts_on",
+    "plan_horizon_weeks",
+    "client_request_id",
+    "manual_regeneration",
+    "quota_day",
+)
+
+
 @dataclass(frozen=True)
 class QueuedAgentRun:
     run: AgentRun
@@ -43,20 +54,23 @@ class QueueAgentRunHandler:
         force: bool = False,
     ) -> QueuedAgentRun:
         effective_key = idempotency_key if not force else f"{idempotency_key}:force:{uuid4()}"
-        existing_task = self._queue.get_by_idempotency_key(effective_key)
-        if existing_task is not None:
-            run_id = existing_task.payload.get("run_id")
-            existing_run = self._runs.get_run_for_user(user_id, str(run_id) if run_id else None)
-            if existing_run is not None and _task_can_be_reused(existing_task.status):
-                return QueuedAgentRun(
-                    run=existing_run,
-                    task=existing_task,
-                    poll_url=_poll_url(existing_run.id),
-                )
-            effective_key = f"{idempotency_key}:retry:{uuid4()}"
 
-        run = self._runs.create_run(
-            AgentRun.queue(
+        for _ in range(3):
+            existing_task = self._queue.get_by_idempotency_key(effective_key)
+            if existing_task is not None:
+                run_id = existing_task.payload.get("run_id")
+                existing_run = self._runs.get_run_for_user(user_id, str(run_id) if run_id else None)
+                if existing_run is not None and _task_can_be_reused(existing_task.status):
+                    return QueuedAgentRun(
+                        run=existing_run,
+                        task=existing_task,
+                        poll_url=_poll_url(existing_run.id),
+                    )
+                effective_key = f"{idempotency_key}:retry:{uuid4()}"
+                continue
+
+            candidate_run = AgentRun.queue(
+                id=str(uuid4()),
                 user_id=user_id,
                 trigger_type=trigger_type,
                 workflow_name=workflow_name,
@@ -65,18 +79,40 @@ class QueueAgentRunHandler:
                 model=self._model,
                 correlation_id=_run_correlation_id(effective_key),
                 input_summary=_input_summary(workflow_name, payload),
-                metadata={"async": True},
+                metadata=_run_metadata(workflow_name, payload),
             )
-        )
-        task = self._queue.enqueue(
-            TaskEnvelope(
-                task_type="agent.workflow",
-                payload={"run_id": run.id, "workflow_name": workflow_name, "input": dict(payload)},
-                correlation_id=run.id,
-                idempotency_key=effective_key,
+            task = self._queue.enqueue(
+                TaskEnvelope(
+                    task_type="agent.workflow",
+                    payload={"run_id": candidate_run.id, "workflow_name": workflow_name, "input": dict(payload)},
+                    correlation_id=candidate_run.id,
+                    idempotency_key=effective_key,
+                )
             )
-        )
-        return QueuedAgentRun(run=run, task=task, poll_url=_poll_url(run.id))
+            if task.payload.get("run_id") == candidate_run.id:
+                canonical_run = self._runs.create_run(candidate_run)
+                return QueuedAgentRun(
+                    run=canonical_run,
+                    task=task,
+                    poll_url=_poll_url(canonical_run.id),
+                )
+            if _task_can_be_reused(task.status):
+                canonical_run = self._run_for_task(user_id, task)
+                return QueuedAgentRun(
+                    run=canonical_run,
+                    task=task,
+                    poll_url=_poll_url(canonical_run.id),
+                )
+            effective_key = f"{idempotency_key}:retry:{uuid4()}"
+
+        raise RuntimeError("Could not enqueue agent run after terminal idempotency collisions")
+
+    def _run_for_task(self, user_id: str, task: AgentTask) -> AgentRun:
+        run_id = task.payload.get("run_id")
+        run = self._runs.get_run_for_user(user_id, str(run_id) if run_id else None)
+        if run is None:
+            raise ValueError(f"Agent task {task.id} does not reference a run for user {user_id}")
+        return run
 
 
 def _poll_url(run_id: str | None) -> str:
@@ -100,3 +136,10 @@ def _input_summary(workflow_name: str, payload: dict[str, Any]) -> str:
     if workflow_name == "training_plan_generation":
         return "Training plan generation"
     return workflow_name
+
+
+def _run_metadata(workflow_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"async": True}
+    if workflow_name == "training_plan_generation":
+        metadata.update({key: payload[key] for key in PRODUCT_RUN_METADATA_KEYS if key in payload})
+    return metadata
