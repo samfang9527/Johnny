@@ -71,6 +71,13 @@ class FakeRunStore:
         return run
 
 
+class CompletionPersistenceFailingRunStore(FakeRunStore):
+    def complete_run(self, run: AgentRun) -> AgentRun:
+        if run.status == "completed":
+            raise RuntimeError("completion persistence unavailable")
+        return super().complete_run(run)
+
+
 class StaticTool:
     def __init__(self, name: str, payload: dict) -> None:
         self.name = name
@@ -433,6 +440,57 @@ def test_training_plan_generation_allows_only_active_plan_tool() -> None:
     assert result.metadata == {"created_training_plan_id": "plan-1"}
 
 
+def test_training_plan_generation_does_not_record_created_plan_id_when_completion_persistence_fails() -> None:
+    run_store = CompletionPersistenceFailingRunStore()
+    plan_tool = StaticTool("createTrainingPlan", {"training_plan": {"id": "plan-1", "status": "active"}})
+    model = FakeModelGateway(
+        ModelResponse(
+            content="Created active plan.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createTrainingPlan",
+                    arguments={
+                        "name": "Generated Four Week Plan",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [],
+                    },
+                ),
+            ),
+        )
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((plan_tool,)),
+        prompt_version="running-companion-v1",
+    )
+    queued_run = AgentRun.queue(
+        id="queued-run",
+        user_id="user-1",
+        trigger_type="manual",
+        workflow_name="training_plan_generation",
+        prompt_version="running-companion-v1",
+        metadata={
+            "manual_regeneration": True,
+            "quota_day": "2027-01-28",
+            "internal": {"completion_repair": {"repaired_week_indexes": [2]}},
+        },
+    )
+
+    result = agent.run_training_plan_generation(
+        user_id="user-1",
+        starts_on=date(2027, 1, 1),
+        plan_type="maintenance",
+        existing_run=queued_run,
+    )
+
+    assert result.status == "failed"
+    assert result.error_type == "RuntimeError"
+    assert result.metadata == queued_run.metadata
+    assert "created_training_plan_id" not in result.metadata
+
+
 def test_training_plan_generation_repairs_invalid_plan_once() -> None:
     run_store = FakeRunStore()
     plan_tool = FailingOnceTrainingPlanTool()
@@ -748,12 +806,25 @@ def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> Non
         tools=AgentToolRegistry((plan_tool,)),
         prompt_version="running-companion-v1",
     )
+    queued_run = AgentRun.queue(
+        id="queued-run",
+        user_id="user-1",
+        trigger_type="manual",
+        workflow_name="training_plan_generation",
+        prompt_version="running-companion-v1",
+        metadata={
+            "manual_regeneration": True,
+            "quota_day": "2027-01-28",
+            "internal": {"completion_repair": {"repaired_week_indexes": [2]}},
+        },
+    )
 
     result = agent.run_training_plan_generation(
         user_id="user-1",
         race_id="missing-race",
         starts_on=date(2027, 1, 1),
         plan_type="race",
+        existing_run=queued_run,
     )
 
     assert result.status == "completed"
@@ -773,6 +844,10 @@ def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> Non
     assert hill["steps"][1]["steps"][0]["type"] == "hill"
     for workout in (item for item in plan_tool.calls[-1]["arguments"]["workouts"] if item["workout_type"] == "tempo"):
         assert sum(step.get("duration_seconds", 0) for step in workout["steps"]) <= workout["planned_duration_minutes"] * 60
+    assert result.metadata == {
+        **queued_run.metadata,
+        "created_training_plan_id": "fallback-plan",
+    }
 
 
 def test_training_plan_generation_fails_when_model_never_creates_required_plan() -> None:

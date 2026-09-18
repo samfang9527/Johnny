@@ -367,10 +367,11 @@ class RunningCompanionAgent:
                 ):
                     raise ValueError(required_error)
                 output_summary = _run_output_summary(response.content, safety=safety, recommendation_id=recommendation_id)
+                completed_run = run
                 if training_plan_id:
-                    run = _with_created_training_plan_id(run, training_plan_id)
+                    completed_run = _with_created_training_plan_id(run, training_plan_id)
                 return self._run_store.complete_run(
-                    run.complete(
+                    completed_run.complete(
                         output_summary=output_summary,
                         token_usage=token_usage,
                         recommendation_id=recommendation_id,
