@@ -173,7 +173,7 @@ def _workout_payload(
             ],
         }
     if workout_type == "tempo":
-        work_duration_seconds = 1_500 + week * 120
+        warmup_seconds, work_duration_seconds, cooldown_seconds = _tempo_step_durations(duration_minutes, week)
         return {
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": workout_type,
@@ -183,9 +183,9 @@ def _workout_payload(
             "phase": phase,
             "coach_note": "Keep the tempo effort smooth and sustainable.",
             "steps": [
-                {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
+                {"type": "warmup", "duration_seconds": warmup_seconds, "target": {"kind": "rpe", "rpe": 3}},
                 {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
-                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+                {"type": "cooldown", "duration_seconds": cooldown_seconds, "target": {"kind": "rpe", "rpe": 2}},
             ],
         }
     if workout_type == "hill":
@@ -225,3 +225,11 @@ def _workout_payload(
             }
         ],
     }
+
+
+def _tempo_step_durations(duration_minutes: int, week: int) -> tuple[int, int, int]:
+    total_seconds = duration_minutes * 60
+    warmup_seconds = min(600, total_seconds // 3)
+    cooldown_seconds = min(600, (total_seconds - warmup_seconds) // 2)
+    work_duration_seconds = min(1_500 + week * 120, total_seconds - warmup_seconds - cooldown_seconds)
+    return warmup_seconds, work_duration_seconds, cooldown_seconds

@@ -6,10 +6,10 @@ def test_local_gateway_generates_active_training_plan_tool_call_only() -> None:
     gateway = LocalCompanionModelGateway()
     skeleton = {
         "starts_on": "2027-02-01",
-        "ends_on": "2027-03-07",
+        "ends_on": "2027-12-31",
         "phase_segments": [
             {"phase": "build", "starts_on": "2027-02-01", "ends_on": "2027-02-28"},
-            {"phase": "race", "starts_on": "2027-03-01", "ends_on": "2027-03-07"},
+            {"phase": "race", "starts_on": "2027-03-01", "ends_on": "2027-12-31"},
         ],
         "workouts": [
             {
@@ -35,6 +35,13 @@ def test_local_gateway_generates_active_training_plan_tool_call_only() -> None:
             },
             {
                 "scheduled_for": "2027-03-04",
+                "workout_type": "tempo",
+                "phase": "race",
+                "planned_duration_minutes": 45,
+                "planned_distance_meters": None,
+            },
+            {
+                "scheduled_for": "2027-12-30",
                 "workout_type": "tempo",
                 "phase": "race",
                 "planned_duration_minutes": 45,
@@ -79,3 +86,5 @@ def test_local_gateway_generates_active_training_plan_tool_call_only() -> None:
     assert interval["steps"][1]["type"] == "repeat"
     assert interval["steps"][1]["repeat_count"] >= 4
     assert interval["steps"][1]["steps"][0]["target"]["zone"] == "interval"
+    for workout in (item for item in plan_call.arguments["workouts"] if item["workout_type"] == "tempo"):
+        assert sum(step.get("duration_seconds", 0) for step in workout["steps"]) <= workout["planned_duration_minutes"] * 60

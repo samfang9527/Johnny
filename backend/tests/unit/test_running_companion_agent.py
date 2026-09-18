@@ -681,11 +681,17 @@ def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> Non
         prompt_version="running-companion-v1",
     )
 
-    result = agent.run_training_plan_generation(user_id="user-1", starts_on=date(2027, 1, 1), plan_type="base")
+    result = agent.run_training_plan_generation(
+        user_id="user-1",
+        race_id="missing-race",
+        starts_on=date(2027, 1, 1),
+        plan_type="race",
+    )
 
     assert result.status == "completed"
     assert len(plan_tool.calls) == 3
-    assert plan_tool.calls[-1]["arguments"]["name"] == "Fallback Four Week Plan"
+    assert plan_tool.calls[-1]["arguments"]["name"] == "Fallback Generated Plan"
+    assert plan_tool.calls[-1]["arguments"]["race_id"] is None
     assert plan_tool.calls[-1]["arguments"]["metadata"]["phase_segments"] == [
         {
             "phase": "maintenance",
@@ -697,6 +703,8 @@ def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> Non
     hill = next(workout for workout in plan_tool.calls[-1]["arguments"]["workouts"] if workout["workout_type"] == "hill")
     assert hill["steps"][1]["type"] == "repeat"
     assert hill["steps"][1]["steps"][0]["type"] == "hill"
+    for workout in (item for item in plan_tool.calls[-1]["arguments"]["workouts"] if item["workout_type"] == "tempo"):
+        assert sum(step.get("duration_seconds", 0) for step in workout["steps"]) <= workout["planned_duration_minutes"] * 60
 
 
 def test_training_plan_generation_fails_when_model_never_creates_required_plan() -> None:
@@ -796,7 +804,9 @@ def test_training_plan_generation_selects_explicit_primary_future_or_base_target
         agent.run_training_plan_generation(user_id="user-1", starts_on=date(2027, 1, 1), **kwargs)
         return model.requests[0].context
 
-    assert run_case(race_id="explicit-race", plan_type="race")["selected_race_id"] == "explicit-race"
+    assert run_case(race_id="future-primary", plan_type="race")["selected_race_id"] == "future-primary"
+    assert run_case(race_id="missing-race", plan_type="race")["selected_race_id"] is None
+    assert run_case(race_id="missing-race", plan_type="race")["plan_type"] == "maintenance"
     assert run_case(plan_type="race")["selected_race_id"] == "future-primary"
     assert run_case(plan_type="base")["selected_race_id"] is None
 

@@ -510,6 +510,7 @@ class RunningCompanionAgent:
         )
         race_goals = list((athlete_context or {}).get("race_goals", ()))
         selected_race = next((goal for goal in race_goals if goal.get("id") == selected_race_id), None)
+        effective_selected_race_id = str(selected_race["id"]) if selected_race is not None else None
         activities = tuple((recent_activities or {}).get("activities", ()))
         last_active_plan = (current_plan_payload or {}).get("training_plan")
         pace_profile = build_pace_profile_from_payloads(
@@ -519,7 +520,7 @@ class RunningCompanionAgent:
         )
         continuity_context = _plan_continuity_context(
             last_active_plan if isinstance(last_active_plan, dict) else None,
-            selected_race_id=selected_race_id,
+            selected_race_id=effective_selected_race_id,
         )
         profile = (athlete_context or {}).get("profile")
         profile_payload = profile if isinstance(profile, dict) else {}
@@ -541,6 +542,7 @@ class RunningCompanionAgent:
         return {
             "athlete_context": athlete_context,
             "selected_race": selected_race,
+            "selected_race_id": effective_selected_race_id,
             "recent_activity_summary": _recent_activity_summary(activities),
             "key_activities": list(activities[:3]),
             "last_active_plan": last_active_plan if isinstance(last_active_plan, dict) else None,
@@ -805,7 +807,7 @@ def _fallback_training_plan_arguments(context: dict) -> dict:
         if isinstance(workout, dict)
     ]
     return {
-        "name": "Fallback Four Week Plan",
+        "name": "Fallback Generated Plan",
         "race_id": context.get("selected_race_id"),
         "starts_on": starts_on.isoformat(),
         "ends_on": ends_on.isoformat(),
@@ -841,6 +843,7 @@ def _fallback_workout_payload(
     planned_distance_meters: int | None,
     week: int,
 ) -> dict:
+    duration_minutes = planned_duration_minutes or 45
     if workout_type == "interval":
         repeat_count = 4 + min(week, 2)
         return {
@@ -865,18 +868,19 @@ def _fallback_workout_payload(
             ],
         }
     if workout_type == "tempo":
+        warmup_seconds, work_duration_seconds, cooldown_seconds = _tempo_step_durations(duration_minutes, week)
         return {
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": workout_type,
             "purpose": purpose,
-            "planned_duration_minutes": planned_duration_minutes,
+            "planned_duration_minutes": duration_minutes,
             "planned_distance_meters": planned_distance_meters,
             "phase": phase,
             "coach_note": "Run the tempo segment smoothly rather than forcing pace.",
             "steps": [
-                {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
-                {"type": "work", "duration_seconds": 1_500 + week * 120, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
-                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+                {"type": "warmup", "duration_seconds": warmup_seconds, "target": {"kind": "rpe", "rpe": 3}},
+                {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
+                {"type": "cooldown", "duration_seconds": cooldown_seconds, "target": {"kind": "rpe", "rpe": 2}},
             ],
         }
     if workout_type == "hill":
@@ -901,7 +905,6 @@ def _fallback_workout_payload(
                 {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
             ],
         }
-    duration_minutes = planned_duration_minutes or 45
     return {
         "scheduled_for": scheduled_for.isoformat(),
         "workout_type": workout_type,
@@ -917,6 +920,14 @@ def _fallback_workout_payload(
             }
         ],
     }
+
+
+def _tempo_step_durations(duration_minutes: int, week: int) -> tuple[int, int, int]:
+    total_seconds = duration_minutes * 60
+    warmup_seconds = min(600, total_seconds // 3)
+    cooldown_seconds = min(600, (total_seconds - warmup_seconds) // 2)
+    work_duration_seconds = min(1_500 + week * 120, total_seconds - warmup_seconds - cooldown_seconds)
+    return warmup_seconds, work_duration_seconds, cooldown_seconds
 
 
 def _date_from_context(value) -> date | None:
