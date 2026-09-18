@@ -4,6 +4,44 @@ from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
 
 def test_local_gateway_generates_active_training_plan_tool_call_only() -> None:
     gateway = LocalCompanionModelGateway()
+    skeleton = {
+        "starts_on": "2027-02-01",
+        "ends_on": "2027-03-07",
+        "phase_segments": [
+            {"phase": "build", "starts_on": "2027-02-01", "ends_on": "2027-02-28"},
+            {"phase": "race", "starts_on": "2027-03-01", "ends_on": "2027-03-07"},
+        ],
+        "workouts": [
+            {
+                "scheduled_for": "2027-02-02",
+                "workout_type": "easy_run",
+                "phase": "build",
+                "planned_duration_minutes": 45,
+                "planned_distance_meters": None,
+            },
+            {
+                "scheduled_for": "2027-02-04",
+                "workout_type": "interval",
+                "phase": "build",
+                "planned_duration_minutes": 45,
+                "planned_distance_meters": None,
+            },
+            {
+                "scheduled_for": "2027-02-28",
+                "workout_type": "long_run",
+                "phase": "build",
+                "planned_duration_minutes": 75,
+                "planned_distance_meters": None,
+            },
+            {
+                "scheduled_for": "2027-03-04",
+                "workout_type": "tempo",
+                "phase": "race",
+                "planned_duration_minutes": 45,
+                "planned_distance_meters": None,
+            },
+        ],
+    }
 
     response = gateway.complete(
         ModelRequest(
@@ -12,7 +50,7 @@ def test_local_gateway_generates_active_training_plan_tool_call_only() -> None:
             prompt_version="running-companion-v1",
             messages=({"role": "user", "content": "Generate a plan."},),
             tools=("createTrainingPlan",),
-            context={"selected_race_id": "race-1", "starts_on": "2027-01-01"},
+            context={"selected_race_id": "race-1", "plan_skeleton": skeleton},
         )
     )
 
@@ -21,17 +59,22 @@ def test_local_gateway_generates_active_training_plan_tool_call_only() -> None:
     assert len(response.tool_calls) == 1
     assert plan_call.tool_name == "createTrainingPlan"
     assert plan_call.arguments["race_id"] == "race-1"
-    assert plan_call.arguments["starts_on"] == "2027-01-01"
-    assert plan_call.arguments["ends_on"] == "2027-01-28"
-    assert plan_call.arguments["metadata"]["phase_segments"] == [
+    assert plan_call.arguments["starts_on"] == skeleton["starts_on"]
+    assert plan_call.arguments["ends_on"] == skeleton["ends_on"]
+    assert plan_call.arguments["metadata"]["phase_segments"] == skeleton["phase_segments"]
+    assert [
         {
-            "phase": "build",
-            "starts_on": "2027-01-01",
-            "ends_on": "2027-01-28",
+            key: workout.get(key)
+            for key in (
+                "scheduled_for",
+                "workout_type",
+                "phase",
+                "planned_duration_minutes",
+                "planned_distance_meters",
+            )
         }
-    ]
-    assert 12 <= len(plan_call.arguments["workouts"]) <= 20
-    assert {workout["phase"] for workout in plan_call.arguments["workouts"]} == {"build"}
+        for workout in plan_call.arguments["workouts"]
+    ] == skeleton["workouts"]
     interval = next(workout for workout in plan_call.arguments["workouts"] if workout["workout_type"] == "interval")
     assert interval["steps"][1]["type"] == "repeat"
     assert interval["steps"][1]["repeat_count"] >= 4

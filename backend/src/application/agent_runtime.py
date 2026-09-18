@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Iterable
 
+from src.application.training_plan_generation import build_plan_skeleton, projection_window
 from src.application.training_targets import build_pace_profile_from_payloads
 from src.domain.agent_runtime import (
     AgentContextSource,
@@ -141,10 +142,11 @@ class RunningCompanionAgent:
         goal_notes: str | None = None,
         existing_run: AgentRun | None = None,
     ) -> AgentRun:
+        canonical_plan_type = _canonical_plan_type(plan_type)
         selected_race_id = self._select_training_plan_race(
             user_id=user_id,
             explicit_race_id=race_id,
-            plan_type=plan_type,
+            plan_type=canonical_plan_type,
             starts_on=starts_on,
         )
         context = {
@@ -153,14 +155,17 @@ class RunningCompanionAgent:
             "starts_on": starts_on.isoformat() if starts_on is not None else None,
             "ends_on": ends_on.isoformat() if ends_on is not None else None,
             "plan_horizon_weeks": plan_horizon_weeks,
-            "plan_type": plan_type,
+            "plan_type": canonical_plan_type,
             "goal_notes": goal_notes,
         }
+        if existing_run is not None and "manual_regeneration" in existing_run.metadata:
+            context["manual_regeneration"] = existing_run.metadata["manual_regeneration"]
         context.update(
             self._training_plan_generation_preload_context(
                 user_id=user_id,
                 selected_race_id=selected_race_id,
                 starts_on=starts_on,
+                plan_type=canonical_plan_type,
             )
         )
         run = self._start_run(
@@ -179,7 +184,9 @@ class RunningCompanionAgent:
                     "role": "system",
                     "content": (
                         "Generate a validated active training plan only. Store it with createTrainingPlan. "
-                        "Do not create recommendations in this workflow."
+                        "Do not create recommendations in this workflow. plan_skeleton owns the plan dates, "
+                        "weekly structure, phase segments, and workouts. You must not move workout dates or "
+                        "change the weekly structure; call createTrainingPlan using the plan_skeleton dates."
                     ),
                 },
                 {"role": "user", "content": "Create an active running training plan."},
@@ -204,7 +211,7 @@ class RunningCompanionAgent:
         plan_type: str,
         starts_on: date | None,
     ) -> str | None:
-        if plan_type == "base":
+        if plan_type == "maintenance":
             return None
         if explicit_race_id:
             return explicit_race_id
@@ -475,6 +482,7 @@ class RunningCompanionAgent:
         user_id: str,
         selected_race_id: str | None,
         starts_on: date | None,
+        plan_type: str,
     ) -> dict:
         athlete_context = _safe_tool_payload(
             self._tools,
@@ -513,6 +521,23 @@ class RunningCompanionAgent:
             last_active_plan if isinstance(last_active_plan, dict) else None,
             selected_race_id=selected_race_id,
         )
+        profile = (athlete_context or {}).get("profile")
+        profile_payload = profile if isinstance(profile, dict) else {}
+        canonical_plan_type = "race" if plan_type == "race" and selected_race is not None else "maintenance"
+        race_date = _goal_date(selected_race) if selected_race is not None else None
+        skeleton_starts_on, skeleton_ends_on = projection_window(anchor, race_date, canonical_plan_type)
+        skeleton = build_plan_skeleton(
+            starts_on=skeleton_starts_on,
+            ends_on=skeleton_ends_on,
+            plan_type=canonical_plan_type,
+            race_date=race_date,
+            preferred_training_days=tuple(profile_payload.get("preferred_training_days") or ()),
+            preferred_long_run_day=str(profile_payload.get("preferred_long_run_day") or "sunday"),
+            max_runs_per_week=_profile_int(profile_payload, "max_runs_per_week", default=3),
+            max_hard_sessions_per_week=_profile_int(profile_payload, "max_hard_sessions_per_week", default=2),
+            injury_status=str(profile_payload.get("injury_status") or "none"),
+        )
+        plan_skeleton = _plan_skeleton_payload(skeleton)
         return {
             "athlete_context": athlete_context,
             "selected_race": selected_race,
@@ -520,6 +545,12 @@ class RunningCompanionAgent:
             "key_activities": list(activities[:3]),
             "last_active_plan": last_active_plan if isinstance(last_active_plan, dict) else None,
             "pace_profile": pace_profile.to_payload(),
+            "starts_on": plan_skeleton["starts_on"],
+            "ends_on": plan_skeleton["ends_on"],
+            "plan_skeleton": plan_skeleton,
+            "phase_segments": plan_skeleton["phase_segments"],
+            "skeleton_workouts": plan_skeleton["workouts"],
+            "plan_type": canonical_plan_type,
             **continuity_context,
         }
 
@@ -669,6 +700,13 @@ def _inject_training_plan_trusted_context(arguments: dict, request_context: dict
     pace_profile = request_context.get("pace_profile")
     if isinstance(pace_profile, dict):
         trusted_context["pace_profile"] = pace_profile
+    plan_skeleton = request_context.get("plan_skeleton")
+    if isinstance(plan_skeleton, dict):
+        trusted_context["plan_skeleton"] = plan_skeleton
+        trusted_context["phase_segments"] = plan_skeleton.get("phase_segments", ())
+        trusted_context["skeleton_workouts"] = plan_skeleton.get("workouts", ())
+    if "manual_regeneration" in request_context:
+        trusted_context["manual_regeneration"] = request_context.get("manual_regeneration")
     for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
         if key in request_context:
             trusted_context[key] = request_context.get(key)
@@ -708,31 +746,64 @@ def _next_plan_version(metadata: dict) -> int:
     return 2
 
 
-def _fallback_training_plan_arguments(context: dict) -> dict:
-    starts_on = _date_from_context(context.get("starts_on")) or date.today()
-    ends_on = _date_from_context(context.get("ends_on")) or starts_on + timedelta(days=27)
-    workouts = []
-    workout_types = ("easy_run", "interval", "tempo", "long_run")
-    purposes = {
-        "easy_run": "Aerobic base",
-        "interval": "Controlled speed development",
-        "tempo": "Sustained threshold development",
-        "long_run": "Endurance progression",
+def _canonical_plan_type(plan_type: str) -> str:
+    if plan_type in {"maintenance", "base"}:
+        return "maintenance"
+    return "race"
+
+
+def _profile_int(profile: dict, key: str, *, default: int) -> int:
+    value = profile.get(key)
+    return default if value is None else int(value)
+
+
+def _plan_skeleton_payload(skeleton) -> dict:
+    workouts = [
+        {
+            "scheduled_for": workout.scheduled_for.isoformat(),
+            "workout_type": workout.workout_type,
+            "phase": workout.phase,
+            "planned_duration_minutes": workout.planned_duration_minutes,
+            "planned_distance_meters": workout.planned_distance_meters,
+        }
+        for workout in skeleton.workouts
+    ]
+    return {
+        "starts_on": skeleton.starts_on.isoformat(),
+        "ends_on": skeleton.ends_on.isoformat(),
+        "phase_segments": [dict(segment) for segment in skeleton.phase_segments],
+        "workouts": workouts,
     }
-    for week in range(4):
-        week_start = starts_on + timedelta(days=week * 7)
-        for offset, workout_type in zip((1, 3, 5, 6), workout_types):
-            scheduled_for = week_start + timedelta(days=offset)
-            if scheduled_for > ends_on:
-                continue
-            workouts.append(
-                _fallback_workout_payload(
-                    scheduled_for=scheduled_for,
-                    workout_type=workout_type,
-                    purpose=purposes[workout_type],
-                    week=week,
-                )
-            )
+
+
+def _required_plan_skeleton(context: dict) -> dict:
+    skeleton = context.get("plan_skeleton")
+    if not isinstance(skeleton, dict):
+        raise ValueError("plan skeleton is required")
+    return skeleton
+
+
+def _fallback_training_plan_arguments(context: dict) -> dict:
+    skeleton = _required_plan_skeleton(context)
+    starts_on = _date_from_context(skeleton.get("starts_on"))
+    ends_on = _date_from_context(skeleton.get("ends_on"))
+    if starts_on is None or ends_on is None:
+        raise ValueError("plan skeleton dates are required")
+    workouts = [
+        _fallback_workout_payload(
+            scheduled_for=_date_from_context(workout.get("scheduled_for")) or starts_on,
+            workout_type=str(workout["workout_type"]),
+            purpose=_fallback_workout_purpose(str(workout["workout_type"])),
+            phase=str(workout["phase"]),
+            planned_duration_minutes=workout.get("planned_duration_minutes"),
+            planned_distance_meters=workout.get("planned_distance_meters"),
+            week=(
+                ((_date_from_context(workout.get("scheduled_for")) or starts_on) - starts_on).days // 7
+            ),
+        )
+        for workout in skeleton.get("workouts", ())
+        if isinstance(workout, dict)
+    ]
     return {
         "name": "Fallback Four Week Plan",
         "race_id": context.get("selected_race_id"),
@@ -744,27 +815,41 @@ def _fallback_training_plan_arguments(context: dict) -> dict:
             "version": context.get("version", 1),
             "generation_mode": "fallback",
             "continuity_summary": "Fallback plan created after generated plan validation failed.",
-            "phase_segments": [
-                {
-                    "phase": "build",
-                    "starts_on": starts_on.isoformat(),
-                    "ends_on": ends_on.isoformat(),
-                }
-            ],
+            "phase_segments": skeleton.get("phase_segments", ()),
         },
         "workouts": workouts,
     }
 
 
-def _fallback_workout_payload(*, scheduled_for: date, workout_type: str, purpose: str, week: int) -> dict:
+def _fallback_workout_purpose(workout_type: str) -> str:
+    return {
+        "easy_run": "Aerobic base",
+        "interval": "Controlled speed development",
+        "hill": "Hill strength development",
+        "tempo": "Sustained threshold development",
+        "long_run": "Endurance progression",
+    }.get(workout_type, "Scheduled training")
+
+
+def _fallback_workout_payload(
+    *,
+    scheduled_for: date,
+    workout_type: str,
+    purpose: str,
+    phase: str,
+    planned_duration_minutes: int | None,
+    planned_distance_meters: int | None,
+    week: int,
+) -> dict:
     if workout_type == "interval":
         repeat_count = 4 + min(week, 2)
         return {
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": workout_type,
             "purpose": purpose,
-            "planned_duration_minutes": 50 + week * 3,
-            "phase": "build",
+            "planned_duration_minutes": planned_duration_minutes,
+            "planned_distance_meters": planned_distance_meters,
+            "phase": phase,
             "coach_note": "Keep the repeats controlled and stop if form breaks down.",
             "steps": [
                 {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
@@ -784,8 +869,9 @@ def _fallback_workout_payload(*, scheduled_for: date, workout_type: str, purpose
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": workout_type,
             "purpose": purpose,
-            "planned_duration_minutes": 45 + week * 3,
-            "phase": "build",
+            "planned_duration_minutes": planned_duration_minutes,
+            "planned_distance_meters": planned_distance_meters,
+            "phase": phase,
             "coach_note": "Run the tempo segment smoothly rather than forcing pace.",
             "steps": [
                 {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
@@ -793,13 +879,36 @@ def _fallback_workout_payload(*, scheduled_for: date, workout_type: str, purpose
                 {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
             ],
         }
-    duration_minutes = 40 + week * 5
+    if workout_type == "hill":
+        return {
+            "scheduled_for": scheduled_for.isoformat(),
+            "workout_type": workout_type,
+            "purpose": purpose,
+            "planned_duration_minutes": planned_duration_minutes,
+            "planned_distance_meters": planned_distance_meters,
+            "phase": phase,
+            "coach_note": "Keep each hill repeat powerful and controlled.",
+            "steps": [
+                {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
+                {
+                    "type": "repeat",
+                    "repeat_count": 4,
+                    "steps": [
+                        {"type": "hill", "duration_seconds": 120, "target": {"kind": "rpe", "rpe": 8}},
+                        {"type": "recovery", "duration_seconds": 300, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
+                    ],
+                },
+                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+            ],
+        }
+    duration_minutes = planned_duration_minutes or 45
     return {
         "scheduled_for": scheduled_for.isoformat(),
         "workout_type": workout_type,
         "purpose": purpose,
         "planned_duration_minutes": duration_minutes,
-        "phase": "build",
+        "planned_distance_meters": planned_distance_meters,
+        "phase": phase,
         "steps": [
             {
                 "type": "free_run",

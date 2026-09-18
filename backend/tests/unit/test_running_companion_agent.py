@@ -494,6 +494,7 @@ def test_training_plan_generation_preloads_planning_context_and_pace_profile() -
                 "preferred_training_days": ["tuesday", "thursday", "sunday"],
                 "preferred_long_run_day": "sunday",
                 "max_runs_per_week": 5,
+                "max_hard_sessions_per_week": 0,
                 "unit_preference": "metric",
                 "training_preferences": {"threshold_pace_seconds_per_km": 300},
             },
@@ -571,10 +572,66 @@ def test_training_plan_generation_preloads_planning_context_and_pace_profile() -
     assert model.requests[0].context["plan_series_id"] == "series-10k"
     assert model.requests[0].context["previous_plan_id"] == "plan-current"
     assert model.requests[0].context["version"] == 3
+    skeleton = model.requests[0].context["plan_skeleton"]
+    assert skeleton["starts_on"] == "2027-01-01"
+    assert skeleton["ends_on"] == "2027-03-07"
+    assert len(skeleton["workouts"]) == 48
+    assert {workout["workout_type"] for workout in skeleton["workouts"]} == {"easy_run"}
+    assert skeleton["phase_segments"] == model.requests[0].context["phase_segments"]
+    assert skeleton["workouts"] == model.requests[0].context["skeleton_workouts"]
+    assert "must not move workout dates" in model.requests[0].messages[0]["content"]
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["pace_profile"]["source"] == "threshold_pace"
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_series_id"] == "series-10k"
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["previous_plan_id"] == "plan-current"
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["version"] == 3
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_skeleton"] == skeleton
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["phase_segments"] == skeleton["phase_segments"]
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["skeleton_workouts"] == skeleton["workouts"]
+
+
+def test_training_plan_generation_propagates_manual_regeneration_to_trusted_context() -> None:
+    run_store = FakeRunStore()
+    plan_tool = StaticTool("createTrainingPlan", {"training_plan": {"id": "plan-1", "status": "active"}})
+    model = FakeModelGateway(
+        ModelResponse(
+            content="Created active plan.",
+            tool_calls=(
+                ToolCallRequest(
+                    tool_name="createTrainingPlan",
+                    arguments={
+                        "name": "Generated Plan",
+                        "starts_on": "2027-01-01",
+                        "ends_on": "2027-01-28",
+                        "workouts": [],
+                    },
+                ),
+            ),
+        )
+    )
+    agent = RunningCompanionAgent(
+        run_store=run_store,
+        model_gateway=model,
+        tools=AgentToolRegistry((plan_tool,)),
+        prompt_version="running-companion-v1",
+    )
+    queued_run = AgentRun.queue(
+        id="queued-run",
+        user_id="user-1",
+        trigger_type="manual",
+        workflow_name="training_plan_generation",
+        prompt_version="running-companion-v1",
+        metadata={"manual_regeneration": True},
+    )
+
+    agent.run_training_plan_generation(
+        user_id="user-1",
+        starts_on=date(2027, 1, 1),
+        plan_type="maintenance",
+        existing_run=queued_run,
+    )
+
+    assert model.requests[0].context["manual_regeneration"] is True
+    assert plan_tool.calls[0]["arguments"]["trusted_context"]["manual_regeneration"] is True
 
 
 def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> None:
@@ -631,12 +688,15 @@ def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> Non
     assert plan_tool.calls[-1]["arguments"]["name"] == "Fallback Four Week Plan"
     assert plan_tool.calls[-1]["arguments"]["metadata"]["phase_segments"] == [
         {
-            "phase": "build",
+            "phase": "maintenance",
             "starts_on": "2027-01-01",
             "ends_on": "2027-01-28",
         }
     ]
-    assert {workout["phase"] for workout in plan_tool.calls[-1]["arguments"]["workouts"]} == {"build"}
+    assert {workout["phase"] for workout in plan_tool.calls[-1]["arguments"]["workouts"]} == {"maintenance"}
+    hill = next(workout for workout in plan_tool.calls[-1]["arguments"]["workouts"] if workout["workout_type"] == "hill")
+    assert hill["steps"][1]["type"] == "repeat"
+    assert hill["steps"][1]["steps"][0]["type"] == "hill"
 
 
 def test_training_plan_generation_fails_when_model_never_creates_required_plan() -> None:
