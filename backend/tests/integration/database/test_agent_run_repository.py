@@ -95,6 +95,38 @@ def test_agent_run_repository_creates_completes_fails_and_links_recommendation(s
         assert failed_loaded.recommendation_id is None
 
 
+def test_agent_run_repository_round_trips_metadata_when_a_queued_run_completes(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    metadata = {
+        "manual_regeneration": True,
+        "quota_day": "2027-01-28",
+        "internal": {"completion_repair": {"repaired_week_indexes": [2]}},
+    }
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="agent-run-metadata@example.com", display_name="Agent Run Metadata")
+        uow.session.add(user)
+        uow.session.flush()
+        runs = SqlAlchemyAgentRunRepository(uow.session)
+        queued = runs.create_run(
+            AgentRun.queue(
+                user_id=user.id,
+                trigger_type="manual",
+                workflow_name="training_plan_generation",
+                prompt_version="running-companion-v1",
+                metadata=metadata,
+            )
+        )
+        completed = runs.complete_run(queued.mark_started().complete(output_summary="Created training plan."))
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        loaded = SqlAlchemyAgentRunRepository(uow.session).get_run_for_user(user.id, completed.id)
+
+    assert loaded is not None
+    assert loaded.metadata == metadata
+
+
 def test_agent_run_repository_records_ordered_steps_and_context_sources(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
 

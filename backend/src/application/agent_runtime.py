@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Iterable
 
@@ -366,6 +367,8 @@ class RunningCompanionAgent:
                 ):
                     raise ValueError(required_error)
                 output_summary = _run_output_summary(response.content, safety=safety, recommendation_id=recommendation_id)
+                if training_plan_id:
+                    run = _with_created_training_plan_id(run, training_plan_id)
                 return self._run_store.complete_run(
                     run.complete(
                         output_summary=output_summary,
@@ -602,7 +605,7 @@ class RunningCompanionAgent:
         if not training_plan_id:
             return None
         return self._run_store.complete_run(
-            run.complete(
+            _with_created_training_plan_id(run, training_plan_id).complete(
                 output_summary="Created deterministic fallback training plan.",
                 token_usage=token_usage,
             )
@@ -662,6 +665,13 @@ def _training_plan_id_from_payload(payload: dict) -> str | None:
         return None
     value = plan.get("id")
     return str(value) if value else None
+
+
+def _with_created_training_plan_id(run: AgentRun, training_plan_id: str) -> AgentRun:
+    return replace(
+        run,
+        metadata={**run.metadata, "created_training_plan_id": training_plan_id},
+    )
 
 
 def _required_workflow_output_error(

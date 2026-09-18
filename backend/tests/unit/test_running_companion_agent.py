@@ -430,6 +430,7 @@ def test_training_plan_generation_allows_only_active_plan_tool() -> None:
     assert model.requests[0].tools == ("createTrainingPlan",)
     assert [step.tool_name for step in run_store.steps] == ["createTrainingPlan"]
     assert plan_tool.calls[0]["arguments"]["agent_run_id"] == "run-1"
+    assert result.metadata == {"created_training_plan_id": "plan-1"}
 
 
 def test_training_plan_generation_repairs_invalid_plan_once() -> None:
@@ -590,7 +591,7 @@ def test_training_plan_generation_preloads_planning_context_and_pace_profile() -
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["race_id"] == "race-1"
 
 
-def test_training_plan_generation_propagates_manual_regeneration_to_trusted_context() -> None:
+def test_training_plan_generation_preserves_queued_manual_metadata_and_records_created_plan_id() -> None:
     run_store = FakeRunStore()
     plan_tool = StaticTool("createTrainingPlan", {"training_plan": {"id": "plan-1", "status": "active"}})
     model = FakeModelGateway(
@@ -634,10 +635,11 @@ def test_training_plan_generation_propagates_manual_regeneration_to_trusted_cont
             "client_request_id": "product-request-1",
             "manual_regeneration": True,
             "quota_day": "2027-01-28",
+            "internal": {"completion_repair": {"repaired_week_indexes": [2]}},
         },
     )
 
-    agent.run_training_plan_generation(
+    result = agent.run_training_plan_generation(
         user_id="user-1",
         starts_on=date(2027, 1, 1),
         plan_type="maintenance",
@@ -650,6 +652,10 @@ def test_training_plan_generation_propagates_manual_regeneration_to_trusted_cont
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["quota_day"] == "2027-01-28"
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_horizon_weeks"] == 4
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_type"] == "maintenance"
+    assert result.metadata == {
+        **queued_run.metadata,
+        "created_training_plan_id": "plan-1",
+    }
 
 
 def test_training_plan_generation_records_completion_repair_in_tool_step_payload() -> None:
@@ -787,7 +793,16 @@ def test_training_plan_generation_fails_when_model_never_creates_required_plan()
         prompt_version="running-companion-v1",
     )
 
-    result = agent.run_training_plan_generation(user_id="user-1", plan_type="base")
+    queued_run = AgentRun.queue(
+        id="queued-run",
+        user_id="user-1",
+        trigger_type="manual",
+        workflow_name="training_plan_generation",
+        prompt_version="running-companion-v1",
+        metadata={"manual_regeneration": True, "quota_day": "2027-01-28"},
+    )
+
+    result = agent.run_training_plan_generation(user_id="user-1", plan_type="base", existing_run=queued_run)
 
     assert result.status == "failed"
     assert result.recommendation_id is None
@@ -796,6 +811,8 @@ def test_training_plan_generation_fails_when_model_never_creates_required_plan()
     assert [step.status for step in run_store.steps[-2:]] == ["failed", "failed"]
     assert plan_tool.calls == []
     assert recommendation_tool.calls == []
+    assert result.metadata == {"manual_regeneration": True, "quota_day": "2027-01-28"}
+    assert "created_training_plan_id" not in result.metadata
 
 
 def test_training_plan_generation_does_not_require_recommendation() -> None:
