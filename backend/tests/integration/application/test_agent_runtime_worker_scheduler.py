@@ -108,7 +108,7 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
         generated_plan = uow.session.scalar(
             select(TrainingPlanModel).where(
                 TrainingPlanModel.user_id == "worker-user",
-                TrainingPlanModel.name == "Local Generated Four Week Plan",
+                TrainingPlanModel.name == "Local Generated Skeleton Plan",
             )
         )
         recommendation_count = len(uow.session.scalars(select(RecommendationModel)).all())
@@ -120,9 +120,9 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
     assert generated_plan is not None
     assert generated_plan.status == "active"
     assert generated_plan.metadata_json["phase_segments"] == [
-        {"phase": "build", "starts_on": "2027-01-01", "ends_on": "2027-01-28"}
+        {"phase": "maintenance", "starts_on": "2027-01-01", "ends_on": "2027-01-28"}
     ]
-    assert {workout.details["phase"] for workout in generated_plan.workouts} == {"build"}
+    assert {workout.details["phase"] for workout in generated_plan.workouts} == {"maintenance"}
     assert recommendation_count == 1
 
 
@@ -233,4 +233,4 @@ def test_smoke_flow_queues_with_http_drains_worker_and_polls_completion(monkeypa
     assert daily_run["status"] == "completed"
     assert training_run["status"] == "completed"
     assert len(recommendations) == 1
-    assert any(plan["name"] == "Local Generated Four Week Plan" and plan["status"] == "active" for plan in plans)
+    assert any(plan["name"] == "Local Generated Skeleton Plan" and plan["status"] == "active" for plan in plans)
