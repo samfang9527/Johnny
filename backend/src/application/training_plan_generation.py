@@ -78,6 +78,7 @@ def select_race_strategy(
         explicit_race = next((race for race in future_races if race.get("id") == explicit_race_id), None)
         if explicit_race is not None:
             return RaceStrategySelection(race_id=explicit_race_id, plan_type="race", reason="explicit_race")
+        return RaceStrategySelection(race_id=None, plan_type="maintenance", reason="explicit_race_unavailable")
 
     ranked_races = [race for race in future_races if race.get("priority") in RACE_PRIORITY_RANK]
     if not ranked_races:
@@ -220,13 +221,19 @@ def validate_generated_plan(plan: TrainingPlan, skeleton: PlanSkeleton) -> list[
         ):
             errors.append(f"week {week_index} workout dates do not match the skeleton")
             continue
-        expected_phase_by_date = {workout.scheduled_for: workout.phase for workout in expected_workouts}
-        expected_type_by_date = {workout.scheduled_for: workout.workout_type for workout in expected_workouts}
+        expected_by_date = {workout.scheduled_for: workout for workout in expected_workouts}
         for workout in generated_workouts:
-            if workout.phase != expected_phase_by_date[workout.scheduled_for]:
+            expected_workout = expected_by_date[workout.scheduled_for]
+            if workout.phase != expected_workout.phase:
                 errors.append(f"week {week_index} workout phase does not match the skeleton")
-            if workout.workout_type != expected_type_by_date[workout.scheduled_for]:
+            if workout.workout_type != expected_workout.workout_type:
                 errors.append(f"week {week_index} workout type does not match the skeleton")
+            if workout.planned_duration_minutes != expected_workout.planned_duration_minutes:
+                errors.append(f"week {week_index} workout planned duration does not match the skeleton")
+            if workout.planned_distance_meters != expected_workout.planned_distance_meters:
+                errors.append(f"week {week_index} workout planned distance does not match the skeleton")
+            if workout.status != "planned":
+                errors.append(f"week {week_index} workout status must be planned")
             if workout.workout_type in QUALITY_WORKOUT_TYPES and not _has_required_key_session_steps(workout):
                 errors.append(f"week {week_index} {workout.workout_type} workout is missing required steps")
 
@@ -344,11 +351,13 @@ def _week_is_complete(generated_workouts: Sequence[Workout], expected_workouts: 
         workout.scheduled_for for workout in expected_workouts
     ):
         return False
-    expected_phase_by_date = {workout.scheduled_for: workout.phase for workout in expected_workouts}
-    expected_type_by_date = {workout.scheduled_for: workout.workout_type for workout in expected_workouts}
+    expected_by_date = {workout.scheduled_for: workout for workout in expected_workouts}
     return all(
-        workout.phase == expected_phase_by_date[workout.scheduled_for]
-        and workout.workout_type == expected_type_by_date[workout.scheduled_for]
+        workout.phase == expected_by_date[workout.scheduled_for].phase
+        and workout.workout_type == expected_by_date[workout.scheduled_for].workout_type
+        and workout.planned_duration_minutes == expected_by_date[workout.scheduled_for].planned_duration_minutes
+        and workout.planned_distance_meters == expected_by_date[workout.scheduled_for].planned_distance_meters
+        and workout.status == "planned"
         and (workout.workout_type not in QUALITY_WORKOUT_TYPES or _has_required_key_session_steps(workout))
         for workout in generated_workouts
     )

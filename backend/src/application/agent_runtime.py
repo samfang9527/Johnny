@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import date, timedelta
 from typing import Iterable
 
-from src.application.training_plan_generation import build_plan_skeleton, projection_window
+from src.application.training_plan_generation import build_plan_skeleton, projection_window, select_race_strategy
 from src.application.training_targets import build_pace_profile_from_payloads
 from src.domain.agent_runtime import (
     AgentContextSource,
@@ -154,13 +154,15 @@ class RunningCompanionAgent:
         goal_notes: str | None = None,
         existing_run: AgentRun | None = None,
     ) -> AgentRun:
-        canonical_plan_type = _canonical_plan_type(plan_type)
-        selected_race_id = self._select_training_plan_race(
+        requested_plan_type = _canonical_plan_type(plan_type)
+        race_strategy = self._select_training_plan_race(
             user_id=user_id,
             explicit_race_id=race_id,
-            plan_type=canonical_plan_type,
+            plan_type=requested_plan_type,
             starts_on=starts_on,
         )
+        selected_race_id = race_strategy.race_id
+        canonical_plan_type = race_strategy.plan_type
         context = {
             "race_id": race_id,
             "selected_race_id": selected_race_id,
@@ -225,23 +227,16 @@ class RunningCompanionAgent:
         explicit_race_id: str | None,
         plan_type: str,
         starts_on: date | None,
-    ) -> str | None:
-        if plan_type == "maintenance":
-            return None
-        if explicit_race_id:
-            return explicit_race_id
-        if "getAthleteContext" not in self._tools.names():
-            return None
-        payload = self._tools.get("getAthleteContext").run(user_id=user_id, arguments={"limit": 20})
-        race_goals = list(payload.get("race_goals", ()))
+    ):
         anchor = starts_on or date.today()
-        future_goals = [goal for goal in race_goals if _goal_date(goal) >= anchor]
-        primary = [goal for goal in future_goals if goal.get("priority") == "primary"]
-        selected = min(primary or future_goals, key=_goal_date, default=None)
-        if selected is None:
-            return None
-        value = selected.get("id")
-        return str(value) if value else None
+        if plan_type == "maintenance":
+            return select_race_strategy((), anchor, explicit_race_id, force_maintenance=True)
+        if "getAthleteContext" not in self._tools.names():
+            return select_race_strategy((), anchor, explicit_race_id, force_maintenance=False)
+        arguments = {"race_id": explicit_race_id} if explicit_race_id else {"race_date_from": anchor.isoformat()}
+        payload = self._tools.get("getAthleteContext").run(user_id=user_id, arguments=arguments)
+        race_goals = list(payload.get("race_goals", ()))
+        return select_race_strategy(race_goals, anchor, explicit_race_id, force_maintenance=False)
 
     def _start_run(
         self,
@@ -502,11 +497,16 @@ class RunningCompanionAgent:
         starts_on: date | None,
         plan_type: str,
     ) -> dict:
+        athlete_arguments = (
+            {"race_id": selected_race_id}
+            if selected_race_id is not None
+            else {"race_date_from": (starts_on or date.today()).isoformat()}
+        )
         athlete_context = _safe_tool_payload(
             self._tools,
             "getAthleteContext",
             user_id=user_id,
-            arguments={"limit": 20, "offset": 0},
+            arguments=athlete_arguments,
         )
         anchor = starts_on or date.today()
         recent_activities = _safe_tool_payload(
@@ -741,27 +741,30 @@ def _inject_training_plan_trusted_context(arguments: dict, request_context: dict
 
 
 def _plan_continuity_context(last_active_plan: dict | None, *, selected_race_id: str | None) -> dict:
+    strategy_series_id = selected_race_id or "maintenance"
     if last_active_plan is None:
         return {
-            "plan_series_id": selected_race_id,
+            "plan_series_id": strategy_series_id,
             "previous_plan_id": None,
             "version": 1,
             "continuity_summary": "Initial generated projection.",
         }
     metadata = last_active_plan.get("metadata") if isinstance(last_active_plan.get("metadata"), dict) else {}
     previous_plan_id = last_active_plan.get("id")
-    plan_series_id = (
-        metadata.get("plan_series_id")
-        or selected_race_id
-        or last_active_plan.get("race_id")
-        or previous_plan_id
-    )
+    same_race_strategy = last_active_plan.get("race_id") == selected_race_id
+    if same_race_strategy:
+        plan_series_id = "maintenance" if selected_race_id is None else metadata.get("plan_series_id") or strategy_series_id
+        version = _next_plan_version(metadata)
+        continuity_summary = metadata.get("continuity_summary") or f"Continue from {last_active_plan.get('name', 'the previous active plan')}."
+    else:
+        plan_series_id = strategy_series_id
+        version = 1
+        continuity_summary = "Generated projection for a new race strategy."
     return {
         "plan_series_id": plan_series_id,
         "previous_plan_id": previous_plan_id,
-        "version": _next_plan_version(metadata),
-        "continuity_summary": metadata.get("continuity_summary")
-        or f"Continue from {last_active_plan.get('name', 'the previous active plan')}.",
+        "version": version,
+        "continuity_summary": continuity_summary,
     }
 
 
@@ -846,6 +849,7 @@ def _fallback_training_plan_arguments(context: dict) -> dict:
             "phase_segments": skeleton.get("phase_segments", ()),
         },
         "workouts": workouts,
+        "trusted_context": {"generation_mode": "fallback"},
     }
 
 

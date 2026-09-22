@@ -62,6 +62,12 @@ class FakeRaceGoalStore:
         ]
         return goals[offset : offset + limit if limit is not None else None]
 
+    def get_race_goal_for_user(self, user_id: str, race_goal_id: str | None) -> RaceGoal | None:
+        return next(
+            (goal for goal in self.goals if goal.user_id == user_id and goal.id == race_goal_id),
+            None,
+        )
+
 
 class LeakyActivityStore:
     def __init__(
@@ -315,6 +321,22 @@ def test_athlete_context_tool_returns_profile_and_race_goals_without_domain_obje
     assert all(not isinstance(value, AthleteProfile) for value in payload.values())
 
 
+def test_athlete_context_tool_lists_all_future_races_and_scopes_an_explicit_race_to_its_owner() -> None:
+    past_race = replace(_goal(), id="past-race", race_date=date(2027, 1, 1))
+    future_secondary = replace(_goal(), id="future-secondary", race_date=date(2027, 2, 7), priority="secondary")
+    future_primary = replace(_goal(), id="future-primary", race_date=date(2027, 3, 7))
+    tool = AthleteContextTool(
+        profiles=FakeAthleteProfileStore(_profile()),
+        race_goals=FakeRaceGoalStore((past_race, future_secondary, future_primary, _goal(user_id="user-2"))),
+    )
+
+    future_payload = tool.run(user_id="user-1", arguments={"race_date_from": "2027-01-28"})
+    explicit_payload = tool.run(user_id="user-1", arguments={"race_id": "future-secondary"})
+
+    assert [goal["id"] for goal in future_payload["race_goals"]] == ["future-secondary", "future-primary"]
+    assert [goal["id"] for goal in explicit_payload["race_goals"]] == ["future-secondary"]
+
+
 def test_training_tools_filter_leaky_provider_data_by_user_and_use_deterministic_analytics() -> None:
     activity_store = LeakyActivityStore(
         activities=(
@@ -480,6 +502,40 @@ def test_create_training_plan_tool_repairs_eight_week_output_and_preserves_valid
     ] * len(valid_weeks)
     assert repair["repaired_week_indexes"] == [2, 3, 4, 5, 6, 7]
     assert repair == saved["metadata"]["internal"]["completion_repair"]
+
+
+def test_create_training_plan_tool_persists_skeleton_load_and_planned_state_over_model_values() -> None:
+    skeleton = _eight_week_skeleton()
+    model_workouts = [_model_workout_payload(workout, purpose="Model coaching detail") for workout in skeleton.workouts]
+    model_workouts[0].update(
+        {
+            "id": "model-workout-id",
+            "status": "completed",
+            "planned_duration_minutes": (model_workouts[0]["planned_duration_minutes"] or 0) + 30,
+            "planned_distance_meters": (model_workouts[0]["planned_distance_meters"] or 0) + 1_000,
+        }
+    )
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=FakeTrainingPlanStore(None))
+
+    payload = tool.run(
+        user_id="user-1",
+        arguments={
+            "name": "Inflated model plan",
+            "starts_on": skeleton.starts_on.isoformat(),
+            "ends_on": skeleton.ends_on.isoformat(),
+            "metadata": {"phase_segments": skeleton.phase_segments},
+            "workouts": model_workouts,
+            "trusted_context": {"plan_skeleton": _skeleton_payload(skeleton)},
+        },
+    )
+
+    saved_first_workout = payload["training_plan"]["workouts"][0]
+    skeleton_first_workout = _skeleton_payload(skeleton)["workouts"][0]
+    assert saved_first_workout["id"] != "model-workout-id"
+    assert saved_first_workout["status"] == "planned"
+    assert saved_first_workout["planned_duration_minutes"] == skeleton_first_workout["planned_duration_minutes"]
+    assert saved_first_workout["planned_distance_meters"] == skeleton_first_workout["planned_distance_meters"]
+    assert payload["completion_repair"]["repaired_week_indexes"] == [0]
 
 
 @pytest.mark.parametrize(
@@ -745,7 +801,15 @@ def test_create_training_plan_tool_preserves_trusted_continuity_metadata() -> No
                 "phase_segments": [
                     {"phase": "build", "starts_on": "2027-02-01", "ends_on": "2027-03-01"}
                 ],
-                "weekly_rationales": [{"week_index": 1, "phase": "build"}],
+                "weekly_rationales": [
+                    {
+                        "week_index": 1,
+                        "phase": "build",
+                        "focus": "Build threshold durability.",
+                        "load_progression": "Increase controlled work.",
+                        "key_workouts": ["Tempo"],
+                    }
+                ],
             },
             "trusted_context": {
                 "plan_series_id": "series-1",
@@ -761,7 +825,74 @@ def test_create_training_plan_tool_preserves_trusted_continuity_metadata() -> No
     assert payload["training_plan"]["metadata"]["previous_plan_id"] == "plan-previous"
     assert payload["training_plan"]["metadata"]["version"] == 3
     assert payload["training_plan"]["metadata"]["generation_mode"] == "generated"
-    assert payload["training_plan"]["metadata"]["weekly_rationales"] == [{"week_index": 1, "phase": "build"}]
+    assert payload["training_plan"]["metadata"]["weekly_rationales"] == [
+        {
+            "week_index": 1,
+            "phase": "build",
+            "focus": "Build threshold durability.",
+            "load_progression": "Increase controlled work.",
+            "key_workouts": ["Tempo"],
+        }
+    ]
+
+
+def test_create_training_plan_tool_keeps_only_supported_model_metadata_and_overwrites_system_metadata() -> None:
+    skeleton = _eight_week_skeleton()
+    tool = agent_tools_module.CreateTrainingPlanTool(training_plans=FakeTrainingPlanStore(None))
+
+    payload = tool.run(
+        user_id="user-1",
+        arguments={
+            "name": "Metadata ownership",
+            "starts_on": skeleton.starts_on.isoformat(),
+            "ends_on": skeleton.ends_on.isoformat(),
+            "metadata": {
+                "weekly_rationales": [
+                    {
+                        "week_index": 1,
+                        "phase": "maintenance",
+                        "focus": "Maintain aerobic consistency.",
+                        "load_progression": "Hold steady volume.",
+                        "key_workouts": ["Long run"],
+                    }
+                ],
+                "plan_series_id": "model-series",
+                "previous_plan_id": "model-previous",
+                "version": 999,
+                "continuity_summary": "Model-owned continuity.",
+                "generation_mode": "model-mode",
+                "phase_segments": [],
+                "internal": {"completion_repair": {"repaired_week_indexes": [99]}},
+                "unsupported": "discard me",
+            },
+            "workouts": [_model_workout_payload(workout, purpose="Model coaching detail") for workout in skeleton.workouts],
+            "trusted_context": {
+                "plan_skeleton": _skeleton_payload(skeleton),
+                "plan_series_id": "trusted-series",
+                "previous_plan_id": None,
+                "version": 3,
+                "continuity_summary": "Application-owned continuity.",
+            },
+        },
+    )
+
+    assert payload["training_plan"]["metadata"] == {
+        "weekly_rationales": [
+            {
+                "week_index": 1,
+                "phase": "maintenance",
+                "focus": "Maintain aerobic consistency.",
+                "load_progression": "Hold steady volume.",
+                "key_workouts": ["Long run"],
+            }
+        ],
+        "phase_segments": _skeleton_payload(skeleton)["phase_segments"],
+        "plan_series_id": "trusted-series",
+        "previous_plan_id": None,
+        "version": 3,
+        "continuity_summary": "Application-owned continuity.",
+        "generation_mode": "generated",
+    }
 
 
 def test_memory_candidate_tool_stores_candidate_without_mutating_profile() -> None:

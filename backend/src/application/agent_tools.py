@@ -37,9 +37,20 @@ class AthleteContextTool:
         self._race_goals = race_goals
 
     def run(self, *, user_id: str, arguments: dict) -> dict:
-        limit = arguments.get("limit", 5)
         profile = self._profiles.get_profile_for_user(user_id)
-        goals = self._race_goals.list_race_goals_for_user(user_id, limit=limit, offset=arguments.get("offset", 0))
+        race_id = arguments.get("race_id")
+        if race_id is not None:
+            goal = self._race_goals.get_race_goal_for_user(user_id, str(race_id))
+            goals = [goal] if goal is not None else []
+        else:
+            race_date_from = _optional_date_arg(arguments, "race_date_from")
+            limit = arguments.get("limit", None if race_date_from is not None else 5)
+            goals = self._race_goals.list_race_goals_for_user(
+                user_id,
+                race_date_from=race_date_from,
+                limit=limit,
+                offset=arguments.get("offset", 0),
+            )
         return {
             "profile": _profile_payload(profile),
             "race_goals": [_race_goal_payload(goal) for goal in goals if goal.user_id == user_id],
@@ -192,7 +203,8 @@ class CreateTrainingPlanTool:
         pace_profile = trusted_context.get("pace_profile")
         skeleton = _trusted_plan_skeleton(trusted_context)
         workouts = tuple(
-            _workout_from_payload({**payload, "_pace_profile": pace_profile}) for payload in arguments.get("workouts", ())
+            _workout_from_payload({**payload, "id": None, "_pace_profile": pace_profile})
+            for payload in arguments.get("workouts", ())
         )
         plan = TrainingPlan.create(
             user_id=user_id,
@@ -259,6 +271,12 @@ def _date_arg(arguments: dict, name: str) -> date:
     raise ValueError(f"{name} is required")
 
 
+def _optional_date_arg(arguments: dict, name: str) -> date | None:
+    if arguments.get(name) is None:
+        return None
+    return _date_arg(arguments, name)
+
+
 def _evidence_items(payloads) -> tuple[EvidenceItem, ...]:
     return tuple(EvidenceItem.from_payload(payload) for payload in payloads)
 
@@ -303,16 +321,42 @@ def _workout_from_payload(payload: dict) -> Workout:
 
 
 def _plan_metadata(*, arguments: dict, trusted_context: dict) -> dict:
-    metadata = dict(arguments.get("metadata", {}))
+    model_metadata = arguments.get("metadata") if isinstance(arguments.get("metadata"), dict) else {}
     skeleton = trusted_context.get("plan_skeleton")
-    if isinstance(skeleton, dict) and isinstance(skeleton.get("phase_segments"), list):
-        metadata["phase_segments"] = [dict(segment) for segment in skeleton["phase_segments"]]
+    if not isinstance(skeleton, dict) or not isinstance(skeleton.get("phase_segments"), list):
+        metadata = dict(model_metadata)
+        for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
+            if key in trusted_context:
+                metadata[key] = trusted_context[key]
+        metadata["generation_mode"] = trusted_context.get(
+            "generation_mode",
+            arguments.get("generation_mode", "generated"),
+        )
+        return metadata
+
+    metadata: dict = {}
+    weekly_rationales = model_metadata.get("weekly_rationales")
+    if _has_valid_weekly_rationales(weekly_rationales):
+        metadata["weekly_rationales"] = weekly_rationales
+    metadata["phase_segments"] = [dict(segment) for segment in skeleton["phase_segments"]]
     for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
-        value = trusted_context.get(key)
-        if value is not None:
-            metadata.setdefault(key, value)
-    metadata.setdefault("generation_mode", arguments.get("generation_mode", "generated"))
+        if key in trusted_context:
+            metadata[key] = trusted_context[key]
+    metadata["generation_mode"] = trusted_context.get("generation_mode", "generated")
     return metadata
+
+
+def _has_valid_weekly_rationales(value: object) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(rationale, dict)
+        and isinstance(rationale.get("week_index"), int)
+        and isinstance(rationale.get("phase"), str)
+        and isinstance(rationale.get("focus"), str)
+        and isinstance(rationale.get("load_progression"), str)
+        and isinstance(rationale.get("key_workouts"), list)
+        and all(isinstance(workout, str) for workout in rationale["key_workouts"])
+        for rationale in value
+    )
 
 
 def _trusted_plan_skeleton(trusted_context: dict) -> PlanSkeleton | None:

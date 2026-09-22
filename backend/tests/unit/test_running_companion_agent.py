@@ -970,3 +970,103 @@ def test_training_plan_generation_selects_explicit_primary_future_or_base_target
 
     race_goals[2]["race_date"] = "2026-12-15"
     assert run_case(plan_type="race")["selected_race_id"] == "future-secondary"
+
+
+def test_training_plan_generation_queries_all_future_races_and_rejects_a_past_explicit_race() -> None:
+    race_goals = [
+        {"id": "past-explicit", "race_date": "2026-12-01", "priority": "primary"},
+        {"id": "future-tune-up", "race_date": "2027-02-01", "priority": "tune_up"},
+        {"id": "future-secondary", "race_date": "2027-03-01", "priority": "secondary"},
+        {"id": "future-primary", "race_date": "2027-04-01", "priority": "primary"},
+    ]
+
+    def run_case(race_id: str | None = None) -> tuple[dict, StaticTool]:
+        athlete_tool = StaticTool("getAthleteContext", {"profile": {"id": "profile-1"}, "race_goals": race_goals})
+        model = FakeModelGateway(ModelResponse(content="Context selected."))
+        agent = RunningCompanionAgent(
+            run_store=FakeRunStore(),
+            model_gateway=model,
+            tools=AgentToolRegistry((athlete_tool,)),
+            prompt_version="running-companion-v1",
+        )
+        agent.run_training_plan_generation(
+            user_id="user-1",
+            race_id=race_id,
+            starts_on=date(2027, 1, 1),
+            plan_type="race",
+        )
+        return model.requests[0].context, athlete_tool
+
+    automatic_context, automatic_tool = run_case()
+    past_explicit_context, past_explicit_tool = run_case("past-explicit")
+
+    assert automatic_context["selected_race_id"] == "future-primary"
+    assert automatic_tool.calls[0]["arguments"] == {"race_date_from": "2027-01-01"}
+    assert past_explicit_context["selected_race_id"] is None
+    assert past_explicit_context["plan_type"] == "maintenance"
+    assert past_explicit_tool.calls[0]["arguments"] == {"race_id": "past-explicit"}
+
+
+def test_training_plan_generation_starts_a_new_plan_series_when_the_race_strategy_changes() -> None:
+    current_plan = {
+        "id": "plan-current",
+        "race_id": "race-1",
+        "name": "Current race projection",
+        "metadata": {
+            "plan_series_id": "race-1-series",
+            "version": 4,
+            "continuity_summary": "Continue race one.",
+        },
+    }
+
+    def run_case(*, race_id: str | None, plan_type: str, last_active_plan: dict = current_plan) -> dict:
+        athlete_tool = StaticTool(
+            "getAthleteContext",
+            {
+                "profile": {"id": "profile-1"},
+                "race_goals": [
+                    {"id": "race-1", "race_date": "2027-03-01", "priority": "secondary"},
+                    {"id": "race-2", "race_date": "2027-04-01", "priority": "primary"},
+                ],
+            },
+        )
+        current_plan_tool = StaticTool("getTrainingPlan", {"training_plan": last_active_plan})
+        model = FakeModelGateway(ModelResponse(content="Context selected."))
+        agent = RunningCompanionAgent(
+            run_store=FakeRunStore(),
+            model_gateway=model,
+            tools=AgentToolRegistry((athlete_tool, current_plan_tool)),
+            prompt_version="running-companion-v1",
+        )
+        agent.run_training_plan_generation(
+            user_id="user-1",
+            race_id=race_id,
+            starts_on=date(2027, 1, 1),
+            plan_type=plan_type,
+        )
+        return model.requests[0].context
+
+    same_race_context = run_case(race_id="race-1", plan_type="race")
+    new_race_context = run_case(race_id="race-2", plan_type="race")
+    maintenance_context = run_case(race_id=None, plan_type="maintenance")
+    maintenance_continuation_context = run_case(
+        race_id=None,
+        plan_type="maintenance",
+        last_active_plan={
+            "id": "maintenance-plan-current",
+            "race_id": None,
+            "name": "Current maintenance projection",
+            "metadata": {"plan_series_id": "legacy-maintenance-series", "version": 2},
+        },
+    )
+
+    assert same_race_context["plan_series_id"] == "race-1-series"
+    assert same_race_context["version"] == 5
+    assert new_race_context["plan_series_id"] == "race-2"
+    assert new_race_context["version"] == 1
+    assert new_race_context["previous_plan_id"] == "plan-current"
+    assert maintenance_context["plan_series_id"] == "maintenance"
+    assert maintenance_context["version"] == 1
+    assert maintenance_context["previous_plan_id"] == "plan-current"
+    assert maintenance_continuation_context["plan_series_id"] == "maintenance"
+    assert maintenance_continuation_context["version"] == 3

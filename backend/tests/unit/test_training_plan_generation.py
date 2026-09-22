@@ -571,6 +571,28 @@ def test_validate_generated_plan_reports_workout_type_that_differs_from_skeleton
     assert any("workout type does not match the skeleton" in error for error in errors)
 
 
+def test_validate_generated_plan_rejects_model_load_and_status_that_differ_from_the_skeleton() -> None:
+    skeleton = _skeleton()
+    generated_workouts = tuple(_complete_workout(workout) for workout in skeleton.workouts)
+    changed_index = next(index for index, workout in enumerate(generated_workouts) if not workout.steps)
+    tampered = replace(
+        generated_workouts[changed_index],
+        planned_duration_minutes=(generated_workouts[changed_index].planned_duration_minutes or 0) + 30,
+        planned_distance_meters=(generated_workouts[changed_index].planned_distance_meters or 0) + 1_000,
+        status="completed",
+    )
+    plan = _generated_plan(
+        skeleton,
+        generated_workouts[:changed_index] + (tampered,) + generated_workouts[changed_index + 1 :],
+    )
+
+    errors = validate_generated_plan(plan, skeleton)
+
+    assert any("planned duration does not match the skeleton" in error for error in errors)
+    assert any("planned distance does not match the skeleton" in error for error in errors)
+    assert any("status must be planned" in error for error in errors)
+
+
 def test_repair_generated_plan_replaces_complete_week_with_changed_workout_type() -> None:
     skeleton = _skeleton(ends_on=date(2027, 2, 28))
     generated_workouts = tuple(_complete_workout(workout, id=f"generated-{index}") for index, workout in enumerate(skeleton.workouts))
