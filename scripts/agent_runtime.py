@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
@@ -17,16 +18,22 @@ from sqlalchemy.orm import Session
 
 from src.api.dependencies import build_request_companion_agent
 from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.interfaces.task_queue import TaskEnvelope
+from src.application.training_plan_regeneration import TrainingPlanRegenerationService
 from src.domain.agent_runtime import AgentRun
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
+from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, UserModel
 from src.infrastructure.database.session import create_database_engine, create_session_factory, get_database_url
+from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.llm.settings import load_llm_settings
 
 
 DEFAULT_CLAIM_TIMEOUT = timedelta(minutes=5)
 DEFAULT_RETRY_DELAY = timedelta(seconds=30)
+TRAINING_PLAN_DAILY_CHECK_TASK_TYPE = "training-plan.daily-check"
+logger = logging.getLogger(__name__)
 
 
 def schedule_once(session: Session, *, anchor_date: date | None = None) -> int:
@@ -41,6 +48,14 @@ def schedule_once(session: Session, *, anchor_date: date | None = None) -> int:
             idempotency_key=f"daily_recommendation:{user.id}:{anchor.isoformat()}",
             payload={"anchor_date": anchor.isoformat(), "force": False},
         )
+    SqlAlchemyAgentTaskQueue(session).enqueue(
+        TaskEnvelope(
+            task_type=TRAINING_PLAN_DAILY_CHECK_TASK_TYPE,
+            payload={"anchor_date": anchor.isoformat()},
+            correlation_id=f"training-plan.daily-check:{anchor.isoformat()}",
+            idempotency_key=f"training-plan.daily-check:{anchor.isoformat()}",
+        )
+    )
     return _task_count(session) - before
 
 
@@ -197,6 +212,20 @@ def _queue_handler(session: Session) -> QueueAgentRunHandler:
     )
 
 
+def _training_plan_regeneration_service(session: Session) -> TrainingPlanRegenerationService:
+    athlete_races = SqlAlchemyAthleteRaceRepository(session)
+    runs = SqlAlchemyAgentRunRepository(session)
+    tasks = SqlAlchemyAgentTaskQueue(session)
+    return TrainingPlanRegenerationService(
+        profiles=athlete_races,
+        race_goals=athlete_races,
+        training_plans=SqlAlchemyTrainingPlanRepository(session),
+        runs=runs,
+        tasks=tasks,
+        queue_agent_runs=_queue_handler(session),
+    )
+
+
 def _eligible_daily_users(session: Session) -> list[UserModel]:
     statement = select(UserModel).where(
         UserModel.status == "active",
@@ -213,6 +242,9 @@ def _process_task(session: Session, task_id: str) -> None:
     queue = SqlAlchemyAgentTaskQueue(session)
     task = session.get(AgentTaskModel, task_id)
     if task is None:
+        return
+    if task.task_type == TRAINING_PLAN_DAILY_CHECK_TASK_TYPE:
+        _process_training_plan_daily_check(session, task)
         return
     if task.task_type != "agent.workflow":
         queue.fail(
@@ -286,6 +318,60 @@ def _process_task(session: Session, task_id: str) -> None:
             now=_utc_now(),
             retry_delay=DEFAULT_RETRY_DELAY,
         )
+
+
+def _process_training_plan_daily_check(session: Session, task: AgentTaskModel) -> None:
+    queue = SqlAlchemyAgentTaskQueue(session)
+    anchor_date = _daily_check_anchor_date(task.payload or {})
+    if anchor_date is None:
+        queue.fail(
+            task.id,
+            error_type="MalformedTaskPayload",
+            error_message="training-plan.daily-check requires an ISO anchor_date",
+            retryable=False,
+            now=_utc_now(),
+            retry_delay=DEFAULT_RETRY_DELAY,
+        )
+        return
+
+    try:
+        service = _training_plan_regeneration_service(session)
+        candidates = service.find_users_needing_projection(anchor_date)
+    except Exception as exc:
+        logger.exception("training plan daily check discovery failed", extra={"task_id": task.id})
+        queue.fail(
+            task.id,
+            error_type=exc.__class__.__name__,
+            error_message=str(exc),
+            retryable=True,
+            now=_utc_now(),
+            retry_delay=DEFAULT_RETRY_DELAY,
+        )
+        return
+
+    for candidate in candidates:
+        try:
+            service.queue_background_generation(candidate)
+        except Exception:
+            logger.exception(
+                "training plan background generation queue failed",
+                extra={
+                    "task_id": task.id,
+                    "user_id": candidate.user_id,
+                    "starts_on": candidate.strategy.starts_on.isoformat(),
+                },
+            )
+    queue.complete(task.id, now=_utc_now())
+
+
+def _daily_check_anchor_date(payload: dict) -> date | None:
+    value = payload.get("anchor_date")
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, workflow_input: dict) -> AgentRun:

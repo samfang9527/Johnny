@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
@@ -11,13 +11,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import scripts.agent_runtime as agent_runtime
 from scripts.agent_runtime import main, schedule_once, work_drain
+from src.application.training_plan_regeneration import BackgroundProjectionCandidate, RegenerationStrategy
 from src.api.dependencies import get_session
 from src.application.interfaces.task_queue import TaskEnvelope
 from src.api.dependencies import CurrentUser, ensure_current_user
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
-from src.infrastructure.database.models import AgentTaskModel, Base, RecommendationModel, TrainingPlanModel
+from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, Base, RecommendationModel, TrainingPlanModel
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
 from src.main import create_app
 
@@ -49,6 +51,7 @@ def test_schedule_once_enqueues_today_daily_jobs_for_context_ready_active_users(
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
         _create_context_ready_user(uow.session, "eligible-user")
+        _create_context_ready_user(uow.session, "another-eligible-user")
         ensure_current_user(uow.session, CurrentUser(id="missing-profile"))
         uow.session.execute(
             TrainingPlanModel.__table__.insert().values(
@@ -66,10 +69,153 @@ def test_schedule_once_enqueues_today_daily_jobs_for_context_ready_active_users(
         tasks = uow.session.scalars(select(AgentTaskModel)).all()
         uow.commit()
 
-    assert queued == 1
+    assert queued == 3
     assert duplicate == 0
-    assert len(tasks) == 1
-    assert tasks[0].payload["input"]["anchor_date"] == "2027-01-28"
+    assert len(tasks) == 3
+    daily_tasks = [task for task in tasks if task.task_type == "agent.workflow"]
+    daily_check_tasks = [task for task in tasks if task.task_type == "training-plan.daily-check"]
+    assert len(daily_tasks) == 2
+    assert {task.payload["input"]["anchor_date"] for task in daily_tasks} == {"2027-01-28"}
+    assert len(daily_check_tasks) == 1
+    assert daily_check_tasks[0].payload == {"anchor_date": "2027-01-28"}
+
+
+def test_work_drain_daily_check_queues_one_background_generation_for_repeated_checks(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    anchor = datetime.now(timezone.utc).date()
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        _create_context_ready_user(uow.session, "background-user")
+        uow.session.execute(
+            TrainingPlanModel.__table__.update()
+            .where(TrainingPlanModel.id == "plan-background-user")
+            .values(
+                starts_on=anchor - timedelta(days=34),
+                ends_on=anchor - timedelta(days=7),
+            )
+        )
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        for suffix in ("first", "repeat"):
+            queue.enqueue(
+                TaskEnvelope(
+                    task_type="training-plan.daily-check",
+                    payload={"anchor_date": anchor.isoformat()},
+                    correlation_id=f"daily-check:{suffix}",
+                    idempotency_key=f"daily-check:{anchor.isoformat()}:{suffix}",
+                )
+            )
+
+        processed = work_drain(uow.session)
+        generation_runs = list(
+            uow.session.scalars(
+                select(AgentRunModel).where(AgentRunModel.workflow_name == "training_plan_generation")
+            )
+        )
+        generation_tasks = list(
+            uow.session.scalars(
+                select(AgentTaskModel).where(
+                    AgentTaskModel.task_type == "agent.workflow",
+                    AgentTaskModel.payload["workflow_name"].as_string() == "training_plan_generation",
+                )
+            )
+        )
+        uow.commit()
+
+    assert processed == 3
+    assert len(generation_runs) == 1
+    assert len(generation_tasks) == 1
+    assert generation_runs[0].metadata_json["manual_regeneration"] is False
+    assert generation_runs[0].metadata_json["trigger_type"] == "scheduled"
+
+
+def test_work_drain_daily_check_continues_after_candidate_queue_failure(sqlite_session_factory, monkeypatch, caplog) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    strategy = RegenerationStrategy(
+        race_id=None,
+        plan_type="maintenance",
+        reason="no_future_race",
+        starts_on=date(2027, 2, 1),
+        plan_horizon_weeks=4,
+    )
+    failed_candidate = BackgroundProjectionCandidate(
+        user_id="failed-user",
+        previous_plan_id="failed-plan",
+        previous_ends_on=date(2027, 1, 24),
+        strategy=strategy,
+    )
+    succeeding_candidate = BackgroundProjectionCandidate(
+        user_id="succeeding-user",
+        previous_plan_id="succeeding-plan",
+        previous_ends_on=date(2027, 1, 24),
+        strategy=strategy,
+    )
+
+    class BackgroundService:
+        def find_users_needing_projection(self, today):
+            assert today == date(2027, 1, 31)
+            return [failed_candidate, succeeding_candidate]
+
+        def queue_background_generation(self, candidate):
+            if candidate.user_id == "failed-user":
+                raise ConnectionError("background queue unavailable")
+            queued_user_ids.append(candidate.user_id)
+
+    queued_user_ids: list[str] = []
+    monkeypatch.setattr(agent_runtime, "_training_plan_regeneration_service", lambda session: BackgroundService())
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        task = queue.enqueue(
+            TaskEnvelope(
+                task_type="training-plan.daily-check",
+                payload={"anchor_date": "2027-01-31"},
+                correlation_id="daily-check-candidate-failure",
+                idempotency_key="daily-check-candidate-failure",
+            )
+        )
+
+        processed = work_drain(uow.session)
+        persisted_task = uow.session.get(AgentTaskModel, task.id)
+        uow.commit()
+
+    assert processed == 1
+    assert queued_user_ids == ["succeeding-user"]
+    assert persisted_task.status == "completed"
+    assert "training plan background generation queue failed" in caplog.text
+
+
+def test_work_drain_daily_check_retries_discovery_failure(sqlite_session_factory, monkeypatch, caplog) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    class UnavailableBackgroundService:
+        def find_users_needing_projection(self, today):
+            raise ConnectionError("database unavailable")
+
+    monkeypatch.setattr(
+        agent_runtime,
+        "_training_plan_regeneration_service",
+        lambda session: UnavailableBackgroundService(),
+    )
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        task = queue.enqueue(
+            TaskEnvelope(
+                task_type="training-plan.daily-check",
+                payload={"anchor_date": "2027-01-31"},
+                correlation_id="daily-check-discovery-failure",
+                idempotency_key="daily-check-discovery-failure",
+            )
+        )
+
+        processed = work_drain(uow.session)
+        persisted_task = uow.session.get(AgentTaskModel, task.id)
+        uow.commit()
+
+    assert processed == 1
+    assert persisted_task.status == "queued"
+    assert persisted_task.retry_count == 1
+    assert persisted_task.last_error_type == "ConnectionError"
+    assert "training plan daily check discovery failed" in caplog.text
 
 
 def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_session_factory) -> None:
@@ -140,6 +286,14 @@ def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_sessi
         )
         queue.enqueue(
             task=TaskEnvelope(
+                task_type="training-plan.daily-check",
+                payload={},
+                correlation_id="daily-check-malformed",
+                idempotency_key="daily-check-malformed",
+            )
+        )
+        queue.enqueue(
+            task=TaskEnvelope(
                 task_type="agent.workflow",
                 payload={"workflow_name": "daily_recommendation"},
                 correlation_id="malformed",
@@ -148,18 +302,16 @@ def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_sessi
         )
 
         processed = work_drain(uow.session)
-        statuses = [
-            task.status for task in uow.session.scalars(select(AgentTaskModel).order_by(AgentTaskModel.created_at))
-        ]
-        errors = [
-            task.last_error_type
-            for task in uow.session.scalars(select(AgentTaskModel).order_by(AgentTaskModel.created_at))
-        ]
+        tasks = list(uow.session.scalars(select(AgentTaskModel).order_by(AgentTaskModel.created_at)))
+        statuses = [task.status for task in tasks]
+        errors = [task.last_error_type for task in tasks]
+        retry_counts = [task.retry_count for task in tasks]
         uow.commit()
 
-    assert processed == 2
-    assert statuses == ["failed", "failed"]
-    assert errors == ["UnknownTaskType", "MalformedTaskPayload"]
+    assert processed == 3
+    assert statuses == ["failed", "failed", "failed"]
+    assert errors == ["UnknownTaskType", "MalformedTaskPayload", "MalformedTaskPayload"]
+    assert retry_counts == [1, 1, 1]
 
 
 def test_agent_runtime_cli_work_drain_does_not_require_smoke_openai_flag(tmp_path, monkeypatch, capsys) -> None:
