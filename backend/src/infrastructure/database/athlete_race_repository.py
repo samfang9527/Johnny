@@ -30,6 +30,16 @@ class SqlAlchemyAthleteRaceRepository:
             return None
         return _profile_from_model(model)
 
+    def list_profiles_for_users(self, user_ids: list[str]) -> list[AthleteProfile]:
+        if not user_ids:
+            return []
+        statement = (
+            select(AthleteProfileModel)
+            .where(AthleteProfileModel.user_id.in_(user_ids))
+            .order_by(AthleteProfileModel.user_id)
+        )
+        return [_profile_from_model(model) for model in self._session.scalars(statement)]
+
     def create_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal:
         _ensure_matching_user_id(user_id, race_goal.user_id)
         model = RaceModel(
@@ -80,6 +90,23 @@ class SqlAlchemyAthleteRaceRepository:
         if model is None:
             return None
         return _race_goal_from_model(model)
+
+    def list_race_goals_for_users(
+        self,
+        user_ids: list[str],
+        *,
+        race_date_from: date | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[RaceGoal]:
+        if not user_ids:
+            return []
+        statement = select(RaceModel).where(RaceModel.user_id.in_(user_ids))
+        if race_date_from is not None:
+            statement = statement.where(RaceModel.race_date >= race_date_from)
+        if statuses is not None:
+            statement = statement.where(RaceModel.status.in_(statuses))
+        statement = statement.order_by(RaceModel.user_id, RaceModel.race_date, RaceModel.id)
+        return [_race_goal_from_model(model) for model in self._session.scalars(statement)]
 
     def update_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal | None:
         _ensure_matching_user_id(user_id, race_goal.user_id)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -46,8 +46,53 @@ class SqlAlchemyAgentTaskQueue:
             return _task_from_model(existing)
         return _task_from_model(model)
 
+    def enqueue_or_requeue_terminal(self, task: TaskEnvelope) -> AgentTask:
+        idempotency_key = task.idempotency_key or _default_idempotency_key(task)
+        correlation_id = task.correlation_id or idempotency_key
+        now = utc_now()
+        result = self._session.execute(
+            update(AgentTaskModel)
+            .where(
+                AgentTaskModel.idempotency_key == idempotency_key,
+                AgentTaskModel.status.in_(("completed", "failed", "dead_lettered")),
+            )
+            .values(
+                task_type=task.task_type,
+                status="queued",
+                correlation_id=correlation_id,
+                payload=dict(task.payload),
+                available_at=task.available_at or now,
+                claimed_at=None,
+                completed_at=None,
+                failed_at=None,
+                retry_count=0,
+                max_attempts=task.max_attempts,
+                last_error_type=None,
+                last_error_message=None,
+                updated_at=now,
+            )
+        )
+        if result.rowcount:
+            self._session.flush()
+            requeued = self._get_model_by_idempotency_key(idempotency_key)
+            assert requeued is not None
+            return _task_from_model(requeued)
+
+        existing = self._get_model_by_idempotency_key(idempotency_key)
+        if existing is not None:
+            return _task_from_model(existing)
+        return self.enqueue(task)
+
     def get_by_idempotency_key(self, idempotency_key: str) -> AgentTask | None:
         model = self._get_model_by_idempotency_key(idempotency_key)
+        if model is None:
+            return None
+        return _task_from_model(model)
+
+    def get_by_correlation_id(self, correlation_id: str) -> AgentTask | None:
+        model = self._session.scalar(
+            select(AgentTaskModel).where(AgentTaskModel.correlation_id == correlation_id)
+        )
         if model is None:
             return None
         return _task_from_model(model)

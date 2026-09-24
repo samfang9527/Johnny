@@ -52,20 +52,14 @@ def queue_training_plan_generation(
     session: SessionDependency,
 ) -> DataEnvelope[QueuedAgentRunResponse]:
     ensure_current_user(session, current_user)
-    idempotency_key = "training_plan_generation:{}:{}:{}:{}:{}:{}".format(
-        current_user.id,
-        payload.race_id or "",
-        payload.starts_on.isoformat() if payload.starts_on else "",
-        payload.ends_on.isoformat() if payload.ends_on else "",
-        payload.plan_horizon_weeks or "",
-        payload.plan_type,
-    )
+    idempotency_key = f"training_plan_generation:{current_user.id}"
     result = _queue_handler(session).queue_run(
         user_id=current_user.id,
         workflow_name="training_plan_generation",
         trigger_type="manual",
         idempotency_key=idempotency_key,
         payload=payload.model_dump(mode="json"),
+        requeue_terminal=True,
     )
     return DataEnvelope(data=_queued_response(result))
 

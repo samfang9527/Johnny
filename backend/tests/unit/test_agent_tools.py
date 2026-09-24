@@ -629,8 +629,9 @@ def test_create_training_plan_tool_repairs_a_shifted_but_self_consistent_model_p
     (
         {"manual_regeneration": True, "plan_type": "race"},
         {"plan_type": "maintenance"},
+        {"plan_type": "race", "replace_active_projection": True},
     ),
-    ids=("manual-regeneration", "maintenance-replacement"),
+    ids=("manual-regeneration", "maintenance-replacement", "scheduled-replacement"),
 )
 def test_create_training_plan_tool_supersedes_all_active_projections_when_replacing(
     replacement_context: dict,

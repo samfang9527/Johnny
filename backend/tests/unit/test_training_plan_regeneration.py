@@ -9,6 +9,7 @@ from src.application.interfaces.task_queue import AgentTask, TaskEnvelope
 from src.application.training_plan_regeneration import TrainingPlanRegenerationService
 from src.domain.agent_runtime import AgentRun
 from src.domain.athlete_race import AthleteProfile, RaceGoal
+from src.domain.training_plan import TrainingPlan
 
 
 TODAY = date(2026, 9, 17)
@@ -26,7 +27,7 @@ def test_options_uses_athlete_timezone_for_next_quota_availability() -> None:
     assert options.quota.next_available_at.isoformat() == "2026-09-18T00:00:00+08:00"
 
 
-def test_athlete_local_day_drives_quota_races_start_date_and_idempotency_key() -> None:
+def test_athlete_local_day_drives_quota_races_and_start_date() -> None:
     athlete_day = date(2026, 9, 17)
     service, _, tasks = _service(
         profile=_profile(timezone_name="America/Los_Angeles"),
@@ -41,9 +42,7 @@ def test_athlete_local_day_drives_quota_races_start_date_and_idempotency_key() -
     assert options.default_strategy.race_id == "local-tomorrow"
     assert options.default_strategy.starts_on == date(2026, 9, 18)
     assert result.run is not None
-    assert tasks.items[0].idempotency_key == (
-        "training_plan_regeneration:athlete-1:2026-09-17:date-boundary"
-    )
+    assert tasks.items[0].idempotency_key == _execution_key()
     assert tasks.items[0].payload["input"]["quota_day"] == "2026-09-17"
     assert tasks.items[0].payload["input"]["starts_on"] == "2026-09-18"
 
@@ -104,13 +103,27 @@ def test_start_reuses_an_existing_in_flight_manual_run() -> None:
     assert tasks.items == []
 
 
+def test_start_reuses_an_existing_in_flight_scheduled_run() -> None:
+    plan = _active_plan(ends_on=date(2026, 9, 10))
+    service, _, tasks = _service(plans=[plan])
+    candidate = service.find_users_needing_projection(TODAY)[0]
+    scheduled = service.queue_background_generation(candidate)
+
+    result = service.start("athlete-1", _request("manual-while-scheduled"), TODAY)
+
+    assert result.run is not None
+    assert result.run.run_id == scheduled.run.id
+    assert result.in_flight_run == result.run
+    assert len(tasks.items) == 1
+
+
 def test_client_request_id_retry_returns_the_same_failed_run() -> None:
     service, runs, tasks = _service()
     request = _request("request-123")
 
     first = service.start("athlete-1", request, TODAY)
     assert first.run is not None
-    tasks.set_status(_idempotency_key("request-123"), "failed")
+    tasks.set_status(_execution_key(), "failed")
     runs.set_status(first.run.run_id, "failed")
     second = service.start("athlete-1", request, TODAY)
 
@@ -126,7 +139,7 @@ def test_client_request_id_retry_returns_terminal_run_while_another_run_is_in_fl
 
     terminal = service.start("athlete-1", retried_request, TODAY)
     assert terminal.run is not None
-    tasks.set_status(_idempotency_key("request-a"), "failed")
+    tasks.set_status(_execution_key(), "failed")
     runs.set_status(terminal.run.run_id, "failed")
     in_flight = service.start("athlete-1", _request("request-b"), TODAY)
     assert in_flight.run is not None
@@ -137,7 +150,7 @@ def test_client_request_id_retry_returns_terminal_run_while_another_run_is_in_fl
     assert retried.run.run_id == terminal.run.run_id
     assert retried.run.status == "failed"
     assert retried.run.run_id != in_flight.run.run_id
-    assert len(tasks.items) == 2
+    assert len(tasks.items) == 1
 
 
 def test_client_request_id_retry_returns_the_same_completed_run_before_quota_blocking() -> None:
@@ -146,7 +159,7 @@ def test_client_request_id_retry_returns_the_same_completed_run_before_quota_blo
 
     first = service.start("athlete-1", request, TODAY)
     assert first.run is not None
-    tasks.set_status(_idempotency_key("completed-request"), "completed")
+    tasks.set_status(_execution_key(), "completed")
     runs.set_status(
         first.run.run_id,
         "completed",
@@ -166,16 +179,15 @@ def test_different_client_request_id_queues_a_new_run_after_failure() -> None:
 
     first = service.start("athlete-1", _request("failed-request"), TODAY)
     assert first.run is not None
-    tasks.set_status(_idempotency_key("failed-request"), "failed")
+    tasks.set_status(_execution_key(), "failed")
     runs.set_status(first.run.run_id, "failed")
     second = service.start("athlete-1", _request("new-request"), TODAY)
 
     assert second.run is not None
     assert second.run.run_id != first.run.run_id
-    assert [task.idempotency_key for task in tasks.items] == [
-        _idempotency_key("failed-request"),
-        _idempotency_key("new-request"),
-    ]
+    assert len(tasks.items) == 1
+    assert tasks.items[0].idempotency_key == _execution_key()
+    assert tasks.items[0].payload["run_id"] == second.run.run_id
 
 
 def test_options_and_start_select_maintenance_without_a_future_race() -> None:
@@ -198,10 +210,188 @@ def test_options_and_start_select_maintenance_without_a_future_race() -> None:
     }
 
 
+def test_background_candidates_skip_active_and_recovery_window_projections() -> None:
+    plan = _active_plan(ends_on=date(2026, 9, 10))
+
+    for today in (date(2026, 9, 9), *[date(2026, 9, day) for day in range(11, 17)]):
+        service, _, _ = _service(
+            plans=[plan],
+            current_instant=datetime(today.year, today.month, today.day, 12, tzinfo=timezone.utc),
+        )
+        assert service.find_users_needing_projection(today) == []
+
+
+def test_background_candidate_queues_scheduled_race_plan_after_recovery_week() -> None:
+    plan = _active_plan(ends_on=date(2026, 9, 10))
+    service, _, tasks = _service(
+        plans=[plan],
+        races=[
+            _race("secondary-near", date(2026, 10, 15), priority="secondary"),
+            _race("primary-far", date(2026, 11, 15), priority="primary"),
+        ],
+    )
+
+    candidates = service.find_users_needing_projection(date(2026, 9, 17))
+    queued = service.queue_background_generation(candidates[0])
+
+    assert len(candidates) == 1
+    assert candidates[0].previous_plan_id == plan.id
+    assert candidates[0].strategy.race_id == "primary-far"
+    assert candidates[0].strategy.plan_type == "race"
+    assert candidates[0].strategy.starts_on == date(2026, 9, 18)
+    assert queued.run.trigger_type == "scheduled"
+    assert tasks.items[0].idempotency_key == _execution_key()
+    assert tasks.items[0].payload["input"] == {
+        "race_id": "primary-far",
+        "plan_type": "race",
+        "starts_on": "2026-09-18",
+        "plan_horizon_weeks": 9,
+        "manual_regeneration": False,
+        "trigger_type": "scheduled",
+        "replace_active_projection": True,
+    }
+
+
+def test_background_candidate_uses_maintenance_when_no_future_race_exists() -> None:
+    service, _, _ = _service(
+        plans=[_active_plan(ends_on=date(2026, 9, 10))],
+        races=[_race("past-race", date(2026, 9, 16))],
+    )
+
+    candidates = service.find_users_needing_projection(date(2026, 9, 17))
+
+    assert len(candidates) == 1
+    assert candidates[0].strategy.race_id is None
+    assert candidates[0].strategy.plan_type == "maintenance"
+    assert candidates[0].strategy.plan_horizon_weeks == 4
+
+
+def test_background_queue_reuses_the_shared_user_execution_slot() -> None:
+    service, _, tasks = _service(plans=[_active_plan(ends_on=date(2026, 9, 10))])
+    candidate = service.find_users_needing_projection(date(2026, 9, 17))[0]
+
+    first = service.queue_background_generation(candidate)
+    second = service.queue_background_generation(candidate)
+
+    assert second.run.id == first.run.id
+    assert len(tasks.items) == 1
+    assert tasks.items[0].idempotency_key == _execution_key()
+
+
+def test_background_queue_reuses_an_in_flight_manual_generation() -> None:
+    plan = _active_plan(ends_on=date(2026, 9, 10))
+    service, _, tasks = _service(plans=[plan])
+    manual = service.start("athlete-1", _request("manual-before-daily-check"), TODAY)
+    candidate = service.find_users_needing_projection(TODAY)[0]
+
+    scheduled = service.queue_background_generation(candidate)
+
+    assert manual.run is not None
+    assert scheduled.run.id == manual.run.run_id
+    assert len(tasks.items) == 1
+    assert tasks.items[0].payload["input"]["manual_regeneration"] is True
+
+
+def test_background_queue_retries_after_a_terminal_failure() -> None:
+    service, runs, tasks = _service(plans=[_active_plan(ends_on=date(2026, 9, 10))])
+    candidate = service.find_users_needing_projection(TODAY)[0]
+    first = service.queue_background_generation(candidate)
+    tasks.set_status(first.task.idempotency_key, "dead_lettered")
+    runs.set_status(first.run.id or "", "failed")
+
+    retried = service.queue_background_generation(candidate)
+
+    assert retried.run.id != first.run.id
+    assert len(tasks.items) == 1
+    assert retried.task.id == first.task.id
+    assert tasks.items[0].idempotency_key == _execution_key()
+    assert tasks.items[0].payload["run_id"] == retried.run.id
+
+
+def test_background_candidate_remains_eligible_after_day_seven_for_terminal_retries() -> None:
+    plan = _active_plan(ends_on=date(2026, 9, 10))
+    retry_day = date(2026, 9, 20)
+    service, _, _ = _service(
+        plans=[plan],
+        races=[
+            _race("already-past", date(2026, 9, 20), priority="primary"),
+            _race("retry-race", date(2026, 9, 28), priority="secondary"),
+        ],
+        current_instant=datetime(2026, 9, 20, 12, tzinfo=timezone.utc),
+    )
+
+    candidates = service.find_users_needing_projection(retry_day)
+
+    assert len(candidates) == 1
+    assert candidates[0].previous_plan_id == plan.id
+    assert candidates[0].strategy.starts_on == date(2026, 9, 21)
+    assert candidates[0].strategy.race_id == "retry-race"
+
+
+def test_background_candidate_ignores_completed_and_cancelled_races() -> None:
+    service, _, _ = _service(
+        plans=[_active_plan(ends_on=date(2026, 9, 10))],
+        races=[
+            _race("cancelled-primary", date(2026, 10, 20), priority="primary", status="cancelled"),
+            _race("completed-secondary", date(2026, 10, 10), priority="secondary", status="completed"),
+            _race("planned-tune-up", date(2026, 10, 5), priority="tune_up", status="planned"),
+        ],
+    )
+
+    candidates = service.find_users_needing_projection(date(2026, 9, 17))
+
+    assert len(candidates) == 1
+    assert candidates[0].strategy.race_id == "planned-tune-up"
+
+
+def test_background_candidate_is_skipped_when_an_active_replacement_covers_its_start() -> None:
+    previous = _active_plan(ends_on=date(2026, 9, 10))
+    replacement = TrainingPlan.create(
+        id="replacement-plan",
+        user_id="athlete-1",
+        name="Replacement",
+        starts_on=date(2026, 9, 17),
+        ends_on=date(2026, 10, 14),
+        status="active",
+    )
+    service, _, _ = _service(plans=[previous, replacement])
+
+    assert service.find_users_needing_projection(TODAY) == []
+
+
+def test_background_candidate_is_skipped_when_an_active_replacement_starts_later() -> None:
+    previous = _active_plan(ends_on=date(2026, 9, 10))
+    replacement = TrainingPlan.create(
+        id="replacement-plan",
+        user_id="athlete-1",
+        name="Replacement",
+        starts_on=date(2026, 9, 25),
+        ends_on=date(2026, 10, 22),
+        status="active",
+    )
+    service, _, _ = _service(plans=[previous, replacement])
+
+    assert service.find_users_needing_projection(TODAY) == []
+
+
+def test_background_candidate_uses_the_athletes_local_date() -> None:
+    service, _, _ = _service(
+        profile=_profile(timezone_name="America/Los_Angeles"),
+        plans=[_active_plan(ends_on=date(2026, 9, 10))],
+        current_instant=datetime(2026, 9, 18, 0, 30, tzinfo=timezone.utc),
+    )
+
+    candidates = service.find_users_needing_projection(date(2026, 9, 18))
+
+    assert len(candidates) == 1
+    assert candidates[0].strategy.starts_on == date(2026, 9, 18)
+
+
 def _service(
     *,
     profile: AthleteProfile | None = None,
     races: list[RaceGoal] | None = None,
+    plans: list[TrainingPlan] | None = None,
     current_instant: datetime = CURRENT_INSTANT,
 ) -> tuple[TrainingPlanRegenerationService, "_FakeRunStore", "_FakeTaskQueue"]:
     profiles = _FakeProfiles(profile or _profile())
@@ -212,6 +402,7 @@ def _service(
         TrainingPlanRegenerationService(
             profiles=profiles,
             race_goals=race_store,
+            training_plans=_FakePlans(plans or []),
             runs=runs,
             tasks=tasks,
             queue_agent_runs=QueueAgentRunHandler(
@@ -238,14 +429,32 @@ def _profile(*, timezone_name: str = "UTC") -> AthleteProfile:
     )
 
 
-def _race(race_id: str, race_date: date) -> RaceGoal:
+def _race(
+    race_id: str,
+    race_date: date,
+    *,
+    priority: str = "primary",
+    status: str = "planned",
+) -> RaceGoal:
     return RaceGoal.create(
         id=race_id,
         user_id="athlete-1",
         name="Race",
         race_date=race_date,
         distance_meters=21097,
-        priority="primary",
+        priority=priority,
+        status=status,
+    )
+
+
+def _active_plan(*, ends_on: date) -> TrainingPlan:
+    return TrainingPlan.create(
+        id=f"plan-{ends_on.isoformat()}",
+        user_id="athlete-1",
+        name="Current plan",
+        starts_on=ends_on - timedelta(weeks=4) + timedelta(days=1),
+        ends_on=ends_on,
+        status="active",
     )
 
 
@@ -253,8 +462,8 @@ def _request(client_request_id: str, *, plan_type: str = "race") -> TrainingPlan
     return TrainingPlanRegenerationRequest(client_request_id=client_request_id, plan_type=plan_type)
 
 
-def _idempotency_key(client_request_id: str) -> str:
-    return f"training_plan_regeneration:athlete-1:2026-09-17:{client_request_id}"
+def _execution_key() -> str:
+    return "training_plan_generation:athlete-1"
 
 
 def _completed_manual_run(*, quota_day: date, created_plan_id: str) -> AgentRun:
@@ -281,6 +490,11 @@ class _FakeProfiles:
     def get_profile_for_user(self, user_id: str) -> AthleteProfile | None:
         return self.profile if self.profile is not None and self.profile.user_id == user_id else None
 
+    def list_profiles_for_users(self, user_ids: list[str]) -> list[AthleteProfile]:
+        if self.profile is None or self.profile.user_id not in user_ids:
+            return []
+        return [self.profile]
+
 
 class _FakeRaces:
     def __init__(self, races: list[RaceGoal]) -> None:
@@ -292,6 +506,36 @@ class _FakeRaces:
             race
             for race in self.races
             if race.user_id == user_id and (race_date_from is None or race.race_date >= race_date_from)
+        ]
+
+    def list_race_goals_for_users(self, user_ids: list[str], **kwargs) -> list[RaceGoal]:
+        race_date_from = kwargs.get("race_date_from")
+        statuses = kwargs.get("statuses")
+        return [
+            race
+            for race in self.races
+            if race.user_id in user_ids
+            and (race_date_from is None or race.race_date >= race_date_from)
+            and (statuses is None or race.status in statuses)
+        ]
+
+
+class _FakePlans:
+    def __init__(self, plans: list[TrainingPlan]) -> None:
+        self.plans = plans
+
+    def list_active_plans_ending_on_or_before(self, ends_on: date) -> list[TrainingPlan]:
+        return [
+            plan
+            for plan in self.plans
+            if plan.status == "active" and plan.ends_on <= ends_on
+        ]
+
+    def list_active_plans_ending_on_or_after(self, ends_on: date) -> list[TrainingPlan]:
+        return [
+            plan
+            for plan in self.plans
+            if plan.status == "active" and plan.ends_on >= ends_on
         ]
 
 
@@ -335,6 +579,9 @@ class _FakeTaskQueue:
     def get_by_idempotency_key(self, idempotency_key: str) -> AgentTask | None:
         return next((task for task in self.items if task.idempotency_key == idempotency_key), None)
 
+    def get_by_correlation_id(self, correlation_id: str) -> AgentTask | None:
+        return next((task for task in self.items if task.correlation_id == correlation_id), None)
+
     def enqueue(self, task: TaskEnvelope) -> AgentTask:
         existing = self.get_by_idempotency_key(task.idempotency_key or "")
         if existing is not None:
@@ -360,6 +607,30 @@ class _FakeTaskQueue:
         )
         self.items.append(created)
         return created
+
+    def enqueue_or_requeue_terminal(self, task: TaskEnvelope) -> AgentTask:
+        existing = self.get_by_idempotency_key(task.idempotency_key or "")
+        if existing is None:
+            return self.enqueue(task)
+        if existing.status in {"queued", "processing"}:
+            return existing
+        requeued = replace(
+            existing,
+            status="queued",
+            correlation_id=task.correlation_id or "",
+            payload=dict(task.payload),
+            available_at=task.available_at or CURRENT_INSTANT,
+            claimed_at=None,
+            completed_at=None,
+            failed_at=None,
+            retry_count=0,
+            max_attempts=task.max_attempts,
+            last_error_type=None,
+            last_error_message=None,
+            updated_at=CURRENT_INSTANT,
+        )
+        self.items[self.items.index(existing)] = requeued
+        return requeued
 
     def set_status(self, idempotency_key: str, status: str) -> None:
         for index, task in enumerate(self.items):

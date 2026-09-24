@@ -115,6 +115,64 @@ def test_queue_agent_run_handler_requeues_after_terminal_task_with_same_idempote
     assert task_count == 2
 
 
+def test_queue_agent_run_handler_rearms_a_shared_execution_slot_after_failure(
+    sqlite_session_factory,
+) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        user = UserModel(email="exclusive-run@example.com", display_name="Exclusive Run")
+        uow.session.add(user)
+        uow.session.flush()
+        handler = QueueAgentRunHandler(
+            runs=SqlAlchemyAgentRunRepository(uow.session),
+            queue=SqlAlchemyAgentTaskQueue(uow.session),
+            prompt_version="running-companion-v1",
+        )
+        execution_key = f"training_plan_generation:{user.id}"
+        first = handler.queue_run(
+            user_id=user.id,
+            workflow_name="training_plan_generation",
+            trigger_type="scheduled",
+            idempotency_key=execution_key,
+            payload={"manual_regeneration": False},
+            requeue_terminal=True,
+        )
+        first_task_model = uow.session.get(AgentTaskModel, first.task.id)
+        first_run_model = uow.session.get(AgentRunModel, first.run.id)
+        first_task_model.status = "failed"
+        first_run_model.status = "failed"
+
+        retried = handler.queue_run(
+            user_id=user.id,
+            workflow_name="training_plan_generation",
+            trigger_type="manual",
+            idempotency_key=execution_key,
+            payload={"client_request_id": "manual-retry", "manual_regeneration": True},
+            requeue_terminal=True,
+        )
+        competing = handler.queue_run(
+            user_id=user.id,
+            workflow_name="training_plan_generation",
+            trigger_type="scheduled",
+            idempotency_key=execution_key,
+            payload={"manual_regeneration": False},
+            requeue_terminal=True,
+        )
+        run_count = len(uow.session.scalars(select(AgentRunModel)).all())
+        task_count = len(uow.session.scalars(select(AgentTaskModel)).all())
+        uow.commit()
+
+    assert retried.run.id != first.run.id
+    assert competing.run.id == retried.run.id
+    assert retried.task.id == first.task.id
+    assert competing.task.id == first.task.id
+    assert retried.task.idempotency_key == execution_key
+    assert retried.task.payload["input"]["manual_regeneration"] is True
+    assert run_count == 2
+    assert task_count == 1
+
+
 def test_queue_agent_run_handler_returns_run_owned_by_task_when_enqueue_deduplicates(
     sqlite_session_factory,
 ) -> None:

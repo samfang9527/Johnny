@@ -17,6 +17,8 @@ PRODUCT_RUN_METADATA_KEYS = (
     "client_request_id",
     "manual_regeneration",
     "quota_day",
+    "trigger_type",
+    "replace_active_projection",
 )
 
 
@@ -52,7 +54,19 @@ class QueueAgentRunHandler:
         idempotency_key: str,
         payload: dict[str, Any],
         force: bool = False,
+        requeue_terminal: bool = False,
     ) -> QueuedAgentRun:
+        if force and requeue_terminal:
+            raise ValueError("force and requeue_terminal cannot be combined")
+        if requeue_terminal:
+            return self._queue_in_execution_slot(
+                user_id=user_id,
+                workflow_name=workflow_name,
+                trigger_type=trigger_type,
+                idempotency_key=idempotency_key,
+                payload=payload,
+            )
+
         effective_key = idempotency_key if not force else f"{idempotency_key}:force:{uuid4()}"
 
         for _ in range(3):
@@ -106,6 +120,45 @@ class QueueAgentRunHandler:
             effective_key = f"{idempotency_key}:retry:{uuid4()}"
 
         raise RuntimeError("Could not enqueue agent run after terminal idempotency collisions")
+
+    def _queue_in_execution_slot(
+        self,
+        *,
+        user_id: str,
+        workflow_name: str,
+        trigger_type: str,
+        idempotency_key: str,
+        payload: dict[str, Any],
+    ) -> QueuedAgentRun:
+        candidate_run = AgentRun.queue(
+            id=str(uuid4()),
+            user_id=user_id,
+            trigger_type=trigger_type,
+            workflow_name=workflow_name,
+            prompt_version=self._prompt_version,
+            provider=self._provider,
+            model=self._model,
+            correlation_id=_run_correlation_id(idempotency_key),
+            input_summary=_input_summary(workflow_name, payload),
+            metadata=_run_metadata(workflow_name, payload),
+        )
+        task = self._queue.enqueue_or_requeue_terminal(
+            TaskEnvelope(
+                task_type="agent.workflow",
+                payload={"run_id": candidate_run.id, "workflow_name": workflow_name, "input": dict(payload)},
+                correlation_id=candidate_run.id,
+                idempotency_key=idempotency_key,
+            )
+        )
+        if task.payload.get("run_id") == candidate_run.id:
+            canonical_run = self._runs.create_run(candidate_run)
+        else:
+            canonical_run = self._run_for_task(user_id, task)
+        return QueuedAgentRun(
+            run=canonical_run,
+            task=task,
+            poll_url=_poll_url(canonical_run.id),
+        )
 
     def _run_for_task(self, user_id: str, task: AgentTask) -> AgentRun:
         run_id = task.payload.get("run_id")

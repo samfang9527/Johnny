@@ -40,6 +40,84 @@ def test_agent_task_queue_enqueues_idempotently_with_aws_like_envelope(sqlite_se
     assert first.available_at == now
 
 
+def test_agent_task_queue_finds_a_task_by_run_correlation_id(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        queued = queue.enqueue(
+            TaskEnvelope(
+                task_type="agent.workflow",
+                payload={"run_id": "run-1", "workflow_name": "training_plan_generation"},
+                correlation_id="run-1",
+                idempotency_key="training_plan_background:user-1:2027-01-29",
+            )
+        )
+
+        found = queue.get_by_correlation_id("run-1")
+        missing = queue.get_by_correlation_id("missing-run")
+
+    assert found is not None
+    assert found.id == queued.id
+    assert missing is None
+
+
+def test_agent_task_queue_atomically_requeues_one_terminal_execution_slot(
+    sqlite_session_factory,
+) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    now = datetime(2027, 1, 28, 8, 0, tzinfo=timezone.utc)
+    execution_key = "training_plan_generation:user-1"
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        first = queue.enqueue(
+            TaskEnvelope(
+                task_type="agent.workflow",
+                payload={"run_id": "run-1", "workflow_name": "training_plan_generation"},
+                correlation_id="run-1",
+                idempotency_key=execution_key,
+                available_at=now,
+            )
+        )
+        queue.fail(
+            first.id,
+            error_type="GenerationFailed",
+            error_message="terminal",
+            retryable=False,
+            now=now,
+            retry_delay=timedelta(),
+        )
+
+        requeued = queue.enqueue_or_requeue_terminal(
+            TaskEnvelope(
+                task_type="agent.workflow",
+                payload={"run_id": "run-2", "workflow_name": "training_plan_generation"},
+                correlation_id="run-2",
+                idempotency_key=execution_key,
+                available_at=now + timedelta(days=1),
+            )
+        )
+        competing = queue.enqueue_or_requeue_terminal(
+            TaskEnvelope(
+                task_type="agent.workflow",
+                payload={"run_id": "run-3", "workflow_name": "training_plan_generation"},
+                correlation_id="run-3",
+                idempotency_key=execution_key,
+                available_at=now + timedelta(days=1),
+            )
+        )
+        uow.commit()
+
+    assert requeued.id == first.id
+    assert competing.id == first.id
+    assert competing.status == "queued"
+    assert competing.correlation_id == "run-2"
+    assert competing.payload["run_id"] == "run-2"
+    assert competing.failed_at is None
+    assert competing.retry_count == 0
+
+
 def test_agent_task_queue_claims_oldest_available_then_created_and_reclaims_stale(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     now = datetime(2027, 1, 28, 8, 0, tzinfo=timezone.utc)

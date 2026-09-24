@@ -258,6 +258,11 @@ def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_pol
         headers=headers,
         json={"plan_type": "base", "starts_on": "2027-02-01", "plan_horizon_weeks": 4},
     )
+    competing_training = client.post(
+        "/api/v1/agent-runs/training-plan-generation",
+        headers=headers,
+        json={"plan_type": "race", "starts_on": "2027-03-01", "plan_horizon_weeks": 8},
+    )
     polled = client.get(daily.json()["data"]["poll_url"], headers=headers)
     steps = client.get(f"/api/v1/agent-runs/{daily.json()['data']['run_id']}/steps", headers=headers)
     listed = client.get("/api/v1/agent-runs?status=queued", headers=headers)
@@ -271,6 +276,7 @@ def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_pol
     assert forced.json()["data"]["run_id"] != daily.json()["data"]["run_id"]
     assert training.status_code == 200
     assert training.json()["data"]["workflow_name"] == "training_plan_generation"
+    assert competing_training.json()["data"]["run_id"] == training.json()["data"]["run_id"]
     assert polled.json()["data"]["id"] == daily.json()["data"]["run_id"]
     assert polled.json()["data"]["started_at"] is None
     assert steps.json()["data"] == []

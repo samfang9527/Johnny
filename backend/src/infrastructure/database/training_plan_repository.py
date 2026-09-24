@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from src.domain.training_plan import (
@@ -72,6 +72,41 @@ class SqlAlchemyTrainingPlanRepository:
         if model is None:
             return None
         return _plan_from_model(model)
+
+    def list_active_plans_ending_on_or_before(self, ends_on: date) -> list[TrainingPlan]:
+        latest_end_by_user = (
+            select(
+                TrainingPlanModel.user_id.label("user_id"),
+                func.max(TrainingPlanModel.ends_on).label("ends_on"),
+            )
+            .where(
+                TrainingPlanModel.status == "active",
+                TrainingPlanModel.ends_on <= ends_on,
+            )
+            .group_by(TrainingPlanModel.user_id)
+            .subquery()
+        )
+        statement = (
+            select(TrainingPlanModel)
+            .join(
+                latest_end_by_user,
+                (TrainingPlanModel.user_id == latest_end_by_user.c.user_id)
+                & (TrainingPlanModel.ends_on == latest_end_by_user.c.ends_on),
+            )
+            .order_by(TrainingPlanModel.user_id, TrainingPlanModel.ends_on.desc(), TrainingPlanModel.id)
+        )
+        return [_plan_header_from_model(model) for model in self._session.scalars(statement)]
+
+    def list_active_plans_ending_on_or_after(self, ends_on: date) -> list[TrainingPlan]:
+        statement = (
+            select(TrainingPlanModel)
+            .where(
+                TrainingPlanModel.status == "active",
+                TrainingPlanModel.ends_on >= ends_on,
+            )
+            .order_by(TrainingPlanModel.user_id, TrainingPlanModel.starts_on, TrainingPlanModel.id)
+        )
+        return [_plan_header_from_model(model) for model in self._session.scalars(statement)]
 
     def create_draft_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
         if plan.status != "draft":
@@ -344,6 +379,19 @@ def _plan_from_model(model: TrainingPlanModel) -> TrainingPlan:
         ends_on=model.ends_on,
         metadata=model.metadata_json or {},
         workouts=tuple(_workout_from_model(workout) for workout in model.workouts),
+    )
+
+
+def _plan_header_from_model(model: TrainingPlanModel) -> TrainingPlan:
+    return TrainingPlan.create(
+        id=model.id,
+        user_id=model.user_id,
+        race_id=model.race_id,
+        name=model.name,
+        status=model.status,
+        starts_on=model.starts_on,
+        ends_on=model.ends_on,
+        metadata=model.metadata_json or {},
     )
 
 

@@ -24,6 +24,8 @@ PRODUCT_RUN_METADATA_KEYS = (
     "client_request_id",
     "manual_regeneration",
     "quota_day",
+    "trigger_type",
+    "replace_active_projection",
 )
 
 
@@ -587,7 +589,8 @@ class RunningCompanionAgent:
             return None
         arguments = _fallback_training_plan_arguments(request.context or {})
         arguments.setdefault("agent_run_id", run.id)
-        _inject_training_plan_trusted_context(arguments, request.context or {})
+        fallback_context = {**(request.context or {}), "generation_mode": "fallback"}
+        _inject_training_plan_trusted_context(arguments, fallback_context)
         try:
             payload = self._tools.get("createTrainingPlan").run(user_id=user_id, arguments=arguments)
         except Exception:
@@ -720,10 +723,8 @@ def _recent_activity_summary(activities: tuple[dict, ...]) -> dict:
 
 
 def _inject_training_plan_trusted_context(arguments: dict, request_context: dict) -> None:
-    trusted_context = arguments.get("trusted_context")
-    if not isinstance(trusted_context, dict):
-        trusted_context = {}
-        arguments["trusted_context"] = trusted_context
+    trusted_context: dict = {}
+    arguments["trusted_context"] = trusted_context
     pace_profile = request_context.get("pace_profile")
     if isinstance(pace_profile, dict):
         trusted_context["pace_profile"] = pace_profile
@@ -738,6 +739,8 @@ def _inject_training_plan_trusted_context(arguments: dict, request_context: dict
     for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
         if key in request_context:
             trusted_context[key] = request_context.get(key)
+    if request_context.get("generation_mode") == "fallback":
+        trusted_context["generation_mode"] = "fallback"
 
 
 def _plan_continuity_context(last_active_plan: dict | None, *, selected_race_id: str | None) -> dict:

@@ -667,6 +667,7 @@ def test_training_plan_generation_preserves_queued_manual_metadata_and_records_c
                             "manual_regeneration": False,
                             "client_request_id": "model-value",
                             "quota_day": "2027-01-01",
+                            "replace_active_projection": True,
                         },
                     },
                 ),
@@ -710,6 +711,7 @@ def test_training_plan_generation_preserves_queued_manual_metadata_and_records_c
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["quota_day"] == "2027-01-28"
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_horizon_weeks"] == 4
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["plan_type"] == "maintenance"
+    assert "replace_active_projection" not in plan_tool.calls[0]["arguments"]["trusted_context"]
     assert result.metadata == {
         **queued_run.metadata,
         "created_training_plan_id": "plan-1",

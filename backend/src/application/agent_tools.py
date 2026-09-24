@@ -237,6 +237,7 @@ class CreateTrainingPlanTool:
             replace_all_active=(
                 trusted_context.get("manual_regeneration") is True
                 or trusted_context.get("plan_type") == "maintenance"
+                or trusted_context.get("replace_active_projection") is True
             ),
         )
         payload = {"training_plan": _plan_payload(saved), "applied": True}

@@ -44,7 +44,13 @@ class AgentTaskQueue(Protocol):
     def get_by_idempotency_key(self, idempotency_key: str) -> AgentTask | None:
         ...
 
+    def get_by_correlation_id(self, correlation_id: str) -> AgentTask | None:
+        ...
+
     def enqueue(self, task: TaskEnvelope) -> AgentTask:
+        ...
+
+    def enqueue_or_requeue_terminal(self, task: TaskEnvelope) -> AgentTask:
         ...
 
     def claim_next(self, *, now: datetime, claim_timeout: timedelta) -> AgentTask | None:
