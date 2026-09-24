@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import logging
 import os
 import sys
@@ -223,6 +224,7 @@ def _training_plan_regeneration_service(session: Session) -> TrainingPlanRegener
         runs=runs,
         tasks=tasks,
         queue_agent_runs=_queue_handler(session),
+        current_instant=_utc_now,
     )
 
 
@@ -294,8 +296,19 @@ def _process_task(session: Session, task_id: str) -> None:
         )
         return
 
+    workflow_input = dict(payload["input"])
     try:
-        result = _dispatch_workflow(session, run, workflow_name, payload["input"])
+        run, workflow_input = _refresh_scheduled_training_plan_context(
+            session,
+            runs=runs,
+            run=run,
+            workflow_name=workflow_name,
+            workflow_input=workflow_input,
+        )
+        if workflow_input != payload["input"]:
+            task.payload = {**payload, "input": dict(workflow_input)}
+            session.flush()
+        result = _dispatch_workflow(session, run, workflow_name, workflow_input)
     except Exception as exc:
         queue.fail(
             task_id,
@@ -322,10 +335,11 @@ def _process_task(session: Session, task_id: str) -> None:
 
 def _process_training_plan_daily_check(session: Session, task: AgentTaskModel) -> None:
     queue = SqlAlchemyAgentTaskQueue(session)
+    task_id = task.id
     anchor_date = _daily_check_anchor_date(task.payload or {})
     if anchor_date is None:
         queue.fail(
-            task.id,
+            task_id,
             error_type="MalformedTaskPayload",
             error_message="training-plan.daily-check requires an ISO anchor_date",
             retryable=False,
@@ -335,12 +349,13 @@ def _process_training_plan_daily_check(session: Session, task: AgentTaskModel) -
         return
 
     try:
-        service = _training_plan_regeneration_service(session)
-        candidates = service.find_users_needing_projection(anchor_date)
+        with session.begin_nested():
+            service = _training_plan_regeneration_service(session)
+            candidates = service.find_users_needing_projection(anchor_date)
     except Exception as exc:
-        logger.exception("training plan daily check discovery failed", extra={"task_id": task.id})
+        logger.exception("training plan daily check discovery failed", extra={"task_id": task_id})
         queue.fail(
-            task.id,
+            task_id,
             error_type=exc.__class__.__name__,
             error_message=str(exc),
             retryable=True,
@@ -351,17 +366,18 @@ def _process_training_plan_daily_check(session: Session, task: AgentTaskModel) -
 
     for candidate in candidates:
         try:
-            service.queue_background_generation(candidate)
+            with session.begin_nested():
+                service.queue_background_generation(candidate)
         except Exception:
             logger.exception(
                 "training plan background generation queue failed",
                 extra={
-                    "task_id": task.id,
+                    "task_id": task_id,
                     "user_id": candidate.user_id,
                     "starts_on": candidate.strategy.starts_on.isoformat(),
                 },
             )
-    queue.complete(task.id, now=_utc_now())
+    queue.complete(task_id, now=_utc_now())
 
 
 def _daily_check_anchor_date(payload: dict) -> date | None:
@@ -372,6 +388,47 @@ def _daily_check_anchor_date(payload: dict) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _refresh_scheduled_training_plan_context(
+    session: Session,
+    *,
+    runs: SqlAlchemyAgentRunRepository,
+    run: AgentRun,
+    workflow_name: str,
+    workflow_input: dict,
+) -> tuple[AgentRun, dict]:
+    if workflow_name != "training_plan_generation" or run.metadata.get("manual_regeneration") is not False:
+        return run, workflow_input
+
+    previous_ends_on = (
+        _optional_date(run.metadata.get("previous_ends_on"))
+        or _optional_date(workflow_input.get("previous_ends_on"))
+    )
+    if previous_ends_on is None:
+        previous_plan = SqlAlchemyTrainingPlanRepository(session).get_current_plan_for_user(run.user_id)
+        if previous_plan is None:
+            raise ValueError("scheduled training plan generation requires a previous active plan")
+        previous_ends_on = previous_plan.ends_on
+
+    strategy = _training_plan_regeneration_service(session).refresh_background_strategy(
+        user_id=run.user_id,
+        previous_ends_on=previous_ends_on,
+    )
+    refreshed_values = {
+        "race_id": strategy.race_id,
+        "plan_type": strategy.plan_type,
+        "starts_on": strategy.starts_on.isoformat(),
+        "plan_horizon_weeks": strategy.plan_horizon_weeks,
+        "manual_regeneration": False,
+        "trigger_type": "scheduled",
+        "replace_active_projection": True,
+        "previous_ends_on": previous_ends_on.isoformat(),
+    }
+    refreshed_run = runs.complete_run(
+        replace(run, metadata={**run.metadata, **refreshed_values})
+    )
+    return refreshed_run, {**workflow_input, **refreshed_values}
 
 
 def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, workflow_input: dict) -> AgentRun:

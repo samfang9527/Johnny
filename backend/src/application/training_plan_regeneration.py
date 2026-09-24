@@ -271,8 +271,32 @@ class TrainingPlanRegenerationService:
                 "manual_regeneration": False,
                 "trigger_type": "scheduled",
                 "replace_active_projection": True,
+                "previous_ends_on": candidate.previous_ends_on.isoformat(),
             },
             requeue_terminal=True,
+        )
+
+    def refresh_background_strategy(
+        self,
+        *,
+        user_id: str,
+        previous_ends_on: date,
+    ) -> RegenerationStrategy:
+        current_instant = self._current_instant()
+        profile = self._profiles.get_profile_for_user(user_id)
+        athlete_today = _athlete_local_day(current_instant, profile, current_instant.date())
+        starts_on = max(previous_ends_on + timedelta(days=8), athlete_today + timedelta(days=1))
+        races = self._race_goals.list_race_goals_for_users(
+            [user_id],
+            race_date_from=starts_on,
+            statuses=tuple(sorted(BACKGROUND_RACE_STATUSES)),
+        )
+        return _strategy(
+            races,
+            athlete_today,
+            explicit_race_id=None,
+            force_maintenance=False,
+            starts_on=starts_on,
         )
 
     def _future_races(self, user_id: str, starts_on: date) -> list[RaceGoal]:

@@ -249,7 +249,9 @@ def test_background_candidate_queues_scheduled_race_plan_after_recovery_week() -
         "manual_regeneration": False,
         "trigger_type": "scheduled",
         "replace_active_projection": True,
+        "previous_ends_on": "2026-09-10",
     }
+    assert queued.run.metadata["previous_ends_on"] == "2026-09-10"
 
 
 def test_background_candidate_uses_maintenance_when_no_future_race_exists() -> None:
@@ -342,6 +344,28 @@ def test_background_candidate_ignores_completed_and_cancelled_races() -> None:
 
     assert len(candidates) == 1
     assert candidates[0].strategy.race_id == "planned-tune-up"
+
+
+def test_background_execution_refresh_rebases_start_and_reselects_current_race_strategy() -> None:
+    execution_day = date(2026, 9, 20)
+    service, _, _ = _service(
+        races=[
+            _race("queued-primary", date(2026, 10, 1), priority="primary", status="cancelled"),
+            _race("active-secondary", date(2026, 10, 5), priority="secondary", status="active"),
+            _race("planned-primary", date(2026, 11, 15), priority="primary", status="planned"),
+        ],
+        current_instant=datetime(2026, 9, 20, 12, tzinfo=timezone.utc),
+    )
+
+    refreshed = service.refresh_background_strategy(
+        user_id="athlete-1",
+        previous_ends_on=date(2026, 9, 10),
+    )
+
+    assert refreshed.starts_on == execution_day + timedelta(days=1)
+    assert refreshed.race_id == "planned-primary"
+    assert refreshed.plan_type == "race"
+    assert refreshed.plan_horizon_weeks == 8
 
 
 def test_background_candidate_is_skipped_when_an_active_replacement_covers_its_start() -> None:

@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import event
+
 from src.application.interfaces.task_queue import TaskEnvelope
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.models import Base
@@ -38,6 +40,67 @@ def test_agent_task_queue_enqueues_idempotently_with_aws_like_envelope(sqlite_se
     assert first.retry_count == 0
     assert first.max_attempts == 3
     assert first.available_at == now
+
+
+def test_agent_task_queue_integrity_collision_preserves_outer_transaction(
+    sqlite_session_factory,
+    monkeypatch,
+) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    now = datetime(2027, 1, 28, 8, 0, tzinfo=timezone.utc)
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        seeded = SqlAlchemyAgentTaskQueue(uow.session).enqueue(
+            TaskEnvelope(
+                task_type="agent.workflow",
+                payload={"run_id": "seeded"},
+                correlation_id="seeded",
+                idempotency_key="collision",
+                available_at=now,
+            )
+        )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        prior = queue.enqueue(
+            TaskEnvelope(
+                task_type="agent.workflow",
+                payload={"run_id": "prior"},
+                correlation_id="prior",
+                idempotency_key="prior",
+                available_at=now,
+            )
+        )
+        original_lookup = queue._get_model_by_idempotency_key
+        missed_collision = False
+
+        def miss_collision_once(idempotency_key: str):
+            nonlocal missed_collision
+            if idempotency_key == "collision" and not missed_collision:
+                missed_collision = True
+                return None
+            return original_lookup(idempotency_key)
+
+        monkeypatch.setattr(queue, "_get_model_by_idempotency_key", miss_collision_once)
+        with uow.session.begin_nested():
+            duplicate = queue.enqueue(
+                TaskEnvelope(
+                    task_type="agent.workflow",
+                    payload={"run_id": "duplicate"},
+                    correlation_id="duplicate",
+                    idempotency_key="collision",
+                    available_at=now,
+                )
+            )
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        persisted_prior = SqlAlchemyAgentTaskQueue(uow.session).get_by_idempotency_key("prior")
+
+    assert duplicate.id == seeded.id
+    assert persisted_prior is not None
+    assert persisted_prior.id == prior.id
 
 
 def test_agent_task_queue_finds_a_task_by_run_correlation_id(sqlite_session_factory) -> None:
@@ -164,6 +227,74 @@ def test_agent_task_queue_claims_oldest_available_then_created_and_reclaims_stal
     assert none_available is None
     assert reclaimed.id == first.id
     assert later.id not in {claimed_first.id, claimed_second.id, reclaimed.id}
+
+
+def test_agent_task_queue_claim_is_conditional_across_sessions_and_only_stale_work_is_reclaimed(
+    sqlite_session_factory,
+) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    now = datetime(2027, 1, 28, 8, 0, tzinfo=timezone.utc)
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        queued = SqlAlchemyAgentTaskQueue(uow.session).enqueue(
+            TaskEnvelope(
+                task_type="agent.workflow",
+                payload={"run_id": "contended"},
+                correlation_id="contended",
+                idempotency_key="contended",
+                available_at=now,
+            )
+        )
+        uow.commit()
+
+    with sqlite_session_factory() as first_session, sqlite_session_factory() as second_session:
+        first_queue = SqlAlchemyAgentTaskQueue(first_session)
+        second_queue = SqlAlchemyAgentTaskQueue(second_session)
+        competing_claim = None
+        interleaved = False
+
+        def let_second_session_claim_after_first_select(orm_execute_state):
+            nonlocal competing_claim, interleaved
+            result = orm_execute_state.invoke_statement()
+            if orm_execute_state.is_select and not interleaved:
+                interleaved = True
+                competing_claim = second_queue.claim_next(
+                    now=now,
+                    claim_timeout=timedelta(minutes=5),
+                )
+                second_session.commit()
+            return result
+
+        event.listen(
+            first_session,
+            "do_orm_execute",
+            let_second_session_claim_after_first_select,
+            retval=True,
+        )
+        losing_claim = first_queue.claim_next(now=now, claim_timeout=timedelta(minutes=5))
+        first_session.commit()
+
+    assert competing_claim is not None
+    assert competing_claim.id == queued.id
+    assert losing_claim is None
+
+    with sqlite_session_factory() as third_session:
+        third_queue = SqlAlchemyAgentTaskQueue(third_session)
+        assert (
+            third_queue.claim_next(
+                now=now + timedelta(minutes=4),
+                claim_timeout=timedelta(minutes=5),
+            )
+            is None
+        )
+        reclaimed = third_queue.claim_next(
+            now=now + timedelta(minutes=6),
+            claim_timeout=timedelta(minutes=5),
+        )
+
+    assert reclaimed is not None
+    assert reclaimed.id == queued.id
+    assert reclaimed.claimed_at.replace(tzinfo=timezone.utc) == now + timedelta(minutes=6)
 
 
 def test_agent_task_queue_completes_retries_fails_and_dead_letters(sqlite_session_factory) -> None:

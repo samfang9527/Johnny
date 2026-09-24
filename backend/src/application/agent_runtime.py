@@ -26,6 +26,7 @@ PRODUCT_RUN_METADATA_KEYS = (
     "quota_day",
     "trigger_type",
     "replace_active_projection",
+    "previous_ends_on",
 )
 
 

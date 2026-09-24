@@ -35,11 +35,11 @@ class SqlAlchemyAgentTaskQueue:
             created_at=now,
             updated_at=now,
         )
-        self._session.add(model)
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(model)
+                self._session.flush()
         except IntegrityError:
-            self._session.rollback()
             existing = self._get_model_by_idempotency_key(idempotency_key)
             if existing is None:
                 raise
@@ -99,25 +99,33 @@ class SqlAlchemyAgentTaskQueue:
 
     def claim_next(self, *, now: datetime, claim_timeout: timedelta) -> AgentTask | None:
         stale_before = now - claim_timeout
-        statement = (
-            select(AgentTaskModel)
-            .where(
-                or_(
-                    (AgentTaskModel.status == "queued") & (AgentTaskModel.available_at <= now),
-                    (AgentTaskModel.status == "processing") & (AgentTaskModel.claimed_at <= stale_before),
-                )
-            )
-            .order_by(AgentTaskModel.available_at, AgentTaskModel.created_at, AgentTaskModel.id)
-            .limit(1)
+        claimable = or_(
+            (AgentTaskModel.status == "queued") & (AgentTaskModel.available_at <= now),
+            (AgentTaskModel.status == "processing") & (AgentTaskModel.claimed_at <= stale_before),
         )
-        model = self._session.scalar(statement)
-        if model is None:
-            return None
-        model.status = "processing"
-        model.claimed_at = now
-        model.updated_at = now
-        self._session.flush()
-        return _task_from_model(model)
+        while True:
+            candidate_id = self._session.scalar(
+                select(AgentTaskModel.id)
+                .where(claimable)
+                .order_by(AgentTaskModel.available_at, AgentTaskModel.created_at, AgentTaskModel.id)
+                .limit(1)
+            )
+            if candidate_id is None:
+                return None
+
+            result = self._session.execute(
+                update(AgentTaskModel)
+                .where(AgentTaskModel.id == candidate_id, claimable)
+                .values(status="processing", claimed_at=now, updated_at=now)
+                .execution_options(synchronize_session=False)
+            )
+            if result.rowcount != 1:
+                continue
+
+            self._session.flush()
+            model = self._session.get(AgentTaskModel, candidate_id, populate_existing=True)
+            assert model is not None
+            return _task_from_model(model)
 
     def complete(self, task_id: str | None, *, now: datetime) -> AgentTask | None:
         model = self._get(task_id)
