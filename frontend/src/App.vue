@@ -10,6 +10,7 @@ import {
   getAthleteProfile,
   getCurrentUser,
   getGoogleSignInRedirectUrl,
+  getTrainingPlanRegenerationOptions,
   getTodayContext,
   listIntegrationConnections,
   listRaceGoals,
@@ -20,6 +21,7 @@ import {
   signInWithEmail,
   signOut,
   signUpWithEmail,
+  startTrainingPlanRegeneration,
   syncIntegrationConnection,
   submitConversationMessage,
 } from './api/client'
@@ -30,6 +32,7 @@ import ProviderCard from './components/ProviderCard.vue'
 import RaceGoalModal from './components/RaceGoalModal.vue'
 import RecommendationActions from './components/RecommendationActions.vue'
 import StatusBadge from './components/StatusBadge.vue'
+import TrainingPlanRegenerationSheet from './components/TrainingPlanRegenerationSheet.vue'
 import { formatRaceDistance, formatRacePriority } from './raceGoalForm'
 import {
   conversationThreads as fixtureConversationThreads,
@@ -60,6 +63,9 @@ import type {
   RaceGoalCreatePayload,
   AthleteProfileResponse,
   AthleteProfileSavePayload,
+  TrainingPlanRegenerationOptions,
+  TrainingPlanRegenerationRequest,
+  TrainingPlanRegenerationRun,
   WorkoutStep,
   WorkoutTarget,
 } from './types'
@@ -140,6 +146,12 @@ const isRaceGoalConfirmOpen = ref(false)
 const raceGoalModalRef = ref<InstanceType<typeof RaceGoalModal> | null>(null)
 const raceGoalBusy = ref(false)
 let raceSuccessTimer: ReturnType<typeof setTimeout> | undefined
+const isPlanRegenerationSheetOpen = ref(false)
+const planRegenerationOptions = ref<TrainingPlanRegenerationOptions | null>(null)
+const planRegenerationLoading = ref(false)
+const planRegenerationBusy = ref(false)
+const planRegenerationError = ref('')
+const inFlightPlanRegeneration = ref<TrainingPlanRegenerationRun | null>(null)
 const authStatus = ref<'checking' | 'anonymous' | 'authenticated'>(shouldRequireAuth() ? 'checking' : 'authenticated')
 const currentUser = ref<CurrentUser | null>(null)
 const authMode = ref<'login' | 'signup'>('login')
@@ -1004,6 +1016,51 @@ function handleActionPlaceholder() {
 function openRaceGoalModal() {
   raceFormError.value = ''
   isRaceGoalModalOpen.value = true
+}
+
+async function openPlanRegenerationSheet() {
+  isPlanRegenerationSheetOpen.value = true
+  planRegenerationOptions.value = null
+  planRegenerationError.value = ''
+  planRegenerationLoading.value = true
+  try {
+    const response = await getTrainingPlanRegenerationOptions()
+    planRegenerationOptions.value = response.data
+    inFlightPlanRegeneration.value = response.data.in_flight_run
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      planRegenerationError.value = '無法取得重新產生選項，請稍後再試。'
+    }
+  } finally {
+    planRegenerationLoading.value = false
+  }
+}
+
+function closePlanRegenerationSheet() {
+  if (!planRegenerationBusy.value) {
+    isPlanRegenerationSheetOpen.value = false
+  }
+}
+
+async function confirmPlanRegeneration(payload: TrainingPlanRegenerationRequest) {
+  planRegenerationBusy.value = true
+  planRegenerationError.value = ''
+  try {
+    const response = await startTrainingPlanRegeneration(payload)
+    planRegenerationOptions.value = response.data
+    inFlightPlanRegeneration.value = response.data.run ?? response.data.in_flight_run
+    if (inFlightPlanRegeneration.value) {
+      isPlanRegenerationSheetOpen.value = false
+      return
+    }
+    planRegenerationError.value = '目前無法重新產生計畫，請等待下次可用時間。'
+  } catch (error) {
+    if (!handleSessionExpiry(error)) {
+      planRegenerationError.value = '重新產生計畫失敗，請稍後再試。'
+    }
+  } finally {
+    planRegenerationBusy.value = false
+  }
 }
 
 function requestCloseRaceGoalModal() {
@@ -1984,8 +2041,17 @@ function shouldRequireAuth(): boolean {
             <p v-if="raceFormError" class="field-error" role="alert">{{ raceFormError }}</p>
             <p v-else-if="raceFormMessage" class="inline-note" role="status">{{ raceFormMessage }}</p>
           </div>
-          <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
+          <div class="app-dialog__actions">
+            <AppButton tone="neutral" type="button" data-testid="open-plan-regeneration-sheet" @click="openPlanRegenerationSheet">重新產生計畫</AppButton>
+            <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
+          </div>
         </div>
+
+        <article v-if="inFlightPlanRegeneration" class="state-panel" data-testid="training-plan-regeneration-in-flight" aria-live="polite">
+          <p class="section-label">計畫更新中</p>
+          <h3>正在重新產生訓練計畫</h3>
+          <p>目前課表會繼續保留，完成後才會顯示新的安排。</p>
+        </article>
 
         <section class="race-calendar" aria-label="未來六個月訓練安排">
           <article v-for="month in raceCalendarMonths" :key="month.key" class="race-month" data-testid="race-month">
@@ -2027,6 +2093,28 @@ function shouldRequireAuth(): boolean {
           @cancel="cancelRaceGoalDiscard"
           @confirm="confirmRaceGoalDiscard"
         />
+
+        <TrainingPlanRegenerationSheet
+          v-if="isPlanRegenerationSheetOpen && planRegenerationOptions"
+          :options="planRegenerationOptions"
+          :time-zone="userTimezone"
+          :busy="planRegenerationBusy"
+          :error="planRegenerationError"
+          @close="closePlanRegenerationSheet"
+          @confirm="confirmPlanRegeneration"
+        />
+        <div v-else-if="isPlanRegenerationSheetOpen" class="app-dialog" role="presentation" data-testid="training-plan-regeneration-loading">
+          <section class="app-dialog__panel training-plan-regeneration-loading" role="dialog" aria-modal="true" aria-labelledby="training-plan-regeneration-loading-title">
+            <p class="section-label">訓練計畫</p>
+            <h3 id="training-plan-regeneration-loading-title">正在準備重新產生選項</h3>
+            <p v-if="planRegenerationError" class="field-error" role="alert">{{ planRegenerationError }}</p>
+            <p v-else aria-live="polite">正在確認今日額度與訓練策略。</p>
+            <div class="app-dialog__actions">
+              <AppButton tone="neutral" type="button" :disabled="planRegenerationLoading" @click="closePlanRegenerationSheet">關閉</AppButton>
+            </div>
+          </section>
+        </div>
+        <p v-if="planRegenerationError && !isPlanRegenerationSheetOpen" class="field-error" role="alert">{{ planRegenerationError }}</p>
 
         <div class="section-heading">
           <div>

@@ -11,6 +11,9 @@ import type {
   IntegrationConnectionPayload,
   IntegrationConnectionResponse,
   RaceGoalCreatePayload,
+  TrainingPlanRegenerationOptions,
+  TrainingPlanRegenerationRequest,
+  TrainingPlanRegenerationStartResponse,
 } from '../types'
 
 export function getApiBaseUrl(): string {
@@ -136,6 +139,14 @@ export function listRecommendations(): Promise<{ data: Array<Record<string, unkn
 
 export function listTrainingPlans(): Promise<{ data: Array<Record<string, unknown>> }> {
   return getJson('/training-plans')
+}
+
+export function getTrainingPlanRegenerationOptions(): Promise<{ data: TrainingPlanRegenerationOptions }> {
+  return getJson('/training-plans/regeneration-options')
+}
+
+export function startTrainingPlanRegeneration(payload: TrainingPlanRegenerationRequest): Promise<{ data: TrainingPlanRegenerationStartResponse }> {
+  return postJson('/training-plans/regenerations', payload)
 }
 
 export function listRaceGoals(raceDateFrom: string, raceDateTo: string): Promise<{ data: Array<Record<string, unknown>> }> {

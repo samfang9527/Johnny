@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getGoogleSignInRedirectUrl, getLocalApiBaseUrl } from './api/client'
 import App from './App.vue'
 
-function okJson(data: Record<string, unknown>): Response {
+function okJson(data: unknown): Response {
   return {
     ok: true,
     json: () => Promise.resolve({ data }),
@@ -661,6 +661,151 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('週三')
     expect(wrapper.text()).toContain('Easy Run')
     expect(wrapper.text()).toContain('8 km')
+  })
+
+  it('opens regeneration with Race Strategy selected by default and allows maintenance even when a race is available', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).endsWith('/api/v1/training-plans/regeneration-options')) {
+        return Promise.resolve(
+          okJson({
+            quota: { quota_day: '2026-09-24', limit: 1, used: 0, remaining: 1, available: true, next_available_at: null },
+            default_strategy: {
+              race_id: 'race-taipei-half',
+              plan_type: 'race',
+              reason: 'primary_race',
+              starts_on: '2026-09-25',
+              plan_horizon_weeks: 12,
+            },
+            in_flight_run: null,
+            run: null,
+          }),
+        )
+      }
+      return Promise.resolve(okJson([]))
+    })
+    const wrapper = mount(App, { props: { initialView: 'calendar' } })
+
+    await wrapper.get('[data-testid="open-plan-regeneration-sheet"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="training-plan-regeneration-sheet"]').text()).toContain('比賽策略')
+    expect((wrapper.get('input[value="race"]').element as HTMLInputElement).checked).toBe(true)
+
+    await wrapper.get('input[value="maintenance"]').setValue(true)
+
+    expect((wrapper.get('input[value="maintenance"]').element as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('disables regeneration confirmation when the daily quota is exhausted and shows the next availability', async () => {
+    const BrowserDateTimeFormat = Intl.DateTimeFormat
+    function BrowserTimezoneDateTimeFormat(locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
+      return new BrowserDateTimeFormat(locales, { ...options, timeZone: options?.timeZone ?? 'America/Los_Angeles' })
+    }
+    vi.stubGlobal(
+      'Intl',
+      {
+        ...Intl,
+        DateTimeFormat: BrowserTimezoneDateTimeFormat as unknown as typeof Intl.DateTimeFormat,
+      } as typeof Intl,
+    )
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/athlete/profile')) {
+        return Promise.resolve(okJson({ timezone: 'Asia/Taipei' }))
+      }
+      if (url.endsWith('/api/v1/training-plans/regeneration-options')) {
+        return Promise.resolve(
+          okJson({
+            quota: {
+              quota_day: '2026-09-24',
+              limit: 1,
+              used: 1,
+              remaining: 0,
+              available: false,
+              next_available_at: '2026-09-25T00:00:00+08:00',
+            },
+            default_strategy: {
+              race_id: null,
+              plan_type: 'maintenance',
+              reason: 'no_future_race',
+              starts_on: '2026-09-25',
+              plan_horizon_weeks: 4,
+            },
+            in_flight_run: null,
+            run: null,
+          }),
+        )
+      }
+      return Promise.resolve(okJson([]))
+    })
+    try {
+      const wrapper = mount(App, { props: { initialView: 'calendar' } })
+
+      await wrapper.get('[data-testid="open-plan-regeneration-sheet"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="training-plan-regeneration-sheet"]').text()).toContain('今日重新產生額度已用完')
+      expect(wrapper.get('[data-testid="training-plan-regeneration-next-available"]').text()).toContain('2026年9月25日')
+      expect(wrapper.get('[data-testid="training-plan-regeneration-confirm"]').attributes('disabled')).toBeDefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('starts regeneration, keeps the current plan visible, and shows its in-progress state', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/training-plans/regeneration-options')) {
+        return Promise.resolve(
+          okJson({
+            quota: { quota_day: '2026-09-24', limit: 1, used: 0, remaining: 1, available: true, next_available_at: null },
+            default_strategy: {
+              race_id: 'race-taipei-half',
+              plan_type: 'race',
+              reason: 'primary_race',
+              starts_on: '2026-09-25',
+              plan_horizon_weeks: 12,
+            },
+            in_flight_run: null,
+            run: null,
+          }),
+        )
+      }
+      if (url.endsWith('/api/v1/training-plans/regenerations') && init?.method === 'POST') {
+        return Promise.resolve(
+          okJson({
+            quota: { quota_day: '2026-09-24', limit: 1, used: 1, remaining: 0, available: false, next_available_at: '2026-09-25T00:00:00+08:00' },
+            default_strategy: {
+              race_id: 'race-taipei-half',
+              plan_type: 'race',
+              reason: 'primary_race',
+              starts_on: '2026-09-25',
+              plan_horizon_weeks: 12,
+            },
+            in_flight_run: { run_id: 'regeneration-run-1', status: 'queued', workflow_name: 'training_plan_generation', poll_url: '/api/v1/agent-runs/regeneration-run-1' },
+            run: { run_id: 'regeneration-run-1', status: 'queued', workflow_name: 'training_plan_generation', poll_url: '/api/v1/agent-runs/regeneration-run-1' },
+          }),
+        )
+      }
+      return Promise.resolve(okJson([]))
+    })
+    const wrapper = mount(App, { props: { initialView: 'calendar' } })
+
+    await wrapper.get('[data-testid="open-plan-regeneration-sheet"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="training-plan-regeneration-sheet"] form').trigger('submit')
+    await flushPromises()
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/training-plans/regenerations',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"race_id":"race-taipei-half"'),
+      }),
+    )
+    expect(wrapper.text()).toContain('正在重新產生訓練計畫')
+    expect(wrapper.text()).toContain('Easy Run')
+    expect(wrapper.find('[data-testid="training-plan-regeneration-sheet"]').exists()).toBe(false)
   })
 
   it('lets the user add a race entry from a modal with priority, kilometers, and calendar date picking', async () => {

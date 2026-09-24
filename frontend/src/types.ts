@@ -69,6 +69,47 @@ export interface RaceGoalCreatePayload {
   priority: string
 }
 
+export type TrainingPlanType = 'race' | 'maintenance'
+
+export interface TrainingPlanRegenerationRequest {
+  client_request_id: string
+  race_id: string | null
+  plan_type: TrainingPlanType
+}
+
+export interface TrainingPlanRegenerationQuota {
+  quota_day: string
+  limit: number
+  used: number
+  remaining: number
+  available: boolean
+  next_available_at: string | null
+}
+
+export interface TrainingPlanRegenerationStrategy {
+  race_id: string | null
+  plan_type: TrainingPlanType
+  reason: string
+  starts_on: string
+  plan_horizon_weeks: number
+}
+
+export interface TrainingPlanRegenerationRun {
+  run_id: string
+  status: string
+  workflow_name: string
+  poll_url: string
+}
+
+export interface TrainingPlanRegenerationOptions {
+  quota: TrainingPlanRegenerationQuota
+  default_strategy: TrainingPlanRegenerationStrategy
+  in_flight_run: TrainingPlanRegenerationRun | null
+  run: TrainingPlanRegenerationRun | null
+}
+
+export type TrainingPlanRegenerationStartResponse = TrainingPlanRegenerationOptions
+
 export interface EvidenceItem {
   source: string
   metric: string
