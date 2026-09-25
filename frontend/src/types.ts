@@ -71,6 +71,32 @@ export interface RaceGoalCreatePayload {
 
 export type TrainingPlanType = 'race' | 'maintenance'
 
+export type TrainingPlanPhase = 'base' | 'build' | 'peak' | 'taper' | 'race' | 'maintenance'
+
+export interface TrainingPlanPhaseSegment {
+  phase: TrainingPlanPhase
+  starts_on: string
+  ends_on: string
+  focus?: string
+}
+
+export interface TrainingPlanMetadata {
+  phase_segments?: TrainingPlanPhaseSegment[]
+  [key: string]: unknown
+}
+
+export interface TrainingPlanResponse {
+  id: string | null
+  user_id: string
+  race_id: string | null
+  name: string
+  status: string
+  starts_on: string
+  ends_on: string
+  metadata: TrainingPlanMetadata
+  workouts: unknown[]
+}
+
 export interface TrainingPlanRegenerationRequest {
   client_request_id: string
   race_id: string | null

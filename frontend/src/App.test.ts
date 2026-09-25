@@ -663,6 +663,126 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('8 km')
   })
 
+  it('renders only active plan phase labels from authenticated API metadata', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) {
+        return Promise.resolve(
+          okJson({
+            id: 'user-phase-timeline',
+            email: 'runner@example.com',
+            display_name: 'Runner',
+            capabilities: ['today', 'races', 'training-plans', 'recommendations', 'integrations'],
+          }),
+        )
+      }
+      if (url.endsWith('/api/v1/training-plans')) {
+        return Promise.resolve(
+          okJson([
+            {
+              id: 'plan-superseded',
+              user_id: 'user-phase-timeline',
+              race_id: null,
+              name: '舊版維持計畫',
+              status: 'superseded',
+              starts_on: '2026-08-01',
+              ends_on: '2026-08-31',
+              metadata: {
+                phase_segments: [
+                  {
+                    phase: 'base',
+                    starts_on: '2026-08-01',
+                    ends_on: '2026-08-31',
+                    focus: '舊版訓練內容不應顯示',
+                  },
+                ],
+              },
+              workouts: [],
+            },
+            {
+              id: 'plan-maintenance',
+              user_id: 'user-phase-timeline',
+              race_id: null,
+              name: '秋季維持計畫',
+              status: 'active',
+              starts_on: '2026-09-01',
+              ends_on: '2026-09-28',
+              metadata: {
+                phase_segments: [
+                  {
+                    phase: 'maintenance',
+                    starts_on: '2026-09-01',
+                    ends_on: '2026-09-28',
+                    focus: '維持穩定有氧節奏',
+                  },
+                ],
+              },
+              workouts: [],
+            },
+          ]),
+        )
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) } as Response)
+    })
+
+    const wrapper = mount(App, { props: { initialView: 'calendar', requireAuth: true } })
+    await flushPromises()
+
+    const timeline = wrapper.get('[data-testid="plan-phase-timeline"]')
+    expect(timeline.text()).toContain('維持期')
+    expect(timeline.text()).toContain('維持穩定有氧節奏')
+    expect(timeline.text()).not.toContain('舊版訓練內容不應顯示')
+  })
+
+  it('does not render stale API phase metadata when no active plan exists', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) {
+        return Promise.resolve(
+          okJson({
+            id: 'user-no-active-plan',
+            email: 'runner@example.com',
+            display_name: 'Runner',
+            capabilities: ['today', 'races', 'training-plans', 'recommendations', 'integrations'],
+          }),
+        )
+      }
+      if (url.endsWith('/api/v1/training-plans')) {
+        return Promise.resolve(
+          okJson([
+            {
+              id: 'plan-superseded',
+              user_id: 'user-no-active-plan',
+              race_id: null,
+              name: '舊版維持計畫',
+              status: 'superseded',
+              starts_on: '2026-08-01',
+              ends_on: '2026-08-31',
+              metadata: {
+                phase_segments: [
+                  {
+                    phase: 'base',
+                    starts_on: '2026-08-01',
+                    ends_on: '2026-08-31',
+                    focus: '舊版 phase 不應顯示',
+                  },
+                ],
+              },
+              workouts: [],
+            },
+          ]),
+        )
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [] }) } as Response)
+    })
+
+    const wrapper = mount(App, { props: { initialView: 'calendar', requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="plan-phase-timeline"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('舊版 phase 不應顯示')
+  })
+
   it('opens regeneration with Race Strategy selected by default and allows maintenance even when a race is available', async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
       if (String(input).endsWith('/api/v1/training-plans/regeneration-options')) {

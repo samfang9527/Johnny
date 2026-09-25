@@ -66,6 +66,7 @@ import type {
   TrainingPlanRegenerationOptions,
   TrainingPlanRegenerationRequest,
   TrainingPlanRegenerationRun,
+  TrainingPlanPhase,
   WorkoutStep,
   WorkoutTarget,
 } from './types'
@@ -152,6 +153,7 @@ const planRegenerationLoading = ref(false)
 const planRegenerationBusy = ref(false)
 const planRegenerationError = ref('')
 const inFlightPlanRegeneration = ref<TrainingPlanRegenerationRun | null>(null)
+const apiPlanPhases = ref<PlanPhaseTimelineSegment[]>([])
 const authStatus = ref<'checking' | 'anonymous' | 'authenticated'>(shouldRequireAuth() ? 'checking' : 'authenticated')
 const currentUser = ref<CurrentUser | null>(null)
 const authMode = ref<'login' | 'signup'>('login')
@@ -208,6 +210,7 @@ const displayInboxItems = computed(() => {
     return status ? { ...item, status, statusLabel: statusLabel(status) } : item
   })
 })
+const planPhases = computed(() => (apiPlanPhases.value.length ? apiPlanPhases.value : shouldRequireAuth() ? [] : demoPlanPhases))
 const activeThreadId = ref(displayThreads.value[0]?.id ?? '')
 const activeThread = computed(() => displayThreads.value.find((thread) => thread.id === activeThreadId.value) ?? displayThreads.value[0])
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
@@ -271,6 +274,20 @@ type WorkoutStepRow = {
   note: string
   depth: number
 }
+
+type PlanPhaseTimelineSegment = {
+  phase: TrainingPlanPhase
+  label: string
+  focus: string
+  dateRange: string
+}
+
+const demoPlanPhases: PlanPhaseTimelineSegment[] = [
+  { phase: 'base', label: '基礎期', focus: '建立輕鬆跑與長跑節奏', dateRange: '8/3 - 8/16' },
+  { phase: 'build', label: '建立期', focus: '逐步提高品質課表比重', dateRange: '8/17 - 8/23' },
+  { phase: 'peak', label: '高峰期', focus: '完成關鍵長跑與配速練習', dateRange: '8/24 - 8/29' },
+  { phase: 'taper', label: '減量期', focus: '保留節奏，降低疲勞', dateRange: '8/30 - 9/5' },
+]
 
 type AthleteSettingsForm = {
   timezone: string
@@ -1392,8 +1409,72 @@ function applyRecommendationsPayload(items: Array<Record<string, unknown>>) {
 }
 
 function applyTrainingPlansPayload(items: Array<Record<string, unknown>>) {
-  const workouts = items.flatMap((plan) => (Array.isArray(plan.workouts) ? plan.workouts : []))
+  const currentPlan = selectCurrentTrainingPlan(items)
+  const workouts = currentPlan && Array.isArray(currentPlan.workouts) ? currentPlan.workouts : []
   apiWorkouts.value = workouts.map(mapWorkout).filter((workout): workout is WorkoutSummary => workout !== null)
+  apiPlanPhases.value = currentPlan ? mapPhaseSegments(currentPlan.metadata) : []
+}
+
+function selectCurrentTrainingPlan(items: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
+  return items.find((plan) => plan.status === 'active')
+}
+
+function mapPhaseSegments(metadata: unknown): PlanPhaseTimelineSegment[] {
+  const phaseSegments = asRecord(metadata)?.phase_segments
+  const segments = Array.isArray(phaseSegments) ? phaseSegments : []
+  return segments.flatMap((rawSegment) => {
+    const segment = asRecord(rawSegment)
+    if (!segment) {
+      return []
+    }
+    if (!isTrainingPlanPhase(segment.phase) || !isIsoDate(segment.starts_on) || !isIsoDate(segment.ends_on)) {
+      return []
+    }
+    return {
+      phase: segment.phase,
+      label: trainingPlanPhaseLabel(segment.phase),
+      focus: typeof segment.focus === 'string' && segment.focus.trim() ? segment.focus : trainingPlanPhaseFocus(segment.phase),
+      dateRange: formatPhaseDateRange(segment.starts_on, segment.ends_on),
+    }
+  })
+}
+
+function isTrainingPlanPhase(value: unknown): value is TrainingPlanPhase {
+  return value === 'base' || value === 'build' || value === 'peak' || value === 'taper' || value === 'race' || value === 'maintenance'
+}
+
+function isIsoDate(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+}
+
+function trainingPlanPhaseLabel(phase: TrainingPlanPhase): string {
+  const labels: Record<TrainingPlanPhase, string> = {
+    base: '基礎期',
+    build: '建立期',
+    peak: '高峰期',
+    taper: '減量期',
+    race: '比賽期',
+    maintenance: '維持期',
+  }
+  return labels[phase]
+}
+
+function trainingPlanPhaseFocus(phase: TrainingPlanPhase): string {
+  const focus: Record<TrainingPlanPhase, string> = {
+    base: '建立有氧基礎與跑步節奏',
+    build: '提高品質課表與耐受度',
+    peak: '完成關鍵配速與長跑練習',
+    taper: '降低疲勞並保留節奏',
+    race: '準備上場，依比賽策略執行',
+    maintenance: '維持穩定有氧節奏',
+  }
+  return focus[phase]
+}
+
+function formatPhaseDateRange(startsOn: string, endsOn: string): string {
+  const startsOnLabel = formatDateLabel(startsOn)
+  const endsOnLabel = formatDateLabel(endsOn)
+  return startsOnLabel === endsOnLabel ? startsOnLabel : `${startsOnLabel} - ${endsOnLabel}`
 }
 
 function applyRaceGoalsPayload(items: Array<Record<string, unknown>>) {
@@ -2051,6 +2132,23 @@ function shouldRequireAuth(): boolean {
           <p class="section-label">計畫更新中</p>
           <h3>正在重新產生訓練計畫</h3>
           <p>目前課表會繼續保留，完成後才會顯示新的安排。</p>
+        </article>
+
+        <article v-if="planPhases.length" class="surface-card" data-testid="plan-phase-timeline" aria-label="訓練計畫階段">
+          <div class="section-heading">
+            <div>
+              <p class="section-label">訓練階段</p>
+              <h3>目前計畫節奏</h3>
+            </div>
+            <StatusBadge tone="info">{{ planPhases.length }} 個階段</StatusBadge>
+          </div>
+          <div class="decision-strip decision-strip--compact" role="list">
+            <div v-for="segment in planPhases" :key="`${segment.phase}-${segment.dateRange}`" role="listitem">
+              <p class="section-label">{{ segment.label }}</p>
+              <strong>{{ segment.focus }}</strong>
+              <p>{{ segment.dateRange }}</p>
+            </div>
+          </div>
         </article>
 
         <section class="race-calendar" aria-label="未來六個月訓練安排">
