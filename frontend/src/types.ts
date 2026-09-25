@@ -54,8 +54,10 @@ export interface EmailPasswordLoginPayload {
 }
 
 export interface RaceSummary {
+  id: string
   name: string
   date: string
+  raceDate: string
   distance: string
   goal: string
   daysRemaining: number
@@ -125,6 +127,14 @@ export interface TrainingPlanRegenerationRun {
   status: string
   workflow_name: string
   poll_url: string
+}
+
+export interface AgentRunResponse {
+  id: string | null
+  status: string
+  workflow_name: string
+  finished_at: string | null
+  error_message: string | null
 }
 
 export interface TrainingPlanRegenerationOptions {

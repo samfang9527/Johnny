@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import {
   acceptRecommendation,
   ApiRequestError,
@@ -7,6 +7,7 @@ import {
   createRaceGoal,
   disconnectIntegrationConnection,
   discussRecommendation,
+  getAgentRun,
   getAthleteProfile,
   getCurrentUser,
   getGoogleSignInRedirectUrl,
@@ -140,6 +141,7 @@ const inboxBusyRecommendationId = ref('')
 const inboxBusyAction = ref('')
 const recommendationDecisions = ref<Record<string, RecommendationStatus>>({})
 const raceEntries = ref<RaceSummary[]>(shouldRequireAuth() ? [] : fixtureFutureRaces)
+const planRegenerationRaceOptions = ref<RaceSummary[]>(shouldRequireAuth() ? [] : fixtureFutureRaces)
 const raceFormError = ref('')
 const raceFormMessage = ref('')
 const isRaceGoalModalOpen = ref(false)
@@ -153,6 +155,12 @@ const planRegenerationLoading = ref(false)
 const planRegenerationBusy = ref(false)
 const planRegenerationError = ref('')
 const inFlightPlanRegeneration = ref<TrainingPlanRegenerationRun | null>(null)
+const planRegenerationLoadingDialogRef = ref<HTMLElement | null>(null)
+const regenerationPollIntervalMs = 2_000
+const regenerationPollLimit = 12
+let planRegenerationPollTimer: ReturnType<typeof setTimeout> | undefined
+let planRegenerationPollAttempts = 0
+let planRegenerationReturnFocus: HTMLElement | null = null
 const apiPlanPhases = ref<PlanPhaseTimelineSegment[]>([])
 const authStatus = ref<'checking' | 'anonymous' | 'authenticated'>(shouldRequireAuth() ? 'checking' : 'authenticated')
 const currentUser = ref<CurrentUser | null>(null)
@@ -1035,15 +1043,30 @@ function openRaceGoalModal() {
   isRaceGoalModalOpen.value = true
 }
 
-async function openPlanRegenerationSheet() {
+async function openPlanRegenerationSheet(event?: MouseEvent) {
+  planRegenerationReturnFocus = event?.currentTarget instanceof HTMLElement ? event.currentTarget : document.activeElement instanceof HTMLElement ? document.activeElement : null
   isPlanRegenerationSheetOpen.value = true
   planRegenerationOptions.value = null
   planRegenerationError.value = ''
   planRegenerationLoading.value = true
+  await nextTick()
+  planRegenerationLoadingDialogRef.value?.querySelector<HTMLButtonElement>('button')?.focus()
   try {
-    const response = await getTrainingPlanRegenerationOptions()
-    planRegenerationOptions.value = response.data
-    inFlightPlanRegeneration.value = response.data.in_flight_run
+    const anchorDate = new Date().toISOString().slice(0, 10)
+    const [optionsResult, racesResult] = await Promise.allSettled([
+      getTrainingPlanRegenerationOptions(),
+      listRaceGoals(anchorDate),
+    ])
+    if (optionsResult.status === 'rejected') {
+      throw optionsResult.reason
+    }
+    if (racesResult.status === 'fulfilled') {
+      applyPlanRegenerationRaceGoalsPayload(Array.isArray(racesResult.value.data) ? racesResult.value.data : [])
+    }
+    planRegenerationOptions.value = optionsResult.value.data
+    if (optionsResult.value.data.in_flight_run) {
+      observePlanRegeneration(optionsResult.value.data.in_flight_run)
+    }
   } catch (error) {
     if (!handleSessionExpiry(error)) {
       planRegenerationError.value = '無法取得重新產生選項，請稍後再試。'
@@ -1054,9 +1077,11 @@ async function openPlanRegenerationSheet() {
 }
 
 function closePlanRegenerationSheet() {
-  if (!planRegenerationBusy.value) {
-    isPlanRegenerationSheetOpen.value = false
+  if (planRegenerationBusy.value) {
+    return
   }
+  isPlanRegenerationSheetOpen.value = false
+  void nextTick(() => planRegenerationReturnFocus?.focus())
 }
 
 async function confirmPlanRegeneration(payload: TrainingPlanRegenerationRequest) {
@@ -1065,9 +1090,11 @@ async function confirmPlanRegeneration(payload: TrainingPlanRegenerationRequest)
   try {
     const response = await startTrainingPlanRegeneration(payload)
     planRegenerationOptions.value = response.data
-    inFlightPlanRegeneration.value = response.data.run ?? response.data.in_flight_run
-    if (inFlightPlanRegeneration.value) {
+    const run = response.data.run ?? response.data.in_flight_run
+    if (run) {
+      observePlanRegeneration(run)
       isPlanRegenerationSheetOpen.value = false
+      void nextTick(() => planRegenerationReturnFocus?.focus())
       return
     }
     planRegenerationError.value = '目前無法重新產生計畫，請等待下次可用時間。'
@@ -1077,6 +1104,97 @@ async function confirmPlanRegeneration(payload: TrainingPlanRegenerationRequest)
     }
   } finally {
     planRegenerationBusy.value = false
+  }
+}
+
+function observePlanRegeneration(run: TrainingPlanRegenerationRun) {
+  clearPlanRegenerationPollTimer()
+  inFlightPlanRegeneration.value = run
+  planRegenerationPollAttempts = 0
+  schedulePlanRegenerationPoll(run.run_id)
+}
+
+function schedulePlanRegenerationPoll(runId: string) {
+  if (planRegenerationPollAttempts >= regenerationPollLimit) {
+    return
+  }
+  planRegenerationPollTimer = setTimeout(() => {
+    void pollPlanRegeneration(runId)
+  }, regenerationPollIntervalMs)
+}
+
+async function pollPlanRegeneration(runId: string) {
+  if (inFlightPlanRegeneration.value?.run_id !== runId) {
+    return
+  }
+  planRegenerationPollAttempts += 1
+  try {
+    const response = await getAgentRun(runId)
+    if (inFlightPlanRegeneration.value?.run_id !== runId) {
+      return
+    }
+    if (response.data.status === 'completed') {
+      inFlightPlanRegeneration.value = null
+      await refreshCompletedPlanRegeneration()
+      return
+    }
+    if (response.data.status === 'failed' || response.data.status === 'cancelled') {
+      inFlightPlanRegeneration.value = null
+      if (planRegenerationOptions.value) {
+        planRegenerationOptions.value = { ...planRegenerationOptions.value, in_flight_run: null, run: null }
+      }
+      planRegenerationError.value = response.data.error_message || '重新產生計畫未完成，已保留目前課表。'
+      return
+    }
+  } catch (error) {
+    if (handleSessionExpiry(error)) {
+      return
+    }
+  }
+  schedulePlanRegenerationPoll(runId)
+}
+
+async function refreshCompletedPlanRegeneration() {
+  const [plansResult, optionsResult] = await Promise.allSettled([listTrainingPlans(), getTrainingPlanRegenerationOptions()])
+  if (plansResult.status === 'fulfilled') {
+    applyTrainingPlansPayload(Array.isArray(plansResult.value.data) ? plansResult.value.data : [])
+  } else {
+    planRegenerationError.value = '新的訓練計畫已完成，但暫時無法更新畫面。'
+  }
+  if (optionsResult.status === 'fulfilled') {
+    planRegenerationOptions.value = optionsResult.value.data
+  }
+}
+
+function clearPlanRegenerationPollTimer() {
+  if (planRegenerationPollTimer) {
+    clearTimeout(planRegenerationPollTimer)
+    planRegenerationPollTimer = undefined
+  }
+}
+
+function handlePlanRegenerationLoadingKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closePlanRegenerationSheet()
+    return
+  }
+  if (event.key !== 'Tab' || !planRegenerationLoadingDialogRef.value) {
+    return
+  }
+  const focusable = Array.from(planRegenerationLoadingDialogRef.value.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+  if (!focusable.length) {
+    event.preventDefault()
+    return
+  }
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
   }
 }
 
@@ -1150,6 +1268,10 @@ async function handleInboxDiscuss(item: InboxRecommendation) {
 
 onMounted(() => {
   void initializeAuth()
+})
+
+onUnmounted(() => {
+  clearPlanRegenerationPollTimer()
 })
 
 async function hydrateFromBackend() {
@@ -1363,8 +1485,10 @@ function applyTodayPayload(payload: Record<string, unknown>) {
   const nextRace = payload.next_race as Record<string, unknown> | null | undefined
   if (nextRace?.name && nextRace.race_date) {
     apiRaceSummary.value = {
+      id: String(nextRace.id || ''),
       name: String(nextRace.name),
       date: String(nextRace.race_date),
+      raceDate: String(nextRace.race_date),
       distance: formatDistance(Number(nextRace.distance_meters || 0)),
       goal: 'MVP goal',
       daysRemaining: daysUntil(String(nextRace.race_date)),
@@ -1484,6 +1608,13 @@ function applyRaceGoalsPayload(items: Array<Record<string, unknown>>) {
   }
 }
 
+function applyPlanRegenerationRaceGoalsPayload(items: Array<Record<string, unknown>>) {
+  const mapped = items.map(mapRaceGoal).filter((race): race is RaceSummary => race !== null)
+  if (mapped.length || shouldRequireAuth()) {
+    planRegenerationRaceOptions.value = mapped
+  }
+}
+
 function mapRaceGoal(raw: unknown): RaceSummary | null {
   if (!raw || typeof raw !== 'object') {
     return null
@@ -1496,8 +1627,10 @@ function mapRaceGoal(raw: unknown): RaceSummary | null {
     return null
   }
   return {
+    id: String(race.id || ''),
     name,
     date: raceDateValue,
+    raceDate: raceDateValue,
     distance: formatDistance(distanceMeters),
     goal: formatTargetFinish(race.target_finish_seconds) || formatRacePriority(race.priority) || String(race.status || 'planned'),
     daysRemaining: daysUntil(raceDateValue),
@@ -1880,8 +2013,10 @@ function sixMonthWindowEnd(anchorDate: string): string {
 
 function emptyRaceSummary(): RaceSummary {
   return {
+    id: '',
     name: '尚未設定目標',
     date: '',
+    raceDate: '',
     distance: 'N/A',
     goal: '先新增你的目標',
     daysRemaining: 0,
@@ -2195,6 +2330,7 @@ function shouldRequireAuth(): boolean {
         <TrainingPlanRegenerationSheet
           v-if="isPlanRegenerationSheetOpen && planRegenerationOptions"
           :options="planRegenerationOptions"
+          :race-options="planRegenerationRaceOptions"
           :time-zone="userTimezone"
           :busy="planRegenerationBusy"
           :error="planRegenerationError"
@@ -2202,13 +2338,13 @@ function shouldRequireAuth(): boolean {
           @confirm="confirmPlanRegeneration"
         />
         <div v-else-if="isPlanRegenerationSheetOpen" class="app-dialog" role="presentation" data-testid="training-plan-regeneration-loading">
-          <section class="app-dialog__panel training-plan-regeneration-loading" role="dialog" aria-modal="true" aria-labelledby="training-plan-regeneration-loading-title">
+          <section ref="planRegenerationLoadingDialogRef" class="app-dialog__panel training-plan-regeneration-loading" role="dialog" aria-modal="true" aria-labelledby="training-plan-regeneration-loading-title" tabindex="-1" @keydown="handlePlanRegenerationLoadingKeydown">
             <p class="section-label">訓練計畫</p>
             <h3 id="training-plan-regeneration-loading-title">正在準備重新產生選項</h3>
             <p v-if="planRegenerationError" class="field-error" role="alert">{{ planRegenerationError }}</p>
             <p v-else aria-live="polite">正在確認今日額度與訓練策略。</p>
             <div class="app-dialog__actions">
-              <AppButton tone="neutral" type="button" :disabled="planRegenerationLoading" @click="closePlanRegenerationSheet">關閉</AppButton>
+              <AppButton tone="neutral" type="button" @click="closePlanRegenerationSheet">關閉</AppButton>
             </div>
           </section>
         </div>

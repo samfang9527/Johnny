@@ -1,8 +1,10 @@
 import type { ConversationThread, InboxRecommendation, EvidenceItem, ProviderOption, RaceSummary, RecommendationSummary, WorkoutSummary } from './types'
 
 export const raceSummary: RaceSummary = {
+  id: 'race-sydney-marathon',
   name: 'Sydney Marathon',
   date: '2026-08-30',
+  raceDate: '2026-08-30',
   distance: 'Marathon',
   goal: 'Sub 4:00',
   daysRemaining: 16,
@@ -11,15 +13,19 @@ export const raceSummary: RaceSummary = {
 export const futureRaces: RaceSummary[] = [
   raceSummary,
   {
+    id: 'race-taipei-half',
     name: 'Taipei Half Tune-up',
     date: '2026-11-15',
+    raceDate: '2026-11-15',
     distance: 'Half Marathon',
     goal: '穩定配速',
     daysRemaining: 85,
   },
   {
+    id: 'race-tokyo-prep',
     name: 'Tokyo Marathon Prep Race',
     date: '2027-01-24',
+    raceDate: '2027-01-24',
     distance: '30 km',
     goal: '檢查補給與節奏',
     daysRemaining: 155,

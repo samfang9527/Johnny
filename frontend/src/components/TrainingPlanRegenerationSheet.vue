@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { TrainingPlanRegenerationOptions, TrainingPlanRegenerationRequest, TrainingPlanType } from '../types'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import type { RaceSummary, TrainingPlanRegenerationOptions, TrainingPlanRegenerationRequest, TrainingPlanType } from '../types'
 import AppButton from './AppButton.vue'
 
 const props = withDefaults(
   defineProps<{
     options: TrainingPlanRegenerationOptions
+    raceOptions: RaceSummary[]
     timeZone: string
     busy?: boolean
     error?: string
@@ -18,28 +19,73 @@ const emit = defineEmits<{
   confirm: [payload: TrainingPlanRegenerationRequest]
 }>()
 
-const selectedPlanType = ref<TrainingPlanType>(props.options.default_strategy.plan_type)
-const canUseRaceStrategy = computed(() => Boolean(props.options.default_strategy.race_id))
+const defaultRaceId = props.raceOptions.some((race) => race.id === props.options.default_strategy.race_id)
+  ? props.options.default_strategy.race_id
+  : props.raceOptions[0]?.id ?? null
+const selectedPlanType = ref<TrainingPlanType>(props.options.default_strategy.plan_type === 'race' && defaultRaceId ? 'race' : 'maintenance')
+const selectedRaceId = ref<string | null>(defaultRaceId)
+const dialogRef = ref<HTMLElement | null>(null)
+const selectedRace = computed(() => props.raceOptions.find((race) => race.id === selectedRaceId.value) ?? null)
+const canUseRaceStrategy = computed(() => props.raceOptions.length > 0)
+const canConfirm = computed(() =>
+  props.options.quota.available && !props.busy && !props.options.in_flight_run && (selectedPlanType.value !== 'race' || Boolean(selectedRaceId.value)),
+)
 const nextAvailableLabel = computed(() => {
   const value = props.options.quota.next_available_at
   return value ? new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short', timeZone: props.timeZone }).format(new Date(value)) : ''
 })
 
 function submit() {
-  if (!props.options.quota.available || props.busy) {
+  if (!canConfirm.value) {
     return
   }
   emit('confirm', {
     client_request_id: globalThis.crypto?.randomUUID?.() || `regeneration-${Date.now()}`,
-    race_id: selectedPlanType.value === 'race' ? props.options.default_strategy.race_id : null,
+    race_id: selectedPlanType.value === 'race' ? selectedRaceId.value : null,
     plan_type: selectedPlanType.value,
   })
 }
+
+function requestClose() {
+  if (!props.busy) {
+    emit('close')
+  }
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    requestClose()
+    return
+  }
+  if (event.key !== 'Tab' || !dialogRef.value) {
+    return
+  }
+  const focusable = Array.from(dialogRef.value.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+  if (!focusable.length) {
+    event.preventDefault()
+    return
+  }
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+onMounted(async () => {
+  await nextTick()
+  dialogRef.value?.querySelector<HTMLButtonElement>('[data-testid="training-plan-regeneration-cancel"]')?.focus()
+})
 </script>
 
 <template>
-  <div class="app-dialog" role="presentation" data-testid="training-plan-regeneration-sheet" @click.self="$emit('close')" @keydown.esc="$emit('close')">
-    <section class="app-dialog__panel training-plan-regeneration-sheet" role="dialog" aria-modal="true" aria-labelledby="training-plan-regeneration-title" tabindex="-1">
+  <div class="app-dialog" role="presentation" data-testid="training-plan-regeneration-sheet" @click.self="requestClose" @keydown="handleKeydown">
+    <section ref="dialogRef" class="app-dialog__panel training-plan-regeneration-sheet" role="dialog" aria-modal="true" aria-labelledby="training-plan-regeneration-title" tabindex="-1">
       <div>
         <p class="section-label">訓練計畫</p>
         <h3 id="training-plan-regeneration-title">重新產生計畫</h3>
@@ -63,6 +109,15 @@ function submit() {
               <small>先以穩定訓練節奏為主。</small>
             </span>
           </label>
+          <label v-if="selectedPlanType === 'race'" class="training-plan-regeneration-sheet__race-select">
+            選擇比賽
+            <select v-model="selectedRaceId" name="regenerationRaceId" :disabled="busy">
+              <option v-for="race in raceOptions" :key="race.id" :value="race.id">{{ race.name }} · {{ race.raceDate }} · {{ race.distance }} · {{ race.goal }}</option>
+            </select>
+          </label>
+          <p v-if="selectedPlanType === 'race' && selectedRace" class="inline-note" data-testid="training-plan-regeneration-race-detail">
+            {{ selectedRace.name }} · {{ selectedRace.raceDate }} · {{ selectedRace.distance }} · {{ selectedRace.goal }}
+          </p>
         </fieldset>
 
         <p class="training-plan-regeneration-sheet__quota" :class="{ 'training-plan-regeneration-sheet__quota--exhausted': !options.quota.available }">
@@ -74,8 +129,8 @@ function submit() {
         <p v-if="error" class="field-error" role="alert">{{ error }}</p>
 
         <div class="app-dialog__actions">
-          <AppButton tone="neutral" type="button" :disabled="busy" @click="$emit('close')">取消</AppButton>
-          <AppButton tone="primary" type="submit" :busy="busy" :disabled="!options.quota.available" data-testid="training-plan-regeneration-confirm">確認重新產生</AppButton>
+          <AppButton tone="neutral" type="button" :disabled="busy" data-testid="training-plan-regeneration-cancel" @click="requestClose">取消</AppButton>
+          <AppButton tone="primary" type="submit" :busy="busy" :disabled="!canConfirm" data-testid="training-plan-regeneration-confirm">確認重新產生</AppButton>
         </div>
       </form>
     </section>
@@ -116,6 +171,12 @@ function submit() {
 .training-plan-regeneration-sheet__choice span {
   display: grid;
   gap: 0.15rem;
+}
+
+.training-plan-regeneration-sheet__race-select {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 700;
 }
 
 .training-plan-regeneration-sheet__choice small,

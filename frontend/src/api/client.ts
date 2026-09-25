@@ -1,6 +1,7 @@
 import type {
   AthleteProfileSavePayload,
   AthleteProfileResponse,
+  AgentRunResponse,
   AuthResponse,
   ConversationMessageResponse,
   CurrentUser,
@@ -141,6 +142,10 @@ export function listTrainingPlans(): Promise<{ data: Array<Record<string, unknow
   return getJson('/training-plans')
 }
 
+export function getAgentRun(runId: string): Promise<{ data: AgentRunResponse }> {
+  return getJson(`/agent-runs/${encodeURIComponent(runId)}`)
+}
+
 export function getTrainingPlanRegenerationOptions(): Promise<{ data: TrainingPlanRegenerationOptions }> {
   return getJson('/training-plans/regeneration-options')
 }
@@ -149,8 +154,16 @@ export function startTrainingPlanRegeneration(payload: TrainingPlanRegenerationR
   return postJson('/training-plans/regenerations', payload)
 }
 
-export function listRaceGoals(raceDateFrom: string, raceDateTo: string): Promise<{ data: Array<Record<string, unknown>> }> {
-  return getJson(`/races?race_date_from=${encodeURIComponent(raceDateFrom)}&race_date_to=${encodeURIComponent(raceDateTo)}&limit=100&offset=0`)
+export function listRaceGoals(raceDateFrom: string, raceDateTo?: string): Promise<{ data: Array<Record<string, unknown>> }> {
+  const params = new URLSearchParams({
+    race_date_from: raceDateFrom,
+    limit: '100',
+    offset: '0',
+  })
+  if (raceDateTo) {
+    params.set('race_date_to', raceDateTo)
+  }
+  return getJson(`/races?${params.toString()}`)
 }
 
 export function createRaceGoal(payload: RaceGoalCreatePayload): Promise<{ data: Record<string, unknown> }> {
