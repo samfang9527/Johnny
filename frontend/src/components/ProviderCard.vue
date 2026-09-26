@@ -101,7 +101,7 @@ function selectProvider() {
         :disabled="isFuture"
         @click="selectProvider"
       >
-        {{ isFuture ? '尚未開放' : connection ? '重新連接' : '連接資料來源' }}
+        {{ isFuture ? '尚未開放' : connection ? '重新連接' : '連接資料' }}
       </AppButton>
       <AppButton
         v-if="connection && !isDisconnected && !requiresReauth"

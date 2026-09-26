@@ -169,7 +169,7 @@ Copy 原則：
 主架構是五個 product surfaces：
 
 - `今日`: start-line cockpit，預設入口。
-- `計畫`: race-track journey timeline + weekly schedule。
+- `計畫`: inclusive training journey + weekly schedule。Race goals can appear inside the journey, but non-race athletes still see a useful training cycle.
 - `Johnny`: pending recommendations first, weekly review/check-ins below. Conversation remains hidden until public-ready.
 - `運動員`: Athlete Baseline snapshot first, profile/settings below. Athlete Memory is not a browsable frontend page.
 - `資料`: Signal Coverage first, provider connection details below.
@@ -186,7 +186,7 @@ Today mobile follows a centered vertical flow similar to a training app:
 
 Today desktop uses a main decision column plus a right-side context rail. The left column keeps the mobile flow and remains visually dominant. The right rail can show race countdown, plan phase, signal coverage, and pending recommendation count.
 
-`計畫` begins with a race-track phase timeline: base, build, peak, taper, race. Weekly schedule sits underneath as execution detail.
+`計畫` begins with a training journey: base, build, peak, taper, and goal week. Race goals are optional highlights, not a prerequisite for the page to make sense. Weekly schedule sits underneath as execution detail.
 
 `資料` begins with Signal Coverage, e.g. `Johnny 已有 4/6 個訓練訊號`。The six MVP signals are activity, sleep, HRV, resting heart rate, training load, and athlete baseline.
 

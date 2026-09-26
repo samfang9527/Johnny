@@ -80,6 +80,237 @@ describe('Johnny product shell', () => {
     )
   })
 
+  it('renders the Today adjust decision card with factual evidence', () => {
+    const wrapper = mount(App)
+    const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
+
+    expect(decisionCard.text()).toContain('不太對勁')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('接受調整')
+    expect(wrapper.findAll('[data-testid="today-evidence-chip"]').length).toBeGreaterThanOrEqual(3)
+    expect(decisionCard.text()).toContain('近期訓練負荷偏高')
+    expect(wrapper.text()).toContain('依照你過去的恢復模式')
+  })
+
+  it('shows weekly activity rhythm below the Today decision', () => {
+    const wrapper = mount(App)
+
+    expect(wrapper.get('[data-testid="weekly-activity"]').text()).toContain('本週活動')
+    const plot = wrapper.get('[data-testid="weekly-activity-plot"]')
+    expect(plot.classes()).toContain('weekly-activity__plot--spread')
+    expect(plot.findAll('[data-testid="weekly-activity-column"]')).toHaveLength(7)
+    expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').length).toBe(7)
+    expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').map((bar) => bar.attributes('style'))).toEqual([
+      '--bar-size: 33%;',
+      '--bar-size: 0%;',
+      '--bar-size: 44%;',
+      '--bar-size: 56%;',
+      '--bar-size: 0%;',
+      '--bar-size: 28%;',
+      '--bar-size: 100%;',
+    ])
+  })
+
+  it('marks auth inputs with the readable light input treatment', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ error: { code: 'unauthorized', message: 'Authentication required', details: [] } }),
+    } as Response)
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.get('input[name="authEmail"]').classes()).toContain('auth-form__input')
+    expect(wrapper.get('input[name="authPassword"]').classes()).toContain('auth-form__input')
+  })
+
+  it('fills the desktop Today context rail with plan and signal context', () => {
+    const wrapper = mount(App)
+    const rail = wrapper.get('.today-context-rail')
+
+    expect(rail.text()).toContain('目標賽事')
+    expect(rail.text()).toContain('目前階段')
+    expect(rail.text()).toContain('Build')
+    expect(rail.text()).toContain('Signal Coverage')
+    expect(rail.text()).toContain('Johnny 已有')
+    expect(rail.text()).toContain('Johnny 待決定')
+  })
+
+  it('shows Athlete baseline before the settings form', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="athlete-baseline"]').text()).toContain('Athlete Baseline')
+    expect(wrapper.get('[data-testid="athlete-baseline"]').text()).toContain('週跑量')
+    expect(wrapper.find('[data-testid="athlete-baseline"]').element.compareDocumentPosition(wrapper.get('[data-testid="athlete-settings-form"]').element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('uses a fixed timezone dropdown in Athlete settings', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
+
+    const timezone = wrapper.get('select[name="athleteTimezone"]')
+    expect(wrapper.find('input[name="athleteTimezone"]').exists()).toBe(false)
+    expect(timezone.text()).toContain('台北')
+    expect(timezone.text()).toContain('UTC')
+    await timezone.setValue('America/Los_Angeles')
+    expect((timezone.element as HTMLSelectElement).value).toBe('America/Los_Angeles')
+  })
+
+  it('shows Data signal coverage before provider details', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="data"]').trigger('click')
+
+    const signalCoverage = wrapper.get('[data-testid="signal-coverage"]')
+    const providerDetails = wrapper.get('.provider-grid')
+
+    expect(signalCoverage.text()).toContain('Johnny 已有')
+    expect(signalCoverage.text()).toContain('Activity')
+    expect(signalCoverage.text()).toContain('Athlete Baseline')
+    expect(signalCoverage.findAll('.signal-pill')).toHaveLength(6)
+    expect(signalCoverage.findAll('.signal-pill--covered').length).toBeGreaterThan(0)
+    expect(signalCoverage.element.compareDocumentPosition(providerDetails.element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('derives signal coverage from canonical backend signals', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-signal-coverage',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-signal-coverage',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            status: 'planned',
+          },
+        ],
+        recovery: {
+          hrv_ms: 58,
+          hrv_delta_percentage: 1,
+          sleep_minutes: 480,
+          sleep_debt_minutes: 0,
+          body_battery_score: 72,
+          stress_score: 35,
+        },
+        training_load: {
+          acute_chronic_ratio: 1.6,
+        },
+        unavailable_signals: ['resting_heart_rate_baseline'],
+      },
+      recommendations: [],
+    })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    await wrapper.get('button[data-view="data"]').trigger('click')
+
+    const pills = wrapper.findAll('.signal-pill')
+    const pillByLabel = (label: string) => {
+      const pill = pills.find((item) => item.text().includes(label))
+      expect(pill, `missing ${label}`).toBeTruthy()
+      return pill!
+    }
+    expect(pillByLabel('Training Load').classes()).toContain('signal-pill--covered')
+    expect(pillByLabel('Resting HR').classes()).not.toContain('signal-pill--covered')
+  })
+
+  it('renders rest guidance for a high-priority Today recommendation', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-rest-decision',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-rest',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            heart_rate_zone: 'Zone 2',
+            status: 'planned',
+          },
+        ],
+        recovery: {
+          hrv_ms: 52,
+          hrv_delta_percentage: -18,
+        },
+        unavailable_signals: [],
+      },
+      recommendations: [
+        {
+          id: 'rest-recommendation',
+          priority: 'high',
+          title: '今天先休息',
+          rationale: '恢復訊號需要更多時間消化。',
+          status: 'pending',
+          evidence: [],
+          proposed_action: { type: 'rest', reason: '今天先休息' },
+        },
+      ],
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
+    expect(decisionCard.text()).toContain('先收一下')
+    expect(decisionCard.text()).toContain('今天不要硬撐，跑鞋先放假。')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('記錄休息')
+  })
+
+  it('uses all recovery evidence for Today Decision even when dangerous evidence is not displayed', async () => {
+    mockAuthenticatedToday({
+      userId: 'user-auth-danger-load',
+      todayData: {
+        scheduled_workouts: [
+          {
+            id: 'backend-workout-danger-load',
+            scheduled_for: '2026-09-02',
+            workout_type: 'easy_run',
+            purpose: '維持有氧節奏',
+            planned_distance_meters: 8000,
+            heart_rate_zone: 'Zone 2',
+            status: 'planned',
+          },
+        ],
+        recovery: {
+          hrv_ms: 58,
+          hrv_delta_percentage: 1,
+          sleep_minutes: 480,
+          sleep_debt_minutes: 0,
+          body_battery_score: 72,
+          stress_score: 35,
+        },
+        training_load: {
+          acute_chronic_ratio: 1.6,
+        },
+        unavailable_signals: [],
+      },
+      recommendations: [],
+    })
+
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
+    expect(decisionCard.text()).toContain('先收一下')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('記錄休息')
+    expect(wrapper.findAll('[data-testid="today-evidence-chip"]')).toHaveLength(3)
+  })
+
+  it('routes the Today adjust action into Johnny recommendations', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('[data-testid="today-decision-action"]').trigger('click')
+
+    expect(wrapper.get('.top-nav__item--active').text()).toContain('Johnny')
+    expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('待決定')
+    expect(document.title).toBe('Johnny — Johnny')
+  })
+
   it('shows the login screen when the session is missing or expired', async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: false,
@@ -87,13 +318,23 @@ describe('Johnny product shell', () => {
       json: () => Promise.resolve({ error: { code: 'unauthorized', message: 'Authentication required', details: [] } }),
     } as Response)
 
-    const wrapper = mount(App, { props: { initialView: 'calendar', requireAuth: true } })
+    const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('登入 Johnny')
     expect(wrapper.text()).toContain('使用 Google 登入')
     expect(wrapper.text()).toContain('Email 登入')
     expect(wrapper.find('nav').exists()).toBe(false)
+  })
+
+  it('updates the route title when changing public views', async () => {
+    const wrapper = mount(App)
+
+    expect(document.title).toBe('今日 — Johnny')
+    await wrapper.get('button[data-view="plan"]').trigger('click')
+    expect(document.title).toBe('計畫 — Johnny')
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
+    expect(document.title).toBe('運動員 — Johnny')
   })
 
   it('derives the local API host from the active frontend host', () => {
@@ -164,20 +405,36 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Johnny Chen')
     expect(wrapper.text()).toContain('今天的訓練決策')
     expect(wrapper.text()).not.toContain('Sydney Marathon')
-    expect(wrapper.text()).toContain('連接資料來源後')
+    expect(wrapper.text()).toContain('連接資料後')
   })
 
   it('shows the Chinese-first navigation and Today as the primary surface', () => {
     const wrapper = mount(App)
 
     expect(wrapper.get('nav').text()).toContain('今日')
-    expect(wrapper.get('nav').text()).toContain('訓練安排')
-    expect(wrapper.get('nav').text()).toContain('Agent 收件匣')
-    expect(wrapper.get('nav').text()).toContain('運動員設定')
-    expect(wrapper.get('nav').text()).toContain('資料來源')
+    expect(wrapper.get('nav').text()).toContain('計畫')
+    expect(wrapper.get('nav').text()).toContain('Johnny')
+    expect(wrapper.get('nav').text()).toContain('運動員')
+    expect(wrapper.get('nav').text()).toContain('資料')
     expect(wrapper.get('nav').text()).not.toContain('對話')
     expect(wrapper.text()).toContain('今天的訓練決策')
     expect(wrapper.text()).toContain('Sydney Marathon')
+  })
+
+  it('shows the start-line navigation and keeps conversation hidden', () => {
+    const wrapper = mount(App)
+
+    const navText = wrapper.get('nav').text()
+    expect(navText).toContain('今日')
+    expect(navText).toContain('計畫')
+    expect(navText).toContain('Johnny')
+    expect(navText).toContain('運動員')
+    expect(navText).toContain('資料')
+    expect(navText).not.toContain('訓練安排')
+    expect(navText).not.toContain('Agent 收件匣')
+    expect(navText).not.toContain('運動員設定')
+    expect(navText).not.toContain('資料來源')
+    expect(navText).not.toContain('對話')
   })
 
   it('edits athlete settings with structured validation, unit conversion, and canonical km save payload', async () => {
@@ -242,9 +499,9 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App)
     await flushPromises()
 
-    await wrapper.get('button[data-view="athlete-settings"]').trigger('click')
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
 
-    expect(wrapper.text()).toContain('運動員設定')
+    expect(wrapper.text()).toContain('運動員')
     expect(wrapper.get('select[name="experienceLevel"]').text()).toContain('未設定')
     expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('32.2')
 
@@ -266,7 +523,7 @@ describe('Johnny product shell', () => {
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('運動員設定已更新')
+    expect(wrapper.text()).toContain('運動員已更新')
   })
 
   it('does not show the connect-source empty block after a provider is connected', async () => {
@@ -320,10 +577,10 @@ describe('Johnny product shell', () => {
       } as Response)
     })
 
-    const wrapper = mount(App, { props: { initialView: 'calendar', requireAuth: true } })
+    const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('訓練安排')
+    expect(wrapper.text()).toContain('計畫')
     expect(wrapper.text()).not.toContain('Sydney Marathon')
     expect(wrapper.text()).not.toContain('Taipei Half Tune-up')
     expect(wrapper.text()).not.toContain('Tokyo Marathon Prep Race')
@@ -383,7 +640,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
     const noRecommendationStrip = noRecommendation.get('[data-testid="today-recommendation-strip"]')
     expect(noRecommendationStrip.text()).toContain('目前可以照課表執行')
-    expect(noRecommendationStrip.text()).toContain('查看 Agent 收件匣')
+    expect(noRecommendationStrip.text()).toContain('查看 Johnny 建議')
     expect(noRecommendation.text()).not.toContain('readiness_label')
 
     mockAuthenticatedToday({
@@ -399,7 +656,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
     const insufficientDataStrip = insufficientData.get('[data-testid="today-recommendation-strip"]')
     expect(insufficientDataStrip.text()).toContain('目前資料不足')
-    expect(insufficientDataStrip.text()).not.toContain('連接資料來源')
+    expect(insufficientDataStrip.text()).not.toContain('連接資料')
   })
 
   it('shows structured workout steps from Today in a detail modal', async () => {
@@ -583,14 +840,14 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('檢查資料來源')
-    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('檢查資料來源')
+    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('檢查資料')
+    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('檢查資料')
     await wrapper.get('[data-testid="today-recovery-source-action"]').trigger('click')
-    expect(wrapper.text()).toContain('連接資料來源')
+    expect(wrapper.text()).toContain('連接資料')
   })
 
   it('shows only accept and keep buttons on Agent Inbox recommendation cards', () => {
-    const inbox = mount(App, { props: { initialView: 'inbox' } })
+    const inbox = mount(App, { props: { initialView: 'johnny' } })
     const actions = inbox.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]')
 
     expect(actions.text()).toContain('接受調整')
@@ -600,9 +857,27 @@ describe('Johnny product shell', () => {
     expect(actions.findAll('button')).toHaveLength(2)
   })
 
+  it('shows Johnny as recommendations first and hides public conversation', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="johnny"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('待決定')
+    expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('賽前 9 天降低長跑壓力')
+    expect(wrapper.text()).not.toContain('送出')
+    expect(wrapper.text()).not.toContain('今天原本有 8 km')
+  })
+
+  it('keeps Johnny weekly review visible when there are no recommendations', () => {
+    const wrapper = mount(App, { props: { initialView: 'johnny', inboxItems: [] } })
+
+    expect(wrapper.text()).toContain('目前沒有新的主動建議')
+    expect(wrapper.get('[data-testid="johnny-weekly-review"]').text()).toContain('這週先守住連續性')
+  })
+
   it('keeps Agent Inbox recommendation action geometry stable while accept is pending', async () => {
     vi.mocked(fetch).mockReturnValue(new Promise(() => undefined) as unknown as Promise<Response>)
-    const wrapper = mount(App, { props: { initialView: 'inbox' } })
+    const wrapper = mount(App, { props: { initialView: 'johnny' } })
 
     await wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-action="accept"]').trigger('click')
 
@@ -613,7 +888,7 @@ describe('Johnny product shell', () => {
   it('shows Today loading, error, and empty states with Chinese guidance', () => {
     expect(mount(App, { props: { todayState: 'loading' } }).text()).toContain('正在整理今天的訓練資料')
     expect(mount(App, { props: { todayState: 'error' } }).text()).toContain('今天資料載入失敗')
-    expect(mount(App, { props: { todayState: 'empty' } }).text()).toContain('連接資料來源後')
+    expect(mount(App, { props: { todayState: 'empty' } }).text()).toContain('連接資料後')
   })
 
   it('keeps the Today recovery card compact with fixed action-oriented labels', () => {
@@ -637,14 +912,34 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('.workout-card').find('button').exists()).toBe(false)
   })
 
-  it('opens training arrangements as a six-month race calendar with workout context', async () => {
+  it('shows Plan as an inclusive training journey with schedule underneath', async () => {
     const wrapper = mount(App)
 
-    await wrapper.get('button[data-view="calendar"]').trigger('click')
+    await wrapper.get('button[data-view="plan"]').trigger('click')
 
-    expect(wrapper.text()).toContain('訓練安排')
-    expect(wrapper.text()).toContain('未來六個月')
-    expect(wrapper.findAll('[data-testid="race-month"]').length).toBe(6)
+    const journey = wrapper.get('[data-testid="plan-training-journey"]')
+    const stops = journey.findAll('[data-testid="plan-journey-stop"]')
+
+    expect(journey.find('[data-testid="plan-journey-track"]').exists()).toBe(true)
+    expect(journey.findAll('[data-testid="plan-journey-node"]')).toHaveLength(5)
+    expect(stops).toHaveLength(5)
+    expect(stops[0].classes()).toContain('plan-journey__stop--done')
+    expect(stops[1].classes()).toContain('plan-journey__stop--current')
+    expect(stops.slice(2).every((stop) => stop.classes().includes('plan-journey__stop--next'))).toBe(true)
+    expect(journey.findAll('.plan-phase')).toHaveLength(0)
+    expect(journey.text()).toContain('Build')
+    expect(journey.text()).toContain('目前訓練週期')
+    expect(wrapper.text()).toContain('接下來課表')
+  })
+
+  it('opens Plan with journey phases, race goals, and workout context', async () => {
+    const wrapper = mount(App)
+
+    await wrapper.get('button[data-view="plan"]').trigger('click')
+
+    expect(wrapper.text()).toContain('Training journey')
+    expect(wrapper.text()).not.toContain('Race journey')
+    expect(wrapper.get('[data-testid="plan-training-journey"]').text()).toContain('Build')
     expect(wrapper.text()).toContain('Taipei Half Tune-up')
     expect(wrapper.text()).toContain('週三')
     expect(wrapper.text()).toContain('Easy Run')
@@ -685,7 +980,7 @@ describe('Johnny product shell', () => {
     })
     const wrapper = mount(App, {
       props: {
-        initialView: 'calendar',
+        initialView: 'plan',
       },
     })
 
@@ -705,7 +1000,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Taipei Half')
     expect(wrapper.text()).toContain('21.1 km')
     expect(wrapper.text()).toContain('1:45:00')
-    expect(wrapper.text()).toContain('賽事已加入訓練安排')
+    expect(wrapper.text()).toContain('賽事已加入訓練計畫')
     expect(wrapper.find('[data-testid="race-goal-modal"]').exists()).toBe(false)
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/races',
@@ -723,7 +1018,7 @@ describe('Johnny product shell', () => {
   })
 
   it('requires race priority and confirms before discarding dirty modal changes', async () => {
-    const wrapper = mount(App, { attachTo: document.body, props: { initialView: 'calendar' } })
+    const wrapper = mount(App, { attachTo: document.body, props: { initialView: 'plan' } })
 
     await wrapper.get('button[data-testid="open-race-goal-modal"]').trigger('click')
     await wrapper.get('input[name="raceName"]').setValue('Taipei Half')
@@ -744,7 +1039,7 @@ describe('Johnny product shell', () => {
   })
 
   it('validates manually typed race dates on blur', async () => {
-    const wrapper = mount(App, { props: { initialView: 'calendar' } })
+    const wrapper = mount(App, { props: { initialView: 'plan' } })
 
     await wrapper.get('button[data-testid="open-race-goal-modal"]').trigger('click')
     await wrapper.get('input[name="raceDate"]').setValue('2026/11/15')
@@ -756,12 +1051,12 @@ describe('Johnny product shell', () => {
   it('shows an empty workout state without losing the training arrangements surface', () => {
     const wrapper = mount(App, {
       props: {
-        initialView: 'calendar',
+        initialView: 'plan',
         workouts: [],
       },
     })
 
-    expect(wrapper.text()).toContain('訓練安排')
+    expect(wrapper.text()).toContain('計畫')
     expect(wrapper.text()).toContain('目前沒有已排定課表')
   })
 
@@ -778,9 +1073,9 @@ describe('Johnny product shell', () => {
     })
     const wrapper = mount(App)
 
-    await wrapper.get('button[data-view="sources"]').trigger('click')
+    await wrapper.get('button[data-view="data"]').trigger('click')
 
-    expect(wrapper.text()).toContain('資料來源')
+    expect(wrapper.text()).toContain('資料連接')
     expect(wrapper.text()).toContain('Garmin Connect experimental login')
     expect(wrapper.text()).not.toContain('Apple Health')
     expect(wrapper.text()).not.toContain('Strava')
@@ -824,7 +1119,7 @@ describe('Johnny product shell', () => {
   it('keeps Garmin validation in the app instead of submitting empty credentials', async () => {
     const wrapper = mount(App, {
       props: {
-        initialView: 'sources',
+        initialView: 'data',
       },
     })
 
@@ -850,7 +1145,7 @@ describe('Johnny product shell', () => {
       } as Response)
     })
 
-    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    const wrapper = mount(App, { props: { initialView: 'data' } })
     await flushPromises()
 
     const garminCard = wrapper.get('[data-testid="provider-card-garmin_connect"]')
@@ -890,7 +1185,7 @@ describe('Johnny product shell', () => {
         json: () => Promise.resolve({ data: {} }),
       } as Response)
     })
-    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    const wrapper = mount(App, { props: { initialView: 'data' } })
 
     await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
@@ -931,7 +1226,7 @@ describe('Johnny product shell', () => {
         }),
       ),
     )
-    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    const wrapper = mount(App, { props: { initialView: 'data' } })
 
     await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
@@ -970,7 +1265,7 @@ describe('Johnny product shell', () => {
         json: () => Promise.resolve({ data: {} }),
       } as Response)
     })
-    const wrapper = mount(App, { props: { initialView: 'sources' } })
+    const wrapper = mount(App, { props: { initialView: 'data' } })
 
     await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="select-provider"]').trigger('click')
     await wrapper.get('input[name="garminEmail"]').setValue('runner@example.com')
@@ -1172,11 +1467,11 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Backend Half Marathon')
     expect(wrapper.text()).toContain('10 km')
 
-    await wrapper.get('button[data-view="calendar"]').trigger('click')
+    await wrapper.get('button[data-view="plan"]').trigger('click')
     expect(wrapper.text()).toContain('Backend Calendar 10K')
     expect(wrapper.text()).toContain('50:00')
 
-    await wrapper.get('button[data-view="inbox"]').trigger('click')
+    await wrapper.get('button[data-view="johnny"]').trigger('click')
     await wrapper.get('[data-testid="inbox-card-backend-rec-1"] [data-action="accept"]').trigger('click')
     await flushPromises()
 
@@ -1187,9 +1482,9 @@ describe('Johnny product shell', () => {
   })
 
   it('renders Agent Inbox as a pending decision queue with quieter history', () => {
-    const wrapper = mount(App, { props: { initialView: 'inbox' } })
+    const wrapper = mount(App, { props: { initialView: 'johnny' } })
 
-    expect(wrapper.text()).toContain('Agent 收件匣')
+    expect(wrapper.text()).toContain('Johnny 建議')
     expect(wrapper.text()).toContain('高優先')
     expect(wrapper.text()).toContain('今天 21:00 前決定')
     expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"]').text()).toContain('待決定')

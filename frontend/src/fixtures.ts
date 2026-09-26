@@ -1,4 +1,14 @@
-import type { ConversationThread, InboxRecommendation, EvidenceItem, ProviderOption, RaceSummary, RecommendationSummary, WorkoutSummary } from './types'
+import type {
+  ConversationThread,
+  InboxRecommendation,
+  EvidenceItem,
+  PlanPhase,
+  ProviderOption,
+  RaceSummary,
+  RecommendationSummary,
+  WeeklyActivityPoint,
+  WorkoutSummary,
+} from './types'
 
 export const raceSummary: RaceSummary = {
   name: 'Sydney Marathon',
@@ -7,6 +17,16 @@ export const raceSummary: RaceSummary = {
   goal: 'Sub 4:00',
   daysRemaining: 16,
 }
+
+export const weeklyActivity: WeeklyActivityPoint[] = [
+  { dayLabel: '一', distanceKm: 6, loadLabel: 'Easy' },
+  { dayLabel: '二', distanceKm: 0, loadLabel: 'Rest' },
+  { dayLabel: '三', distanceKm: 8, loadLabel: 'Easy' },
+  { dayLabel: '四', distanceKm: 10, loadLabel: 'Tempo' },
+  { dayLabel: '五', distanceKm: 0, loadLabel: 'Rest' },
+  { dayLabel: '六', distanceKm: 5, loadLabel: 'Easy' },
+  { dayLabel: '日', distanceKm: 18, loadLabel: 'Long' },
+]
 
 export const futureRaces: RaceSummary[] = [
   raceSummary,
@@ -24,6 +44,14 @@ export const futureRaces: RaceSummary[] = [
     goal: '檢查補給與節奏',
     daysRemaining: 155,
   },
+]
+
+export const planPhases: PlanPhase[] = [
+  { id: 'base', label: 'Base', status: 'done', summary: '穩定跑量' },
+  { id: 'build', label: 'Build', status: 'current', summary: '累積馬拉松節奏' },
+  { id: 'peak', label: 'Peak', status: 'next', summary: '最高訓練週' },
+  { id: 'taper', label: 'Taper', status: 'next', summary: '降低疲勞' },
+  { id: 'race', label: 'Race', status: 'next', summary: '比賽執行' },
 ]
 
 export const recoveryEvidence: EvidenceItem[] = [
@@ -46,7 +74,7 @@ export const recoveryEvidence: EvidenceItem[] = [
     metric: '7 日負荷',
     value: '+21%',
     summary: '近期訓練負荷偏高',
-    tone: 'danger',
+    tone: 'warning',
   },
 ]
 
@@ -246,7 +274,7 @@ export const inboxRecommendations: InboxRecommendation[] = [
     title: '同步課表調整',
     summary: '已套用你接受的 Easy Run 調整，課表保留原本訓練目的。',
     proposedAction: '更新今日課表',
-    rationale: '資料來源同步完成，Johnny 已把訓練決策反映到課表。',
+    rationale: '資料連接同步完成，Johnny 已把訓練決策反映到課表。',
     priority: 'low',
     priorityLabel: '低優先',
     status: 'applied',

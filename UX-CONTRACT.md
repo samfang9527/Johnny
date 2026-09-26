@@ -24,13 +24,14 @@
 - Today Decision evidence shows the top current training/recovery signals plus one subtle Athlete Memory insight when relevant. It does not expose Athlete Memory as a browsable data object.
 - `今日` mobile layout uses a centered vertical flow. Desktop uses the main Today decision column plus a right-side context rail for race, plan, signal coverage, and pending recommendation context.
 - `今日` includes a weekly activity rhythm chart below the decision card.
-- `計畫` owns the race-track journey timeline with phase segments at the top and weekly schedule underneath.
+- `計畫` owns an inclusive training journey with phase segments at the top and weekly schedule underneath. Races are optional goals inside the journey, not a required identity for every athlete.
 - `Johnny` owns pending recommendation decisions first, weekly review/check-ins below, and no public conversation composer for this release.
 - Johnny recommendation cards may display the emotional state language, but decision buttons use formal action language.
 - `運動員` owns Athlete Baseline. It shows a baseline snapshot first: weekly mileage, experience, injury status, preferred training rhythm, and recent baseline metrics. Editable profile/settings remain below the snapshot.
 - Athlete Memory is Johnny's private working context and must not appear as a standalone navigation item, page, table, or browsable list. It may surface only as contextual explanation copy in recommendations or future conversation.
 - `資料` starts with Signal Coverage: activity, sleep, HRV, resting heart rate, training load, and athlete baseline. Provider connection cards and sync details appear below.
 - `運動員` saves through `PUT /api/v1/athlete/profile`, displays weekly mileage in the selected unit, sends canonical `current_weekly_mileage_km`, keeps generic `training_preferences` hidden, and validates structured injury fields before submit.
+- `運動員` timezone uses the canonical native select pattern with a fixed common-timezone list; valid existing profile timezones outside the list are preserved as a temporary current option.
 - `計畫` keeps race-goal creation through `POST /api/v1/races`; the create UI accepts kilometers and converts to API `distance_meters`, requires a product priority (`主要目標`, `次要目標`, `暖身賽`), and never sends race status on create.
 - The calendar hydrates from `GET /api/v1/races` for the active six-month window. Workout lists remain supporting execution context.
 

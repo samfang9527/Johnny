@@ -1,7 +1,7 @@
 {
   "findings": [],
   "mode": "strict",
-  "projectRoot": "/Users/fangchangseng/Desktop/Projects/Johnny",
+  "projectRoot": "/private/tmp/johnny-start-line-ui",
   "schemaVersion": 1,
   "summary": {
     "errors": 0,

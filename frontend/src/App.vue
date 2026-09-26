@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   acceptRecommendation,
   ApiRequestError,
@@ -35,6 +35,7 @@ import {
   conversationThreads as fixtureConversationThreads,
   futureRaces as fixtureFutureRaces,
   inboxRecommendations as fixtureInboxRecommendations,
+  planPhases as fixturePlanPhases,
   plannedWorkouts as fixtureWorkouts,
   providers,
   raceSummary as fixtureRaceSummary,
@@ -42,6 +43,7 @@ import {
   recoveryEvidence as fixtureRecoveryEvidence,
   todayWorkout as fixtureTodayWorkout,
   unavailableSignals as fixtureUnavailableSignals,
+  weeklyActivity as fixtureWeeklyActivity,
 } from './fixtures'
 import type {
   ConversationThread,
@@ -52,6 +54,7 @@ import type {
   RecommendationStatus,
   RecommendationSummary,
   RaceSummary,
+  TodayDecision,
   ViewKey,
   WorkoutSummary,
   EvidenceItem,
@@ -60,6 +63,8 @@ import type {
   RaceGoalCreatePayload,
   AthleteProfileResponse,
   AthleteProfileSavePayload,
+  AthleteBaselineSnapshot,
+  SignalCoverageItem,
   WorkoutStep,
   WorkoutTarget,
 } from './types'
@@ -88,18 +93,42 @@ const props = withDefaults(
 
 const navItems: Array<{ key: ViewKey; label: string }> = [
   { key: 'today', label: '今日' },
-  { key: 'calendar', label: '訓練安排' },
-  { key: 'inbox', label: 'Agent 收件匣' },
-  { key: 'athlete-settings', label: '運動員設定' },
-  { key: 'sources', label: '資料來源' },
+  { key: 'plan', label: '計畫' },
+  { key: 'johnny', label: 'Johnny' },
+  { key: 'athlete', label: '運動員' },
+  { key: 'data', label: '資料' },
 ]
+
+const timezoneOptions = [
+  { value: 'Asia/Taipei', label: '台北 (Asia/Taipei)' },
+  { value: 'Asia/Tokyo', label: '東京 (Asia/Tokyo)' },
+  { value: 'Asia/Hong_Kong', label: '香港 (Asia/Hong_Kong)' },
+  { value: 'Asia/Shanghai', label: '上海 (Asia/Shanghai)' },
+  { value: 'Asia/Singapore', label: '新加坡 (Asia/Singapore)' },
+  { value: 'UTC', label: 'UTC' },
+  { value: 'America/Los_Angeles', label: '洛杉磯 (America/Los_Angeles)' },
+  { value: 'America/Denver', label: '丹佛 (America/Denver)' },
+  { value: 'America/Chicago', label: '芝加哥 (America/Chicago)' },
+  { value: 'America/New_York', label: '紐約 (America/New_York)' },
+  { value: 'Europe/London', label: '倫敦 (Europe/London)' },
+  { value: 'Europe/Paris', label: '巴黎 (Europe/Paris)' },
+  { value: 'Australia/Sydney', label: '雪梨 (Australia/Sydney)' },
+]
+
+const legacyViewMap: Partial<Record<string, ViewKey>> = {
+  calendar: 'plan',
+  inbox: 'johnny',
+  'athlete-settings': 'athlete',
+  sources: 'data',
+}
 
 function viewFromHash(): ViewKey | undefined {
   if (typeof window === 'undefined') {
     return undefined
   }
-  const hashView = window.location.hash.replace('#', '') as ViewKey
-  return navItems.some((item) => item.key === hashView) ? hashView : undefined
+  const rawHashView = window.location.hash.replace('#', '')
+  const mappedView = legacyViewMap[rawHashView] ?? (rawHashView as ViewKey)
+  return navItems.some((item) => item.key === mappedView) ? mappedView : undefined
 }
 
 const activeView = ref<ViewKey>(props.initialView ?? viewFromHash() ?? 'today')
@@ -159,6 +188,7 @@ const athleteSettingsBusy = ref(false)
 const athleteMileageDisplayUnit = ref<'metric' | 'imperial'>('metric')
 
 const activeTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label || '今日')
+watch(activeTitle, updateDocumentTitle, { immediate: true })
 const isAuthenticated = computed(() => authStatus.value === 'authenticated')
 const hasActiveDataProvider = computed(() =>
   Boolean(garminConnection.value && garminConnection.value.status !== 'disconnected' && garminConnection.value.credential_status !== 'deleted'),
@@ -186,8 +216,37 @@ const unavailableSignals = computed(() => {
   }
   return shouldRequireAuth() ? [] : fixtureUnavailableSignals
 })
+const athleteBaselineSnapshot = computed<AthleteBaselineSnapshot>(() => ({
+  weeklyMileage: `${athleteSettings.value.currentWeeklyMileage || '0'} ${athleteMileageDisplayUnit.value === 'imperial' ? 'mi' : 'km'}`,
+  experience: athleteSettings.value.experienceLevel || '未設定',
+  injuryStatus: formatInjuryStatusLabel(athleteSettings.value.injuryStatus),
+  rhythm: `${athleteSettings.value.preferredTrainingDays.length} 天訓練 · 長跑 ${formatWeekdayLabel(athleteSettings.value.preferredLongRunDay)}`,
+  recentMetrics: recoveryEvidence.value.slice(0, 3).map((item) => `${item.metric} ${item.value}`),
+}))
+const unavailableSignalKeys = computed(() => new Set(unavailableSignals.value.map(normalizeSignalKey)))
+const hasRecoverySignal = computed(() => {
+  const metrics = new Set(recoveryEvidence.value.map((item) => normalizeSignalKey(item.metric)))
+  return {
+    sleep: metrics.has('睡眠') || metrics.has('sleep'),
+    hrv: metrics.has('hrv'),
+    restingHeartRate: metrics.has('靜息心率') || metrics.has('resting_heart_rate') || metrics.has('resting_hr'),
+    trainingLoad: metrics.has('負荷比') || metrics.has('7_日負荷') || metrics.has('training_load'),
+  }
+})
+const signalCoverage = computed<SignalCoverageItem[]>(() => {
+  return [
+    { id: 'activity', label: 'Activity', covered: hasActiveDataProvider.value, source: 'Garmin' },
+    { id: 'sleep', label: 'Sleep', covered: hasRecoverySignal.value.sleep && !isSignalUnavailable('sleep'), source: 'Garmin' },
+    { id: 'hrv', label: 'HRV', covered: hasRecoverySignal.value.hrv && !isSignalUnavailable('hrv'), source: 'Garmin' },
+    { id: 'resting_hr', label: 'Resting HR', covered: hasRecoverySignal.value.restingHeartRate && !isSignalUnavailable('resting_heart_rate'), source: 'Garmin' },
+    { id: 'training_load', label: 'Training Load', covered: hasRecoverySignal.value.trainingLoad && !isSignalUnavailable('training_load'), source: 'Johnny Analytics' },
+    { id: 'athlete_baseline', label: 'Athlete Baseline', covered: Boolean(athleteSettings.value.timezone), source: '運動員' },
+  ]
+})
+const coveredSignalCount = computed(() => signalCoverage.value.filter((item) => item.covered).length)
 const recommendation = computed(() => apiRecommendation.value ?? (shouldRequireAuth() ? null : fixtureRecommendation))
 const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : shouldRequireAuth() ? [] : fixtureWorkouts))
+const planPhases = computed(() => fixturePlanPhases)
 const displayThreads = computed(() => props.conversationThreads ?? fixtureConversationThreads)
 const displayInboxItems = computed(() => {
   const source = props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : shouldRequireAuth() ? [] : fixtureInboxRecommendations)
@@ -200,8 +259,8 @@ const activeThreadId = ref(displayThreads.value[0]?.id ?? '')
 const activeThread = computed(() => displayThreads.value.find((thread) => thread.id === activeThreadId.value) ?? displayThreads.value[0])
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
 const historicalInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status !== 'pending'))
-const raceCalendarMonths = computed(() => buildRaceCalendarMonths(raceEntries.value))
 const todayIsoDate = computed(() => new Date().toISOString().slice(0, 10))
+const upcomingRaceEntries = computed(() => raceEntries.value.filter((race) => race.date >= todayIsoDate.value))
 const dataSourceNeedsAttention = computed(() =>
   Boolean(
     garminConnection.value &&
@@ -218,6 +277,19 @@ const recoveryFooterText = computed(() => {
   return ''
 })
 const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
+const todayDecision = computed(() => buildTodayDecision(recommendation.value, recoveryEvidence.value))
+const todayEvidenceChips = computed(() => recoveryEvidence.value.slice(0, 3))
+const currentPlanPhase = computed(() => planPhases.value.find((phase) => phase.status === 'current') ?? planPhases.value[0])
+const signalCoverageSummary = computed(() => `Johnny 已有 ${coveredSignalCount.value}/${signalCoverage.value.length} 個訓練訊號`)
+const weeklyActivityPoints = computed(() => fixtureWeeklyActivity)
+const maxWeeklyDistance = computed(() => Math.max(...weeklyActivityPoints.value.map((point) => point.distanceKm), 1))
+const athleteTimezoneOptions = computed(() => {
+  const currentTimezone = athleteSettings.value.timezone
+  if (currentTimezone && !timezoneOptions.some((option) => option.value === currentTimezone)) {
+    return [{ value: currentTimezone, label: `${currentTimezone}（目前）` }, ...timezoneOptions]
+  }
+  return timezoneOptions
+})
 const todayRecommendationStrip = computed(() =>
   buildTodayRecommendationStrip(
     recommendation.value,
@@ -296,6 +368,42 @@ const injuryAreaOptions = [
 ]
 const KILOMETERS_PER_MILE = 1.60934
 
+function buildTodayDecision(recommendation: RecommendationSummary | null, evidence: EvidenceItem[]): TodayDecision {
+  const hasDangerEvidence = evidence.some((item) => item.tone === 'danger')
+  const hasWarningEvidence = evidence.some((item) => item.tone === 'warning')
+  const hasWarningRecommendation = recommendation?.priority === 'warning' || recommendation?.priority === 'danger'
+
+  if (hasDangerEvidence || recommendation?.priority === 'danger') {
+    return {
+      state: 'rest',
+      label: '先收一下',
+      actionLabel: '記錄休息',
+      tone: 'rest',
+      voice: '今天不要硬撐，跑鞋先放假。',
+      memoryInsight: '依照你過去的恢復模式，今天建議保守。',
+    }
+  }
+
+  if (hasWarningEvidence || hasWarningRecommendation) {
+    return {
+      state: 'adjust',
+      label: '不太對勁',
+      actionLabel: '接受調整',
+      tone: 'adjust',
+      voice: '今天先穩住節奏，保留訓練目的就好。',
+      memoryInsight: '依照你過去的恢復模式，今天建議保守。',
+    }
+  }
+
+  return {
+    state: 'run',
+    label: '我可以',
+    actionLabel: '開始跑步',
+    tone: 'run',
+    voice: '狀態可以，照計畫跑，節奏不要偷加。',
+  }
+}
+
 function buildRecoveryDecision(
   currentRecommendation: RecommendationSummary | null,
   evidence: EvidenceItem[],
@@ -327,22 +435,22 @@ function buildTodayRecommendationStrip(
     return {
       summary: currentRecommendation.title,
       actionLabel: '查看待決定建議',
-      actionView: 'inbox',
+      actionView: 'johnny',
       actionTone: 'primary',
     }
   }
   if (!evidence.length || workout.status === 'empty') {
     return {
       summary: '目前資料不足，連接睡眠或 HRV 後 Johnny 會給出更穩定判斷。',
-      actionLabel: sourceNeedsAttention ? '檢查資料來源' : hasConnectedSource ? undefined : '連接資料來源',
-      actionView: sourceNeedsAttention || !hasConnectedSource ? 'sources' : undefined,
+      actionLabel: sourceNeedsAttention ? '檢查資料' : hasConnectedSource ? undefined : '連接資料',
+      actionView: sourceNeedsAttention || !hasConnectedSource ? 'data' : undefined,
       actionTone: 'neutral',
     }
   }
   return {
     summary: recoveryLabel === '可以照課表' ? '目前可以照課表執行，Johnny 沒有新的待決定調整。' : '目前沒有新的待決定調整，請依恢復狀態保守執行。',
-    actionLabel: '查看 Agent 收件匣',
-    actionView: 'inbox',
+    actionLabel: '查看 Johnny 建議',
+    actionView: 'johnny',
     actionTone: 'neutral',
   }
 }
@@ -373,7 +481,7 @@ function buildRecoveryEvidenceItems(recovery: Record<string, unknown>, trainingL
     buildStressEvidence(recovery, asRecord(evidence?.stress)),
     buildTrainingLoadEvidence(trainingLoad),
   ]
-  return items.filter((item): item is EvidenceItem => item !== null).slice(0, 3)
+  return items.filter((item): item is EvidenceItem => item !== null)
 }
 
 function buildHrvEvidence(recovery: Record<string, unknown>, evidence: Record<string, unknown> | undefined): EvidenceItem | null {
@@ -518,6 +626,27 @@ function formatUnavailableSignal(signal: string): string {
   return signalLabels[signal] || signal
 }
 
+function normalizeSignalKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+function isSignalUnavailable(signal: 'sleep' | 'hrv' | 'resting_heart_rate' | 'training_load'): boolean {
+  const aliases: Record<typeof signal, string[]> = {
+    sleep: ['sleep', 'sleep_debt_minutes', 'sleep_duration_minutes', 'sleep_quality'],
+    hrv: ['hrv', 'hrv_delta_percentage', 'hrv_status'],
+    resting_heart_rate: ['resting_heart_rate', 'resting_hr', 'resting_heart_rate_baseline', '靜息心率'],
+    training_load: ['training_load', 'acute_chronic_ratio', 'chronic_load', 'mileage_ramp_percentage', 'load'],
+  }
+  const keys = [...unavailableSignalKeys.value]
+  return aliases[signal].some((alias) => keys.some((key) => key === alias || key.includes(alias)))
+}
+
+function updateDocumentTitle(label: string) {
+  if (typeof document !== 'undefined') {
+    document.title = `${label} — Johnny`
+  }
+}
+
 async function initializeAuth() {
   if (!shouldRequireAuth()) {
     authStatus.value = 'authenticated'
@@ -630,6 +759,18 @@ function showView(view: ViewKey) {
   }
 }
 
+function handleTodayDecisionAction() {
+  if (todayDecision.value.state === 'run') {
+    if (hasWorkoutDetails(todayWorkout.value)) {
+      openWorkoutDetails(todayWorkout.value)
+      return
+    }
+    showView('plan')
+    return
+  }
+  showView('johnny')
+}
+
 async function handleAccept() {
   const currentRecommendation = recommendation.value
   if (!currentRecommendation) {
@@ -722,7 +863,7 @@ async function submitProvider() {
   providerMessage.value = ''
   pendingDisconnectConnectionId.value = ''
   if (selectedProvider.value.id !== 'garmin_connect') {
-    providerError.value = '這個資料來源尚未開放連接。'
+    providerError.value = '這個資料整合尚未開放。'
     return
   }
   if (!garminEmail.value.trim()) {
@@ -997,7 +1138,7 @@ async function handleInboxKeep(item: InboxRecommendation) {
 }
 
 function handleActionPlaceholder() {
-  providerMessage.value = '這個決策會在下一階段同步到訓練安排。'
+  providerMessage.value = '這個決策會在下一階段同步到訓練計畫。'
 }
 
 function openRaceGoalModal() {
@@ -1032,7 +1173,7 @@ async function submitRaceEntry(payload: RaceGoalCreatePayload) {
       raceEntries.value = [...raceEntries.value.filter((race) => `${race.name}-${race.date}` !== `${created.name}-${created.date}`), created]
     }
     isRaceGoalModalOpen.value = false
-    raceFormMessage.value = '賽事已加入訓練安排'
+    raceFormMessage.value = '賽事已加入訓練計畫'
     if (raceSuccessTimer) {
       clearTimeout(raceSuccessTimer)
     }
@@ -1041,7 +1182,7 @@ async function submitRaceEntry(payload: RaceGoalCreatePayload) {
     }, 3500)
   } catch (error) {
     if (!handleSessionExpiry(error)) {
-      raceFormError.value = '訓練安排儲存失敗，請稍後再試。'
+      raceFormError.value = '訓練計畫儲存失敗，請稍後再試。'
     }
   } finally {
     raceGoalBusy.value = false
@@ -1161,6 +1302,33 @@ function isExperienceLevel(value: unknown): value is AthleteSettingsForm['experi
   return value === 'beginner' || value === 'intermediate' || value === 'advanced'
 }
 
+function formatInjuryStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    none: '無目前傷痛',
+    current: '目前有傷痛',
+    recent: '近期傷痛觀察',
+    recurring: '反覆傷痛觀察',
+  }
+  return labels[status] ?? '未設定'
+}
+
+function formatWeekdayLabel(day: string): string {
+  const labels: Record<string, string> = {
+    monday: '週一',
+    tuesday: '週二',
+    wednesday: '週三',
+    thursday: '週四',
+    friday: '週五',
+    saturday: '週六',
+    sunday: '週日',
+  }
+  return labels[day] ?? day
+}
+
+function formatPlanPhaseLabel(label: string): string {
+  return label === 'Race' ? 'Goal week' : label
+}
+
 function formatMileageForUnit(kilometers: number, unit: 'metric' | 'imperial'): string {
   const value = unit === 'imperial' ? kilometers / KILOMETERS_PER_MILE : kilometers
   return value.toFixed(1)
@@ -1194,7 +1362,7 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   const normalizedDays = form.preferredTrainingDays.map((day) => day.trim().toLowerCase())
   const uniqueDays = new Set(normalizedDays)
   if (!form.timezone.trim() || !isValidTimezone(form.timezone.trim())) {
-    setAthleteSettingsError('timezone', '請輸入有效的時區')
+    setAthleteSettingsError('timezone', '請選擇有效的時區')
     return null
   }
   if (mileageKm === null) {
@@ -1249,10 +1417,10 @@ async function submitAthleteSettings() {
   try {
     const response = await saveAthleteProfile(payload)
     applyAthleteProfilePayload(response.data)
-    athleteSettingsMessage.value = '運動員設定已更新'
+    athleteSettingsMessage.value = '運動員已更新'
   } catch (error) {
     if (!handleSessionExpiry(error)) {
-      athleteSettingsError.value = '運動員設定儲存失敗，請檢查欄位後再試。'
+      athleteSettingsError.value = '運動員儲存失敗，請檢查欄位後再試。'
     }
   } finally {
     athleteSettingsBusy.value = false
@@ -1295,9 +1463,7 @@ function applyTodayPayload(payload: Record<string, unknown>) {
 
   const recovery = payload.recovery as Record<string, unknown> | undefined
   const trainingLoad = payload.training_load as Record<string, unknown> | undefined
-  if (recovery && Object.keys(recovery).length) {
-    apiRecoveryEvidence.value = buildRecoveryEvidenceItems(recovery, trainingLoad)
-  }
+  apiRecoveryEvidence.value = recovery || trainingLoad ? buildRecoveryEvidenceItems(recovery ?? {}, trainingLoad) : []
 
   const unavailable = Array.isArray(payload.unavailable_signals) ? payload.unavailable_signals : []
   apiUnavailableSignals.value = unavailable.map(String)
@@ -1620,23 +1786,6 @@ function statusLabel(status: RecommendationStatus): string {
   return '已套用'
 }
 
-function buildRaceCalendarMonths(races: RaceSummary[]) {
-  const anchor = new Date()
-  const firstMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1)
-  return Array.from({ length: 6 }, (_, offset) => {
-    const monthStart = new Date(firstMonth.getFullYear(), firstMonth.getMonth() + offset, 1)
-    const monthKey = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`
-    return {
-      key: monthKey,
-      label: monthStart.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long' }),
-      races: races
-        .filter((race) => race.date.startsWith(monthKey))
-        .map((race) => ({ ...race, daysRemaining: daysUntil(race.date) }))
-        .sort((a, b) => a.date.localeCompare(b.date)),
-    }
-  })
-}
-
 function formatWorkoutType(value: string): string {
   return value
     .split('_')
@@ -1746,7 +1895,7 @@ function emptyWorkoutSummary(): WorkoutSummary {
     weekday: '待排',
     dateLabel: '',
     type: '尚未有今日課表',
-    purpose: '連接資料來源或建立訓練計畫後，Johnny 會在這裡顯示今天的安排。',
+    purpose: '連接資料或建立訓練計畫後，Johnny 會在這裡顯示今天的安排。',
     status: 'empty',
   }
 }
@@ -1773,7 +1922,7 @@ function shouldRequireAuth(): boolean {
         <div class="auth-panel__header">
           <p class="section-label">Running Companion</p>
           <h1 id="auth-title">登入 Johnny</h1>
-          <p>登入後 Johnny 才會讀取你的訓練安排、資料來源與 Agent 建議。</p>
+          <p>登入後 Johnny 才會讀取你的訓練計畫、資料連接與 Johnny 建議。</p>
         </div>
 
         <div class="auth-mode-switch" role="tablist" aria-label="登入方式">
@@ -1802,19 +1951,19 @@ function shouldRequireAuth(): boolean {
         <form class="auth-form" data-testid="auth-form" novalidate @submit.prevent="submitAuth">
           <label v-if="authMode === 'signup'">
             顯示名稱
-            <input v-model="authDisplayName" name="displayName" autocomplete="name" :aria-invalid="authError ? 'true' : 'false'" />
+            <input v-model="authDisplayName" class="auth-form__input" name="displayName" autocomplete="name" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
           <label>
             Email
-            <input v-model="authEmail" name="authEmail" type="email" autocomplete="email" :aria-invalid="authError ? 'true' : 'false'" />
+            <input v-model="authEmail" class="auth-form__input" name="authEmail" type="email" autocomplete="email" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
           <label>
             密碼
-            <input v-model="authPassword" name="authPassword" type="password" :autocomplete="authMode === 'signup' ? 'new-password' : 'current-password'" :aria-invalid="authError ? 'true' : 'false'" />
+            <input v-model="authPassword" class="auth-form__input" name="authPassword" type="password" :autocomplete="authMode === 'signup' ? 'new-password' : 'current-password'" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
           <label v-if="authMode === 'signup'">
             確認密碼
-            <input v-model="authPasswordConfirm" name="authPasswordConfirm" type="password" autocomplete="new-password" :aria-invalid="authError ? 'true' : 'false'" />
+            <input v-model="authPasswordConfirm" class="auth-form__input" name="authPasswordConfirm" type="password" autocomplete="new-password" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
           <p v-if="authError" class="field-error" role="alert">{{ authError }}</p>
           <p v-else-if="authMessage" class="inline-note">{{ authMessage }}</p>
@@ -1838,7 +1987,7 @@ function shouldRequireAuth(): boolean {
           <button
             v-for="item in navItems"
             :key="item.key"
-            :data-view="item.key === 'sources' ? 'sources' : item.key"
+            :data-view="item.key"
             :class="{ 'top-nav__item--active': activeView === item.key }"
             class="top-nav__item"
             type="button"
@@ -1871,18 +2020,96 @@ function shouldRequireAuth(): boolean {
         <article v-else-if="effectiveTodayState === 'error'" class="state-panel state-panel--danger today-grid__wide" role="alert">
           <p class="section-label">Error</p>
           <h3>今天資料載入失敗</h3>
-          <p>請稍後再試，或先前往資料來源檢查同步狀態。</p>
-          <AppButton tone="neutral" @click="showView('sources')">檢查資料來源</AppButton>
+          <p>請稍後再試，或先前往資料連接檢查同步狀態。</p>
+          <AppButton tone="neutral" @click="showView('data')">檢查資料</AppButton>
         </article>
 
         <article v-else-if="effectiveTodayState === 'empty'" class="state-panel today-grid__wide">
           <p class="section-label">Empty</p>
           <h3>尚未有足夠資料建立今日建議</h3>
-          <p>連接資料來源後，Johnny 會用近期訓練、睡眠與 HRV 判斷恢復狀態。</p>
-          <AppButton tone="primary" @click="showView('sources')">連接資料來源</AppButton>
+          <p>連接資料後，Johnny 會用近期訓練、睡眠與 HRV 判斷恢復狀態。</p>
+          <AppButton tone="primary" @click="showView('data')">連接資料</AppButton>
         </article>
 
         <template v-else>
+        <article
+          class="today-decision-card"
+          :class="`today-decision-card--${todayDecision.tone}`"
+          data-testid="today-decision-card"
+        >
+          <div class="today-decision-card__header">
+            <span class="card-kicker">Johnny 今天看起來</span>
+            <strong>{{ todayDecision.label }}</strong>
+          </div>
+          <p>{{ todayDecision.voice }}</p>
+          <div class="today-decision-card__workout">
+            <span>{{ todayWorkout.type }}</span>
+            <strong>{{ todayWorkout.distance || todayWorkout.duration || '今日訓練' }}</strong>
+            <small>{{ todayWorkout.pace || todayWorkout.heartRateZone || todayWorkout.purpose }}</small>
+          </div>
+          <div class="today-evidence-chip-list" aria-label="今日決策證據">
+            <span v-for="item in todayEvidenceChips" :key="`${item.source}-${item.metric}`" class="today-evidence-chip" data-testid="today-evidence-chip">
+              <span>{{ item.metric }}</span>
+              <strong>{{ item.value }}</strong>
+              <small>{{ item.summary }}</small>
+            </span>
+          </div>
+          <p v-if="todayDecision.memoryInsight" class="memory-insight">{{ todayDecision.memoryInsight }}</p>
+          <AppButton tone="primary" data-testid="today-decision-action" @click="handleTodayDecisionAction">{{ todayDecision.actionLabel }}</AppButton>
+        </article>
+
+        <section class="surface-card weekly-activity" data-testid="weekly-activity" aria-labelledby="weekly-activity-title">
+          <div class="section-heading-row">
+            <h3 id="weekly-activity-title">本週活動</h3>
+            <span>跑量節奏</span>
+          </div>
+          <div class="weekly-activity__bars" aria-label="本週跑步距離">
+            <div class="weekly-activity__plot weekly-activity__plot--spread" data-testid="weekly-activity-plot" aria-hidden="true">
+              <span
+                v-for="point in weeklyActivityPoints"
+                :key="`${point.dayLabel}-bar`"
+                class="weekly-activity__column"
+                data-testid="weekly-activity-column"
+              >
+                <span
+                  class="weekly-activity__bar"
+                  data-testid="weekly-activity-bar"
+                  :style="{ '--bar-size': `${Math.round((point.distanceKm / maxWeeklyDistance) * 100)}%` }"
+                ></span>
+              </span>
+            </div>
+            <div class="weekly-activity__labels">
+              <div v-for="point in weeklyActivityPoints" :key="point.dayLabel" class="weekly-activity__day">
+                <strong>{{ point.dayLabel }}</strong>
+                <small>{{ point.distanceKm }} km</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="today-context-rail" aria-label="今日脈絡">
+          <section class="surface-card">
+            <span class="card-kicker">目標賽事</span>
+            <strong>{{ raceSummary.name }}</strong>
+            <p>{{ raceSummary.daysRemaining }} 天後 · {{ raceSummary.goal }}</p>
+          </section>
+          <section class="surface-card">
+            <span class="card-kicker">目前階段</span>
+            <strong>{{ currentPlanPhase.label }}</strong>
+            <p>{{ currentPlanPhase.summary }}</p>
+          </section>
+          <section class="surface-card">
+            <span class="card-kicker">Signal Coverage</span>
+            <strong>{{ coveredSignalCount }}/{{ signalCoverage.length }}</strong>
+            <p>{{ signalCoverageSummary }}</p>
+          </section>
+          <section class="surface-card">
+            <span class="card-kicker">Johnny 待決定</span>
+            <strong>{{ pendingInboxItems.length }}</strong>
+            <p>目前待處理建議</p>
+          </section>
+        </aside>
+
         <article class="surface-card today-top-card today-card--primary workout-card" data-today-section="workout">
           <p class="section-label">今日課表</p>
           <h3>{{ todayWorkout.type }}</h3>
@@ -1940,8 +2167,8 @@ function shouldRequireAuth(): boolean {
           </div>
           <div class="compact-card-footer">
             <span v-if="recoveryFooterText">{{ recoveryFooterText }}</span>
-            <AppButton v-if="dataSourceNeedsAttention" data-testid="today-recovery-source-action" tone="neutral" @click="showView('sources')">
-              檢查資料來源
+            <AppButton v-if="dataSourceNeedsAttention" data-testid="today-recovery-source-action" tone="neutral" @click="showView('data')">
+              檢查資料
             </AppButton>
           </div>
         </article>
@@ -1956,47 +2183,53 @@ function shouldRequireAuth(): boolean {
 
         <article class="surface-card today-grid__wide inbox-nudge" data-today-section="inbox">
           <div>
-            <p class="section-label">Agent 收件匣</p>
+            <p class="section-label">Johnny 建議</p>
             <h3>所有需要確認的調整集中處理</h3>
-            <p>所有需要你確認的調整都會集中在 Agent 收件匣。</p>
+            <p>所有需要你確認的調整都會集中在 Johnny 建議。</p>
           </div>
-          <AppButton tone="neutral" @click="showView('inbox')">查看待決定建議</AppButton>
+          <AppButton tone="neutral" @click="showView('johnny')">查看待決定建議</AppButton>
         </article>
         </template>
       </section>
 
-      <section v-else-if="activeView === 'calendar'" class="page-stack" aria-labelledby="calendar-title">
+      <section v-else-if="activeView === 'plan'" class="page-stack plan-page" aria-labelledby="plan-title">
         <div class="page-heading page-heading--with-action">
           <div>
-            <p class="section-label">訓練安排</p>
-            <h2 id="calendar-title">未來六個月</h2>
-            <p>把未來目標、重要活動與接下來的課表放在同一個時間脈絡裡。</p>
+            <span>Training journey</span>
+            <h2 id="plan-title">計畫</h2>
             <p v-if="raceFormError" class="field-error" role="alert">{{ raceFormError }}</p>
             <p v-else-if="raceFormMessage" class="inline-note" role="status">{{ raceFormMessage }}</p>
           </div>
           <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
         </div>
 
-        <section class="race-calendar" aria-label="未來六個月訓練安排">
-          <article v-for="month in raceCalendarMonths" :key="month.key" class="race-month" data-testid="race-month">
-            <div class="race-month__header">
-              <p class="section-label">{{ month.key }}</p>
-              <h3>{{ month.label }}</h3>
+        <section class="surface-card plan-journey plan-training-journey" data-testid="plan-training-journey" aria-label="訓練旅程">
+          <div class="plan-journey__intro">
+            <span class="card-kicker">目前訓練週期</span>
+            <strong>{{ currentPlanPhase.label }}</strong>
+            <p>{{ currentPlanPhase.summary }}。有比賽時 Johnny 會把目標放進旅程；沒有比賽時，這裡仍會用訓練週期安排接下來的節奏。</p>
+          </div>
+          <div class="plan-journey__track" data-testid="plan-journey-track" aria-hidden="true"></div>
+          <article
+            v-for="phase in planPhases"
+            :key="phase.id"
+            class="plan-journey__stop"
+            :class="`plan-journey__stop--${phase.status}`"
+            data-testid="plan-journey-stop"
+          >
+            <span class="plan-journey__node" data-testid="plan-journey-node"></span>
+            <div class="plan-journey__meta">
+              <span>{{ formatPlanPhaseLabel(phase.label) }}</span>
+              <strong>{{ phase.summary }}</strong>
             </div>
-            <div v-if="month.races.length" class="race-list">
-              <article v-for="race in month.races" :key="`${race.name}-${race.date}`" class="race-entry">
-                <div>
-                  <strong>{{ race.name }}</strong>
-                  <p>{{ race.distance }} · {{ race.goal }}</p>
-                </div>
-                <div class="race-entry__date">
-                  <span>{{ formatDateLabel(race.date) }}</span>
-                  <small>{{ race.daysRemaining }} 天</small>
-                </div>
-              </article>
-            </div>
-            <p v-else class="race-month__empty">尚未設定目標</p>
           </article>
+          <template v-if="upcomingRaceEntries.length">
+            <article v-for="race in upcomingRaceEntries" :key="`${race.name}-${race.date}`" class="plan-race-goal">
+              <strong>{{ race.name }}</strong>
+              <span>{{ race.distance }} · {{ race.goal }}</span>
+            </article>
+          </template>
+          <p v-else>尚未設定目標</p>
         </section>
 
         <RaceGoalModal
@@ -2018,67 +2251,69 @@ function shouldRequireAuth(): boolean {
           @confirm="confirmRaceGoalDiscard"
         />
 
-        <div class="section-heading">
-          <div>
-            <p class="section-label">Workout context</p>
-            <h3>接下來的課表</h3>
-          </div>
-          <StatusBadge tone="info">{{ displayWorkouts.length }} 項</StatusBadge>
-        </div>
-
-        <div v-if="displayWorkouts.length" class="schedule-list">
-          <article v-for="workout in displayWorkouts" :key="workout.id" class="schedule-row">
-            <div class="schedule-row__date">
-              <strong>{{ workout.weekday }}</strong>
-              <span>{{ workout.dateLabel }}</span>
-            </div>
+        <section class="schedule-section" aria-labelledby="schedule-title">
+          <div class="section-heading">
             <div>
-              <h3>{{ workout.type }}</h3>
-              <p>{{ workout.purpose }}</p>
-              <p v-if="workout.stepSummary" class="workout-step-summary">{{ workout.stepSummary }}</p>
+              <p class="section-label">Workout context</p>
+              <h3 id="schedule-title">接下來課表</h3>
             </div>
-            <div class="schedule-row__meta">
-              <div class="metric-row">
-                <span v-if="workout.distance">{{ workout.distance }}</span>
-                <span v-if="workout.duration">{{ workout.duration }}</span>
-                <span v-if="workout.pace">{{ workout.pace }}</span>
-                <span>{{ workout.status }}</span>
+            <StatusBadge tone="info">{{ displayWorkouts.length }} 項</StatusBadge>
+          </div>
+
+          <div v-if="displayWorkouts.length" class="schedule-list">
+            <article v-for="workout in displayWorkouts" :key="workout.id" class="schedule-row">
+              <div class="schedule-row__date">
+                <strong>{{ workout.weekday }}</strong>
+                <span>{{ workout.dateLabel }}</span>
               </div>
-              <AppButton
-                v-if="hasWorkoutDetails(workout)"
-                tone="neutral"
-                type="button"
-                :data-testid="`workout-detail-${workout.id}`"
-                @click="openWorkoutDetails(workout)"
-              >
-                細節
-              </AppButton>
-            </div>
+              <div>
+                <h3>{{ workout.type }}</h3>
+                <p>{{ workout.purpose }}</p>
+                <p v-if="workout.stepSummary" class="workout-step-summary">{{ workout.stepSummary }}</p>
+              </div>
+              <div class="schedule-row__meta">
+                <div class="metric-row">
+                  <span v-if="workout.distance">{{ workout.distance }}</span>
+                  <span v-if="workout.duration">{{ workout.duration }}</span>
+                  <span v-if="workout.pace">{{ workout.pace }}</span>
+                  <span>{{ workout.status }}</span>
+                </div>
+                <AppButton
+                  v-if="hasWorkoutDetails(workout)"
+                  tone="neutral"
+                  type="button"
+                  :data-testid="`workout-detail-${workout.id}`"
+                  @click="openWorkoutDetails(workout)"
+                >
+                  細節
+                </AppButton>
+              </div>
+            </article>
+          </div>
+          <article v-else class="state-panel">
+            <p class="section-label">Empty</p>
+            <h3>目前沒有已排定課表</h3>
+            <p>建立訓練計畫後，Johnny 會在這裡依日期整理接下來的課表。</p>
           </article>
-        </div>
-        <article v-else class="state-panel">
-          <p class="section-label">Empty</p>
-          <h3>目前沒有已排定課表</h3>
-          <p>建立訓練計畫後，Johnny 會在這裡依日期整理接下來的課表。</p>
-        </article>
+        </section>
       </section>
 
-      <section v-else-if="activeView === 'inbox'" class="page-stack" aria-labelledby="inbox-title">
+      <section v-else-if="activeView === 'johnny'" class="page-stack johnny-page" data-testid="johnny-page" aria-labelledby="johnny-title">
         <div class="page-heading">
-          <p class="section-label">Agent 收件匣</p>
-          <h2 id="inbox-title">主動建議決策佇列</h2>
+          <p class="section-label">Johnny 建議</p>
+          <h2 id="johnny-title">Johnny</h2>
           <p>Johnny 只把需要你做訓練決策的建議放在這裡，對話問題仍留在對話。</p>
         </div>
 
         <article v-if="props.inboxState === 'loading'" class="state-panel" aria-live="polite">
           <p class="section-label">Loading</p>
-          <h3>正在整理 Agent 收件匣</h3>
+          <h3>正在整理 Johnny 建議</h3>
           <p>Johnny 正在比對課表、恢復訊號和待決定建議。</p>
         </article>
 
         <article v-else-if="props.inboxState === 'error'" class="state-panel state-panel--danger" role="alert">
           <p class="section-label">Error</p>
-          <h3>Agent 收件匣載入失敗</h3>
+          <h3>Johnny 建議載入失敗</h3>
           <p>請稍後再試，或先回到今日檢查主要訓練決策。</p>
           <AppButton tone="neutral" @click="showView('today')">回到今日</AppButton>
         </article>
@@ -2086,7 +2321,7 @@ function shouldRequireAuth(): boolean {
         <article v-else-if="props.inboxState === 'empty' || displayInboxItems.length === 0" class="state-panel">
           <p class="section-label">Empty</p>
           <h3>目前沒有新的主動建議</h3>
-          <p>Johnny 之後會把需要你決定的主動建議放在 Agent 收件匣，已處理的建議會保留在歷史區。</p>
+          <p>Johnny 之後會把需要你決定的主動建議放在 Johnny 建議，已處理的建議會保留在歷史區。</p>
         </article>
 
         <div v-else class="inbox-layout">
@@ -2159,6 +2394,11 @@ function shouldRequireAuth(): boolean {
             </div>
           </section>
         </div>
+        <section class="surface-card johnny-review" data-testid="johnny-weekly-review" aria-labelledby="johnny-review-title">
+          <span class="card-kicker">Weekly review</span>
+          <h3 id="johnny-review-title">這週先守住連續性</h3>
+          <p>Johnny 會把待決定建議、恢復訊號和計畫變動放在這裡。Conversation 功能目前尚未公開。</p>
+        </section>
       </section>
 
       <section v-else-if="activeView === 'conversation'" class="page-stack" aria-labelledby="conversation-title">
@@ -2184,7 +2424,7 @@ function shouldRequireAuth(): boolean {
         <article v-else-if="props.conversationState === 'empty' || !activeThread" class="state-panel">
           <p class="section-label">Empty</p>
           <h3>還沒有對話紀錄</h3>
-          <p>當你想追問訓練安排、恢復證據或建議原因時，可以從這裡開始。</p>
+          <p>當你想追問訓練計畫、恢復證據或建議原因時，可以從這裡開始。</p>
         </article>
 
         <div v-else class="conversation-layout">
@@ -2285,24 +2525,38 @@ function shouldRequireAuth(): boolean {
         </div>
       </section>
 
-      <section v-else-if="activeView === 'athlete-settings'" class="page-stack" aria-labelledby="athlete-settings-title">
+      <section v-else-if="activeView === 'athlete'" class="page-stack" aria-labelledby="athlete-settings-title">
         <div class="page-heading">
           <p class="section-label">Athlete Profile</p>
-          <h2 id="athlete-settings-title">運動員設定</h2>
+          <h2 id="athlete-settings-title">運動員</h2>
           <p>這些設定會成為 Johnny 產生建議與訓練計畫時的個人限制與偏好。</p>
         </div>
+
+        <section class="surface-card athlete-baseline" data-testid="athlete-baseline" aria-labelledby="athlete-baseline-title">
+          <span class="card-kicker">Athlete Baseline</span>
+          <h3 id="athlete-baseline-title">Johnny 用來個人化你的基準</h3>
+          <dl>
+            <div><dt>週跑量</dt><dd>{{ athleteBaselineSnapshot.weeklyMileage }}</dd></div>
+            <div><dt>經驗</dt><dd>{{ athleteBaselineSnapshot.experience }}</dd></div>
+            <div><dt>傷痛狀態</dt><dd>{{ athleteBaselineSnapshot.injuryStatus }}</dd></div>
+            <div><dt>訓練節奏</dt><dd>{{ athleteBaselineSnapshot.rhythm }}</dd></div>
+          </dl>
+          <p>{{ athleteBaselineSnapshot.recentMetrics.join(' · ') }}</p>
+        </section>
 
         <form class="surface-card athlete-settings-form" data-testid="athlete-settings-form" novalidate @submit.prevent="submitAthleteSettings">
           <div class="form-grid">
             <label>
               時區
-              <input
+              <select
                 v-model="athleteSettings.timezone"
                 name="athleteTimezone"
                 autocomplete="off"
                 :aria-invalid="athleteSettingsFieldErrors.timezone ? 'true' : 'false'"
                 aria-describedby="athlete-timezone-error athlete-settings-status"
-              />
+              >
+                <option v-for="timezone in athleteTimezoneOptions" :key="timezone.value" :value="timezone.value">{{ timezone.label }}</option>
+              </select>
               <span v-if="athleteSettingsFieldErrors.timezone" id="athlete-timezone-error" class="field-error">{{ athleteSettingsFieldErrors.timezone }}</span>
             </label>
 
@@ -2426,12 +2680,23 @@ function shouldRequireAuth(): boolean {
         </form>
       </section>
 
-      <section v-else-if="activeView === 'sources'" class="page-stack" aria-labelledby="sources-title">
+      <section v-else-if="activeView === 'data'" class="page-stack" aria-labelledby="sources-title">
         <div class="page-heading">
-          <p class="section-label">資料來源</p>
-          <h2 id="sources-title">連接資料來源</h2>
+          <p class="section-label">資料連接</p>
+          <h2 id="sources-title">連接資料</h2>
           <p>Johnny 會用近期訓練、睡眠、HRV 和恢復訊號判斷今天是否該調整課表。</p>
         </div>
+
+        <section class="surface-card signal-coverage" data-testid="signal-coverage" aria-labelledby="signal-coverage-title">
+          <span class="card-kicker">Signal Coverage</span>
+          <h3 id="signal-coverage-title">Johnny 已有 {{ coveredSignalCount }}/{{ signalCoverage.length }} 個訓練訊號</h3>
+          <div class="signal-coverage__grid">
+            <span v-for="item in signalCoverage" :key="item.id" class="signal-pill" :class="{ 'signal-pill--covered': item.covered }">
+              <strong>{{ item.label }}</strong>
+              <small>{{ item.source }}</small>
+            </span>
+          </div>
+        </section>
 
         <div class="provider-grid">
           <ProviderCard
