@@ -114,7 +114,7 @@ function isValidDate(value: string): boolean {
       <div class="section-heading">
         <div>
           <p class="section-label">新增目標</p>
-          <h3 id="race-goal-modal-title">設定訓練安排</h3>
+          <h3 id="race-goal-modal-title">設定訓練計畫</h3>
         </div>
         <button class="icon-button" type="button" aria-label="關閉新增目標" data-testid="race-modal-close" @click="requestClose">×</button>
       </div>

@@ -1,4 +1,4 @@
-export type ViewKey = 'today' | 'calendar' | 'inbox' | 'conversation' | 'athlete-settings' | 'sources'
+export type ViewKey = 'today' | 'plan' | 'johnny' | 'athlete' | 'data' | 'conversation'
 
 export interface CurrentUser {
   id: string
@@ -61,6 +61,19 @@ export interface RaceSummary {
   distance: string
   goal: string
   daysRemaining: number
+}
+
+export interface WeeklyActivityPoint {
+  dayLabel: string
+  distanceKm: number
+  loadLabel: string
+}
+
+export interface PlanPhase {
+  id: string
+  label: string
+  status: 'done' | 'current' | 'next'
+  summary: string
 }
 
 export interface RaceGoalCreatePayload {
@@ -154,6 +167,21 @@ export interface EvidenceItem {
   tone?: 'info' | 'warning' | 'danger' | 'success'
 }
 
+export interface AthleteBaselineSnapshot {
+  weeklyMileage: string
+  experience: string
+  injuryStatus: string
+  rhythm: string
+  recentMetrics: string[]
+}
+
+export interface SignalCoverageItem {
+  id: 'activity' | 'sleep' | 'hrv' | 'resting_hr' | 'training_load' | 'athlete_baseline'
+  label: string
+  covered: boolean
+  source: string
+}
+
 export type WorkoutStepType = 'warmup' | 'work' | 'recovery' | 'cooldown' | 'repeat' | 'drill' | 'stride' | 'hill' | 'free_run'
 export type WorkoutTargetKind = 'pace' | 'heart_rate' | 'rpe'
 export type WorkoutTargetConfidence = 'high' | 'medium' | 'low'
@@ -203,6 +231,17 @@ export interface RecommendationSummary {
   rationale: string
   proposedAction: string
   status: string
+}
+
+export type TodayDecisionState = 'run' | 'adjust' | 'rest'
+
+export interface TodayDecision {
+  state: TodayDecisionState
+  label: '我可以' | '不太對勁' | '先收一下'
+  actionLabel: '開始跑步' | '接受調整' | '記錄休息'
+  tone: 'run' | 'adjust' | 'rest'
+  voice: string
+  memoryInsight?: string
 }
 
 export type RecommendationPriority = 'low' | 'medium' | 'high'
