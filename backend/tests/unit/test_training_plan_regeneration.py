@@ -16,6 +16,18 @@ TODAY = date(2026, 9, 17)
 CURRENT_INSTANT = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
 
 
+def test_cross_midnight_success_charges_completion_day_and_reuses_request_id() -> None:
+    service, runs, tasks = _service(profile=_profile(timezone_name="Asia/Taipei"), current_instant=datetime(2026, 9, 17, 16, 2, tzinfo=timezone.utc))
+    run = replace(_completed_manual_run(quota_day=TODAY, created_plan_id="plan-1"), finished_at=datetime(2026, 9, 17, 16, 1, tzinfo=timezone.utc))
+    run = replace(run, metadata={**run.metadata, "client_request_id": "cross-midnight"})
+    runs.add(run)
+    result = service.start("athlete-1", _request("cross-midnight"), TODAY + timedelta(days=1))
+    assert result.run.run_id == run.id
+    assert result.quota.used == 1
+    assert not result.quota.available
+    assert not tasks.items
+
+
 def test_options_uses_athlete_timezone_for_next_quota_availability() -> None:
     service, runs, _ = _service(profile=_profile(timezone_name="Asia/Taipei"))
     runs.add(_completed_manual_run(quota_day=TODAY, created_plan_id="plan-1"))
@@ -548,6 +560,9 @@ class _FakePlans:
     def __init__(self, plans: list[TrainingPlan]) -> None:
         self.plans = plans
 
+    def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
+        return next((plan for plan in self.plans if plan.user_id == user_id and plan.status == "active"), None)
+
     def list_active_plans_ending_on_or_before(self, ends_on: date) -> list[TrainingPlan]:
         return [
             plan
@@ -591,7 +606,7 @@ class _FakeRunStore:
             if run.id == run_id:
                 metadata = dict(run.metadata)
                 metadata.update(metadata_updates or {})
-                self.runs[index] = replace(run, status=status, metadata=metadata)
+                self.runs[index] = replace(run, status=status, metadata=metadata, finished_at=CURRENT_INSTANT if status == "completed" else run.finished_at)
                 return
         raise AssertionError(f"missing run: {run_id}")
 

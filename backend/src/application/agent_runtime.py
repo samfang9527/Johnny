@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
 from datetime import date, timedelta
-from typing import Iterable
+from typing import Callable, Iterable
 
-from src.application.training_plan_generation import build_plan_skeleton, projection_window, select_race_strategy
+from src.application.training_plan_generation import _template_steps, build_plan_skeleton, projection_window, select_race_strategy
 from src.application.training_targets import build_pace_profile_from_payloads
 from src.domain.agent_runtime import (
     AgentContextSource,
@@ -67,6 +68,7 @@ class RunningCompanionAgent:
         prompt_version: str,
         provider: str | None = None,
         model: str | None = None,
+        transaction_factory: Callable[[], AbstractContextManager] | None = None,
     ) -> None:
         self._run_store = run_store
         self._model_gateway = model_gateway
@@ -74,6 +76,7 @@ class RunningCompanionAgent:
         self._prompt_version = prompt_version
         self._provider = provider
         self._model = model
+        self._transaction_factory = transaction_factory or nullcontext
 
     def run_daily_recommendation(
         self,
@@ -188,6 +191,7 @@ class RunningCompanionAgent:
                 if key in existing_run.metadata:
                     context[key] = existing_run.metadata[key]
         context["race_id"] = None if context["plan_type"] == "maintenance" else context["selected_race_id"]
+        context["model_repair_pending"] = True
         run = self._start_run(
             user_id=user_id,
             trigger_type="manual",
@@ -292,90 +296,95 @@ class RunningCompanionAgent:
         training_plan_id: str | None = None
         while True:
             try:
-                response = self._model_gateway.complete(request)
-                run = _merge_model_metadata(run, response)
-                token_usage = _sum_token_usage(token_usage, response.token_usage)
-                tool_results = []
-                (
-                    recommendation_id,
-                    training_plan_id,
-                    sequence_number,
-                    tool_results,
-                ) = self._run_tool_calls(
-                    run=run,
-                    user_id=user_id,
-                    response=response,
-                    safety=safety,
-                    allowed_tools=allowed_tools,
-                    sequence_number=sequence_number,
-                    recommendation_id=recommendation_id,
-                    training_plan_id=training_plan_id,
-                    request_context=request.context,
-                )
-                follow_up_tools = _follow_up_write_tools(request.workflow_name, allowed_tools)
-                if (
-                    _needs_follow_up_write(
-                        request.workflow_name,
-                        recommendation_id=recommendation_id,
-                    )
-                    and tool_results
-                    and follow_up_tools
-                ):
-                    follow_up = ModelRequest(
-                        user_id=request.user_id,
-                        workflow_name=request.workflow_name,
-                        prompt_version=request.prompt_version,
-                        messages=request.messages
-                        + (
-                            {
-                                "role": "user",
-                                "content": (
-                                    "Use the Johnny tool results in the structured context to create a pending "
-                                    "recommendation now. Call one of the available write tools."
-                                ),
-                            },
-                        ),
-                        tools=follow_up_tools,
-                        context={**(request.context or {}), "tool_results": tool_results},
-                        require_tool_call=True,
-                    )
-                    response = self._model_gateway.complete(follow_up)
+                transaction = self._transaction_factory if repair_validation_once else nullcontext
+                # Roll back a failed generation attempt before logging or repairing it.
+                with transaction():
+                    response = self._model_gateway.complete(request)
                     run = _merge_model_metadata(run, response)
                     token_usage = _sum_token_usage(token_usage, response.token_usage)
+                    tool_results = []
                     (
                         recommendation_id,
                         training_plan_id,
                         sequence_number,
-                        _,
+                        tool_results,
                     ) = self._run_tool_calls(
                         run=run,
                         user_id=user_id,
                         response=response,
                         safety=safety,
-                        allowed_tools=set(follow_up_tools),
+                        allowed_tools=allowed_tools,
                         sequence_number=sequence_number,
                         recommendation_id=recommendation_id,
                         training_plan_id=training_plan_id,
-                        request_context=follow_up.context,
+                        request_context=request.context,
                     )
+                    follow_up_tools = _follow_up_write_tools(request.workflow_name, allowed_tools)
+                    if (
+                        _needs_follow_up_write(
+                            request.workflow_name,
+                            recommendation_id=recommendation_id,
+                        )
+                        and tool_results
+                        and follow_up_tools
+                    ):
+                        follow_up = ModelRequest(
+                            user_id=request.user_id,
+                            workflow_name=request.workflow_name,
+                            prompt_version=request.prompt_version,
+                            messages=request.messages
+                            + (
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "Use the Johnny tool results in the structured context to create a pending "
+                                        "recommendation now. Call one of the available write tools."
+                                    ),
+                                },
+                            ),
+                            tools=follow_up_tools,
+                            context={**(request.context or {}), "tool_results": tool_results},
+                            require_tool_call=True,
+                        )
+                        response = self._model_gateway.complete(follow_up)
+                        run = _merge_model_metadata(run, response)
+                        token_usage = _sum_token_usage(token_usage, response.token_usage)
+                        (
+                            recommendation_id,
+                            training_plan_id,
+                            sequence_number,
+                            _,
+                        ) = self._run_tool_calls(
+                            run=run,
+                            user_id=user_id,
+                            response=response,
+                            safety=safety,
+                            allowed_tools=set(follow_up_tools),
+                            sequence_number=sequence_number,
+                            recommendation_id=recommendation_id,
+                            training_plan_id=training_plan_id,
+                            request_context=follow_up.context,
+                        )
 
-                if required_error := _required_workflow_output_error(
-                    request.workflow_name,
-                    training_plan_id=training_plan_id,
-                ):
-                    raise ValueError(required_error)
-                output_summary = _run_output_summary(response.content, safety=safety, recommendation_id=recommendation_id)
-                completed_run = run
-                if training_plan_id:
-                    completed_run = _with_created_training_plan_id(run, training_plan_id)
-                return self._run_store.complete_run(
-                    completed_run.complete(
-                        output_summary=output_summary,
-                        token_usage=token_usage,
-                        recommendation_id=recommendation_id,
+                    if required_error := _required_workflow_output_error(
+                        request.workflow_name,
+                        training_plan_id=training_plan_id,
+                    ):
+                        raise ValueError(required_error)
+                    output_summary = _run_output_summary(response.content, safety=safety, recommendation_id=recommendation_id)
+                    completed_run = run
+                    if training_plan_id:
+                        completed_run = _with_created_training_plan_id(run, training_plan_id)
+                    return self._run_store.complete_run(
+                        completed_run.complete(
+                            output_summary=output_summary,
+                            token_usage=token_usage,
+                            recommendation_id=recommendation_id,
+                        )
                     )
-                )
             except Exception as exc:
+                if repair_validation_once:
+                    training_plan_id = None
                 self._run_store.record_step(
                     AgentRunStep.failed(
                         agent_run_id=run.id,
@@ -395,7 +404,10 @@ class RunningCompanionAgent:
                     repair_validation_once
                     and repair_attempted
                     and isinstance(exc, ValueError)
-                    and str(exc) != "training plan generation did not create a training plan"
+                    and (
+                        str(exc) != "training plan generation did not create a training plan"
+                        or isinstance((request.context or {}).get("preserved_generation"), dict)
+                    )
                 ):
                     fallback = self._run_fallback_training_plan(
                         run=run,
@@ -558,6 +570,9 @@ class RunningCompanionAgent:
             max_runs_per_week=_profile_int(profile_payload, "max_runs_per_week", default=3),
             max_hard_sessions_per_week=_profile_int(profile_payload, "max_hard_sessions_per_week", default=2),
             injury_status=str(profile_payload.get("injury_status") or "none"),
+            race_distance_meters=selected_race.get("distance_meters") if selected_race else None,
+            current_weekly_mileage_km=profile_payload.get("current_weekly_mileage_km"),
+            experience_level=profile_payload.get("experience_level"),
         )
         plan_skeleton = _plan_skeleton_payload(skeleton)
         return {
@@ -588,33 +603,38 @@ class RunningCompanionAgent:
     ) -> AgentRun | None:
         if request.workflow_name != "training_plan_generation" or "createTrainingPlan" not in self._tools.names():
             return None
-        arguments = _fallback_training_plan_arguments(request.context or {})
+        preserved = (request.context or {}).get("preserved_generation")
+        arguments = dict(preserved) if isinstance(preserved, dict) else _fallback_training_plan_arguments(request.context or {})
+        if isinstance(preserved, dict):
+            # Completion Repair reuses trusted candidate IDs without reparsing model IDs.
+            arguments["workouts"] = []
         arguments.setdefault("agent_run_id", run.id)
         fallback_context = {**(request.context or {}), "generation_mode": "fallback"}
         _inject_training_plan_trusted_context(arguments, fallback_context)
         try:
-            payload = self._tools.get("createTrainingPlan").run(user_id=user_id, arguments=arguments)
+            with self._transaction_factory():
+                payload = self._tools.get("createTrainingPlan").run(user_id=user_id, arguments=arguments)
+                training_plan_id = _training_plan_id_from_payload(payload)
+                if not training_plan_id:
+                    raise ValueError("fallback did not create a training plan")
+                self._run_store.record_step(
+                    AgentRunStep.complete_tool_call(
+                        agent_run_id=run.id,
+                        sequence_number=sequence_number,
+                        tool_name="createTrainingPlan",
+                        input_summary=_summary_arguments(arguments),
+                        output_summary=_summary_payload(payload),
+                        payload=payload,
+                    )
+                )
+                return self._run_store.complete_run(
+                    _with_created_training_plan_id(run, training_plan_id).complete(
+                        output_summary="Created deterministic fallback training plan.",
+                        token_usage=token_usage,
+                    )
+                )
         except Exception:
             return None
-        training_plan_id = _training_plan_id_from_payload(payload)
-        self._run_store.record_step(
-            AgentRunStep.complete_tool_call(
-                agent_run_id=run.id,
-                sequence_number=sequence_number,
-                tool_name="createTrainingPlan",
-                input_summary=_summary_arguments(arguments),
-                output_summary=_summary_payload(payload),
-                payload=payload,
-            )
-        )
-        if not training_plan_id:
-            return None
-        return self._run_store.complete_run(
-            _with_created_training_plan_id(run, training_plan_id).complete(
-                output_summary="Created deterministic fallback training plan.",
-                token_usage=token_usage,
-            )
-        )
 
 
 def _merge_model_metadata(run: AgentRun, response: ModelResponse) -> AgentRun:
@@ -742,6 +762,9 @@ def _inject_training_plan_trusted_context(arguments: dict, request_context: dict
             trusted_context[key] = request_context.get(key)
     if request_context.get("generation_mode") == "fallback":
         trusted_context["generation_mode"] = "fallback"
+    for key in ("model_repair_pending", "preserved_generation", "model_repair_reason"):
+        if key in request_context:
+            trusted_context[key] = request_context[key]
 
 
 def _plan_continuity_context(last_active_plan: dict | None, *, selected_race_id: str | None) -> dict:
@@ -877,91 +900,15 @@ def _fallback_workout_payload(
     planned_distance_meters: int | None,
     week: int,
 ) -> dict:
-    duration_minutes = planned_duration_minutes or 45
-    if workout_type == "interval":
-        repeat_count = 4 + min(week, 2)
-        return {
-            "scheduled_for": scheduled_for.isoformat(),
-            "workout_type": workout_type,
-            "purpose": purpose,
-            "planned_duration_minutes": planned_duration_minutes,
-            "planned_distance_meters": planned_distance_meters,
-            "phase": phase,
-            "coach_note": "Keep the repeats controlled and stop if form breaks down.",
-            "steps": [
-                {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
-                {
-                    "type": "repeat",
-                    "repeat_count": repeat_count,
-                    "steps": [
-                        {"type": "work", "distance_meters": 800, "target": {"kind": "pace", "zone": "interval", "rpe": 8}},
-                        {"type": "recovery", "distance_meters": 400, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
-                    ],
-                },
-                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
-            ],
-        }
-    if workout_type == "tempo":
-        warmup_seconds, work_duration_seconds, cooldown_seconds = _tempo_step_durations(duration_minutes, week)
-        return {
-            "scheduled_for": scheduled_for.isoformat(),
-            "workout_type": workout_type,
-            "purpose": purpose,
-            "planned_duration_minutes": duration_minutes,
-            "planned_distance_meters": planned_distance_meters,
-            "phase": phase,
-            "coach_note": "Run the tempo segment smoothly rather than forcing pace.",
-            "steps": [
-                {"type": "warmup", "duration_seconds": warmup_seconds, "target": {"kind": "rpe", "rpe": 3}},
-                {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
-                {"type": "cooldown", "duration_seconds": cooldown_seconds, "target": {"kind": "rpe", "rpe": 2}},
-            ],
-        }
-    if workout_type == "hill":
-        return {
-            "scheduled_for": scheduled_for.isoformat(),
-            "workout_type": workout_type,
-            "purpose": purpose,
-            "planned_duration_minutes": planned_duration_minutes,
-            "planned_distance_meters": planned_distance_meters,
-            "phase": phase,
-            "coach_note": "Keep each hill repeat powerful and controlled.",
-            "steps": [
-                {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
-                {
-                    "type": "repeat",
-                    "repeat_count": 4,
-                    "steps": [
-                        {"type": "hill", "duration_seconds": 120, "target": {"kind": "rpe", "rpe": 8}},
-                        {"type": "recovery", "duration_seconds": 300, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
-                    ],
-                },
-                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
-            ],
-        }
     return {
         "scheduled_for": scheduled_for.isoformat(),
         "workout_type": workout_type,
         "purpose": purpose,
-        "planned_duration_minutes": duration_minutes,
+        "planned_duration_minutes": planned_duration_minutes,
         "planned_distance_meters": planned_distance_meters,
         "phase": phase,
-        "steps": [
-            {
-                "type": "free_run",
-                "duration_seconds": duration_minutes * 60,
-                "target": {"kind": "pace", "zone": "easy", "rpe": 3},
-            }
-        ],
+        "steps": [step.to_payload() for step in _template_steps(workout_type, planned_duration_minutes)],
     }
-
-
-def _tempo_step_durations(duration_minutes: int, week: int) -> tuple[int, int, int]:
-    total_seconds = duration_minutes * 60
-    warmup_seconds = min(600, total_seconds // 3)
-    cooldown_seconds = min(600, (total_seconds - warmup_seconds) // 2)
-    work_duration_seconds = min(1_500 + week * 120, total_seconds - warmup_seconds - cooldown_seconds)
-    return warmup_seconds, work_duration_seconds, cooldown_seconds
 
 
 def _date_from_context(value) -> date | None:
@@ -1059,6 +1006,11 @@ def _repair_request(request: ModelRequest, exc: Exception) -> ModelRequest:
             },
         ),
         tools=request.tools,
-        context=request.context,
+        context={
+            **(request.context or {}),
+            "model_repair_pending": False,
+            "model_repair_reason": str(exc),
+            **({"preserved_generation": exc.plan_payload} if hasattr(exc, "plan_payload") else {}),
+        },
         require_tool_call=True,
     )

@@ -130,6 +130,7 @@ def _plan_response(plan: TrainingPlan) -> TrainingPlanResponse:
                 id=workout.id,
                 scheduled_for=workout.scheduled_for,
                 workout_type=workout.workout_type,
+                display_name=workout.display_name,
                 purpose=workout.purpose,
                 planned_duration_minutes=workout.planned_duration_minutes,
                 planned_distance_meters=workout.planned_distance_meters,

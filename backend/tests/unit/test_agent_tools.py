@@ -9,6 +9,7 @@ from src.application.agent_tools import (
     AgentToolRegistry,
     AthleteContextTool,
     CreateRecommendationTool,
+    CreateTrainingPlanTool,
     MemoryCandidateTool,
     RecentActivitiesTool,
     RecoveryStateTool,
@@ -287,6 +288,111 @@ def _model_workout_payload(workout, *, purpose: str, scheduled_for: date | None 
         "planned_distance_meters": workout.planned_distance_meters,
         "phase": workout.phase,
     }
+
+
+def test_incomplete_model_plan_requests_repair_before_saving() -> None:
+    skeleton = _eight_week_skeleton()
+    store = FakeTrainingPlanStore(None)
+    tool = CreateTrainingPlanTool(training_plans=store)
+    with pytest.raises(ValueError, match="model repair required"):
+        tool.run(user_id="user-1", arguments={"name": "Partial", "starts_on": skeleton.starts_on.isoformat(), "ends_on": skeleton.ends_on.isoformat(), "workouts": [], "trusted_context": {"plan_skeleton": _skeleton_payload(skeleton), "model_repair_pending": True}})
+    assert store.plan is None
+
+
+def test_completion_templates_have_numeric_targets_and_canonical_names() -> None:
+    skeleton = _eight_week_skeleton()
+    result = CreateTrainingPlanTool(training_plans=FakeTrainingPlanStore(None)).run(user_id="user-1", arguments={"name": "Partial", "starts_on": skeleton.starts_on.isoformat(), "ends_on": skeleton.ends_on.isoformat(), "workouts": [], "trusted_context": {"plan_skeleton": _skeleton_payload(skeleton)}})
+    for workout in result["training_plan"]["workouts"]:
+        assert workout["steps"][0]["target"]["kind"] == "rpe"
+        assert workout["steps"][0]["target"]["rpe"] == 3
+        assert workout["display_name"] != workout["purpose"]
+
+
+def test_runtime_fallback_key_sessions_fit_deterministic_duration_budget() -> None:
+    from src.application.agent_runtime import _fallback_training_plan_arguments
+    skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, current_weekly_mileage_km=25, experience_level="intermediate")
+    arguments = _fallback_training_plan_arguments({"plan_skeleton": _skeleton_payload(skeleton)})
+    arguments["trusted_context"] = {"plan_skeleton": _skeleton_payload(skeleton)}
+    payload = CreateTrainingPlanTool(training_plans=FakeTrainingPlanStore(None)).run(user_id="user-1", arguments=arguments)
+    assert "completion_repair" not in payload, "fallback templates must already fit, not discard their own weeks"
+    assert all(w["steps"] for w in payload["training_plan"]["workouts"])
+
+
+@pytest.mark.parametrize(("distance_meters", "shape"), [(50_000, "work"), (50_000, "both"), (50_000, "recovery"), (50_000, "nested"), (400, "work")])
+def test_mixed_unit_execution_load_is_bounded_before_activation(distance_meters, shape) -> None:
+    from src.application.agent_runtime import _fallback_training_plan_arguments
+    skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, current_weekly_mileage_km=25, experience_level="intermediate")
+    arguments = _fallback_training_plan_arguments({"plan_skeleton": _skeleton_payload(skeleton)})
+    interval = next(w for w in arguments["workouts"] if w["workout_type"] == "interval")
+    original_work_duration = interval["steps"][1]["steps"][0]["duration_seconds"]
+    interval["steps"][1]["steps"][0].update(duration_seconds=None, distance_meters=distance_meters)
+    if shape == "both":
+        interval["steps"][1]["steps"][0]["duration_seconds"] = original_work_duration
+    if shape == "recovery":
+        interval["steps"][1]["steps"].reverse()
+        interval["steps"][1]["steps"][0]["type"] = "work"
+        interval["steps"][1]["steps"][1]["type"] = "recovery"
+    if shape == "nested":
+        interval["steps"][1] = {"type": "repeat", "repeat_count": 2, "steps": [interval["steps"][1]]}
+    if distance_meters == 400:
+        interval["steps"][0]["duration_seconds"] = 600
+        interval["steps"][2]["duration_seconds"] = 600
+        interval["steps"][1]["steps"][1]["duration_seconds"] = 90
+    arguments["trusted_context"] = {"plan_skeleton": _skeleton_payload(skeleton), "model_repair_pending": True}
+    store = FakeTrainingPlanStore(None)
+    tool = CreateTrainingPlanTool(training_plans=store)
+    if distance_meters == 400:
+        result = tool.run(user_id="user-1", arguments=arguments)
+        assert "completion_repair" not in result
+        assert next(w for w in store.plan.workouts if w.workout_type == "interval").steps[1].steps[0].distance_meters == 400
+    else:
+        with pytest.raises(ValueError, match="executable load"):
+            tool.run(user_id="user-1", arguments=arguments)
+        assert store.plan is None
+        arguments["trusted_context"]["model_repair_pending"] = False
+        result = tool.run(user_id="user-1", arguments=arguments)
+        assert result["completion_repair"]["repaired_week_indexes"] == [0]
+        assert next(w for w in store.plan.workouts if w.workout_type == "interval").steps[1].steps[0].distance_meters is None
+
+
+def test_weak_baseline_mixed_distance_cannot_expand_easy_run_budget() -> None:
+    from src.application.agent_runtime import _fallback_training_plan_arguments
+    skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3)
+    arguments = _fallback_training_plan_arguments({"plan_skeleton": _skeleton_payload(skeleton)})
+    easy = next(w for w in arguments["workouts"] if w["workout_type"] == "easy_run")
+    easy["steps"] = [{"type": "warmup", "duration_seconds": 300}, {"type": "work", "distance_meters": 50_000, "target": {"kind": "pace", "zone": "interval", "pace_range_seconds_per_km": [1, 1]}}, {"type": "cooldown", "duration_seconds": 300}]
+    arguments["trusted_context"] = {"plan_skeleton": _skeleton_payload(skeleton), "model_repair_pending": True}
+    store = FakeTrainingPlanStore(None)
+    with pytest.raises(ValueError, match="executable load"):
+        CreateTrainingPlanTool(training_plans=store).run(user_id="user-1", arguments=arguments)
+    assert store.plan is None
+
+
+@pytest.mark.parametrize(("rpe", "bpm", "location"), [(None, None, "work"), (8, None, "work"), (8, [155, 170], "work"), (None, None, "recovery"), (None, None, "warmup"), (None, None, "cooldown")])
+def test_key_session_hr_targets_require_numeric_execution(rpe, bpm, location) -> None:
+    from src.application.agent_runtime import _fallback_training_plan_arguments
+    skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, current_weekly_mileage_km=25, experience_level="intermediate")
+    arguments = _fallback_training_plan_arguments({"plan_skeleton": _skeleton_payload(skeleton)})
+    interval = next(w for w in arguments["workouts"] if w["workout_type"] == "interval")
+    step = interval["steps"][0] if location == "warmup" else interval["steps"][2] if location == "cooldown" else interval["steps"][1]["steps"][0 if location == "work" else 1]
+    step["target"] = {"kind": "heart_rate", "heart_rate_zone": "threshold", "heart_rate_range_bpm": bpm, "rpe": rpe, "confidence": "low"}
+    arguments["trusted_context"] = {"plan_skeleton": _skeleton_payload(skeleton), "model_repair_pending": True}
+    store = FakeTrainingPlanStore(None)
+    tool = CreateTrainingPlanTool(training_plans=store)
+    if rpe is None and bpm is None:
+        with pytest.raises(ValueError, match="model repair required"):
+            tool.run(user_id="user-1", arguments=arguments)
+        assert store.plan is None
+        arguments["trusted_context"]["model_repair_pending"] = False
+        result = tool.run(user_id="user-1", arguments=arguments)
+        assert result["completion_repair"]["repaired_week_indexes"] == [0]
+        return
+    result = tool.run(user_id="user-1", arguments=arguments)
+    assert "completion_repair" not in result
+    target = result["training_plan"]["workouts"][0]["steps"][1]["steps"][0]["target"]
+    assert target["kind"] == ("heart_rate" if bpm else "rpe")
+    assert target["heart_rate_range_bpm"] == bpm
+    assert target["rpe"] == rpe
 
 
 def _today_context_handler(activity_store: LeakyActivityStore, plan_store: FakeTrainingPlanStore) -> BuildTodayContextHandler:

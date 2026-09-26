@@ -12,6 +12,7 @@ def build_running_companion_agent(
     prompt_version: str,
     settings: LlmSettings,
     openai_client=None,
+    transaction_factory=None,
 ) -> RunningCompanionAgent:
     if settings.provider != "openai":
         raise LlmSettingsError(f"Unsupported LLM_PROVIDER: {settings.provider}")
@@ -23,4 +24,5 @@ def build_running_companion_agent(
         prompt_version=prompt_version,
         provider=settings.provider,
         model=settings.model,
+        transaction_factory=transaction_factory,
     )

@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 
+import pytest
+
 from src.application.agent_runtime import FakeModelGateway, RunningCompanionAgent
 from src.application.agent_tools import AgentToolRegistry
 from src.domain.agent_runtime import AgentContextSource, AgentRun, AgentRunStep, ModelResponse, TokenUsage, ToolCallRequest
@@ -94,6 +96,104 @@ class FailingTool:
 
     def run(self, *, user_id: str, arguments: dict) -> dict:
         raise RuntimeError("tool unavailable")
+
+
+@pytest.mark.parametrize("second_output", ["incomplete", "malformed", "absent", "complete", "outside", "invalid_dates", "empty_name_incomplete", "empty_name_absent"])
+def test_incomplete_generation_gets_model_repair_then_preserves_original_week(second_output):
+    from dataclasses import replace
+    from src.application.agent_tools import CreateTrainingPlanTool
+    from src.application.training_plan_generation import build_plan_skeleton
+
+    skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, max_hard_sessions_per_week=0)
+    original = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "Original valid coaching", "planned_duration_minutes": w.planned_duration_minutes} for w in skeleton.workouts[:3]]
+    arguments = {"name": "Partial", "starts_on": "2027-01-04", "ends_on": "2027-01-31", "workouts": original}
+    if second_output == "outside":
+        arguments["workouts"] = [*original, {**original[0], "scheduled_for": "2027-02-01"}]
+    if second_output == "invalid_dates":
+        arguments["ends_on"] = "2026-01-01"
+    if second_output.startswith("empty_name"):
+        arguments["name"] = ""
+
+    class Store:
+        saved = None
+        def create_active_plan(self, user_id, plan, replace_all_active=False):
+            self.saved = replace(plan, id="repaired-plan")
+            return self.saved
+    store = Store()
+    first = ModelResponse(content="Partial", tool_calls=(ToolCallRequest(tool_name="createTrainingPlan", arguments=arguments),))
+    second_arguments = {**arguments, "workouts": []}
+    second_arguments["name"] = "Repaired plan"
+    if second_output == "complete":
+        second_arguments["workouts"] = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "Repaired model coaching", "planned_duration_minutes": w.planned_duration_minutes} for w in skeleton.workouts]
+    if second_output == "malformed":
+        second_arguments["ends_on"] = "2026-01-01"
+    second = ModelResponse(content="Repair", tool_calls=() if second_output in {"absent", "empty_name_absent"} else (ToolCallRequest(tool_name="createTrainingPlan", arguments=second_arguments),))
+    preserved_ids = []
+    class Gateway(FakeModelGateway):
+        def complete(self, request):
+            assert store.saved is None, "incomplete first pass must not activate"
+            if self.requests:
+                preserved_ids.extend(w["id"] for w in (request.context or {}).get("preserved_generation", {}).get("workouts", ())[:3])
+            return super().complete(request)
+    gateway = Gateway(first, second)
+    runs = FakeRunStore()
+    athlete = StaticTool("getAthleteContext", {"profile": {"max_hard_sessions_per_week": 0}})
+    agent = RunningCompanionAgent(run_store=runs, model_gateway=gateway, tools=AgentToolRegistry((athlete, CreateTrainingPlanTool(training_plans=store))), prompt_version="v1")
+    result = agent.run_training_plan_generation(user_id="user-1", starts_on=skeleton.starts_on, plan_type="maintenance")
+    assert result.status == "completed"
+    assert len(gateway.requests) == 2
+    assert len(store.saved.workouts) == len(skeleton.workouts)
+    assert store.saved.metadata["internal"]["model_repair"]["attempted"] is True
+    if second_output == "complete":
+        assert all(w.purpose == "Repaired model coaching" for w in store.saved.workouts)
+        assert "completion_repair" not in store.saved.metadata["internal"]
+        return
+    assert [w.purpose for w in store.saved.workouts[:3]] == ["Original valid coaching"] * 3
+    assert len(preserved_ids) == 3 and all(preserved_ids)
+    assert [w.id for w in store.saved.workouts[:3]] == preserved_ids
+    repair = store.saved.metadata["internal"]["completion_repair"]
+    assert repair["repaired_week_indexes"] == [1, 2, 3]
+    assert not set(preserved_ids).intersection(repair["repaired_workout_ids"])
+    assert runs.steps[-1].payload["completion_repair"] == repair
+    assert any("model repair required" in (step.error_message or "") for step in runs.steps)
+    assert all(w.steps[0].target.kind == "rpe" for w in store.saved.workouts[3:])
+
+
+@pytest.mark.parametrize(("rpe", "bpm"), [(None, None), (8, None), (8, [155, 170])])
+def test_generation_hr_target_numeric_contract_and_model_repair(rpe, bpm):
+    from src.application.agent_runtime import _fallback_training_plan_arguments
+    from src.application.agent_tools import CreateTrainingPlanTool
+    from src.application.training_plan_generation import build_plan_skeleton
+    from tests.unit.test_agent_tools import FakeTrainingPlanStore, _skeleton_payload
+
+    skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, current_weekly_mileage_km=25, experience_level="intermediate")
+    arguments = _fallback_training_plan_arguments({"plan_skeleton": _skeleton_payload(skeleton)})
+    arguments["workouts"][0]["steps"][1]["steps"][0]["target"] = {"kind": "heart_rate", "heart_rate_zone": "threshold", "heart_rate_range_bpm": bpm, "rpe": rpe}
+    store = FakeTrainingPlanStore(None)
+    response = ModelResponse(content="Generated", tool_calls=(ToolCallRequest(tool_name="createTrainingPlan", arguments=arguments),))
+    class Gateway(FakeModelGateway):
+        def complete(self, request):
+            assert store.plan is None
+            return super().complete(request)
+    gateway = Gateway(response, response)
+    runs = FakeRunStore()
+    athlete = StaticTool("getAthleteContext", {"profile": {"current_weekly_mileage_km": 25, "experience_level": "intermediate"}})
+    agent = RunningCompanionAgent(run_store=runs, model_gateway=gateway, tools=AgentToolRegistry((athlete, CreateTrainingPlanTool(training_plans=store))), prompt_version="v1")
+    result = agent.run_training_plan_generation(user_id="user-1", starts_on=skeleton.starts_on, plan_type="maintenance")
+    assert result.status == "completed"
+    target = store.plan.workouts[0].steps[1].steps[0].target.to_payload()
+    if rpe is None and bpm is None:
+        assert len(gateway.requests) == 2
+        assert "repair" in gateway.requests[1].messages[-1]["content"].lower()
+        assert store.plan.metadata["internal"]["completion_repair"]["repaired_week_indexes"] == [0]
+        assert target["kind"] == "rpe" and target["rpe"] == 8
+        assert target["heart_rate_range_bpm"] is None
+    else:
+        assert len(gateway.requests) == 1
+        assert "completion_repair" not in store.plan.metadata.get("internal", {})
+        assert target["kind"] == ("heart_rate" if bpm else "rpe")
+        assert target["heart_rate_range_bpm"] == bpm
+        assert target["rpe"] == rpe
 
 
 class FailingOnceTrainingPlanTool:
@@ -765,6 +865,7 @@ def test_training_plan_generation_records_completion_repair_in_tool_step_payload
 def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> None:
     run_store = FakeRunStore()
     plan_tool = FailingTwiceTrainingPlanTool()
+    athlete_tool = StaticTool("getAthleteContext", {"profile": {"current_weekly_mileage_km": 40, "experience_level": "advanced"}})
     model = FakeModelGateway(
         ModelResponse(
             content="Invalid plan.",
@@ -805,7 +906,7 @@ def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> Non
     agent = RunningCompanionAgent(
         run_store=run_store,
         model_gateway=model,
-        tools=AgentToolRegistry((plan_tool,)),
+        tools=AgentToolRegistry((plan_tool, athlete_tool)),
         prompt_version="running-companion-v1",
     )
     queued_run = AgentRun.queue(

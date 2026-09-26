@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Iterable
+from uuid import uuid4
 
 from src.application.training_plan_generation import (
     PlanSkeleton,
@@ -202,25 +204,56 @@ class CreateTrainingPlanTool:
         trusted_context = arguments.get("trusted_context") if isinstance(arguments.get("trusted_context"), dict) else {}
         pace_profile = trusted_context.get("pace_profile")
         skeleton = _trusted_plan_skeleton(trusted_context)
-        workouts = tuple(
-            _workout_from_payload({**payload, "id": None, "_pace_profile": pace_profile})
-            for payload in arguments.get("workouts", ())
-        )
+        workouts = []
+        parse_errors = []
+        name = arguments.get("name")
+        if skeleton is not None and (not isinstance(name, str) or not name.strip()):
+            parse_errors.append("plan name is invalid")
+            name = "Generated Training Plan"
+        if skeleton is not None:
+            starts_on, ends_on = skeleton.starts_on, skeleton.ends_on
+            for key, expected in (("starts_on", starts_on), ("ends_on", ends_on)):
+                try:
+                    if _date_arg(arguments, key) != expected:
+                        parse_errors.append(f"plan {key} does not match the skeleton")
+                except (ValueError, KeyError, TypeError):
+                    parse_errors.append(f"plan {key} is invalid")
+        else:
+            starts_on, ends_on = _date_arg(arguments, "starts_on"), _date_arg(arguments, "ends_on")
+        for payload in arguments.get("workouts", ()):
+            try:
+                workout = _workout_from_payload({**payload, "id": str(uuid4()), "_pace_profile": pace_profile})
+                if skeleton is not None and not skeleton.starts_on <= workout.scheduled_for <= skeleton.ends_on:
+                    raise ValueError("workout is outside skeleton date range")
+                workouts.append(workout)
+            except (ValueError, KeyError, TypeError) as error:
+                if skeleton is None:
+                    raise
+                parse_errors.append(str(error))
         plan = TrainingPlan.create(
             user_id=user_id,
             race_id=trusted_context.get("race_id", arguments.get("race_id")),
-            name=arguments["name"],
+            name=name,
             status="active",
-            starts_on=_date_arg(arguments, "starts_on"),
-            ends_on=_date_arg(arguments, "ends_on"),
+            starts_on=starts_on,
+            ends_on=ends_on,
             metadata=_plan_metadata(arguments=arguments, trusted_context=trusted_context),
-            workouts=workouts,
+            workouts=tuple(workouts),
         )
         completion_repair = None
         if skeleton is not None:
-            validation_errors = validate_generated_plan(plan, skeleton)
+            validation_errors = parse_errors + validate_generated_plan(plan, skeleton)
             if validation_errors:
-                repair_result = repair_generated_plan(plan, skeleton, "; ".join(validation_errors))
+                if trusted_context.get("model_repair_pending") is True:
+                    raise IncompleteTrainingPlan(plan, "; ".join(validation_errors))
+                preserved = trusted_context.get("preserved_generation") or {}
+                preserved_workouts = tuple(
+                    _workout_from_payload({**workout, "_pace_profile": pace_profile})
+                    for workout in preserved.get("workouts", ())
+                )
+                repair_result = repair_generated_plan(
+                    plan, skeleton, "; ".join(validation_errors), preserved_workouts=preserved_workouts,
+                )
                 plan = repair_result.plan
                 completion_repair = {
                     "repaired_week_indexes": repair_result.repaired_week_indexes,
@@ -230,6 +263,15 @@ class CreateTrainingPlanTool:
                 repaired_errors = validate_generated_plan(plan, skeleton)
                 if repaired_errors:
                     raise ValueError(f"completion repair did not produce a valid plan: {'; '.join(repaired_errors)}")
+        canonical_pace_profile = PaceProfile.from_payload(pace_profile)
+        plan = replace(plan, workouts=tuple(
+            replace(workout, steps=enrich_workout_steps(workout.steps, pace_profile=canonical_pace_profile))
+            for workout in plan.workouts
+        ))
+        if trusted_context.get("model_repair_reason"):
+            internal = dict(plan.metadata.get("internal") or {})
+            internal["model_repair"] = {"attempted": True, "reason": trusted_context["model_repair_reason"]}
+            plan = replace(plan, metadata={**plan.metadata, "internal": internal})
         validate_phase_segments(plan)
         saved = self._training_plans.create_active_plan(
             user_id,
@@ -244,6 +286,12 @@ class CreateTrainingPlanTool:
         if completion_repair is not None:
             payload["completion_repair"] = completion_repair
         return payload
+
+
+class IncompleteTrainingPlan(ValueError):
+    def __init__(self, plan: TrainingPlan, reason: str) -> None:
+        super().__init__(f"model repair required: {reason}")
+        self.plan_payload = _plan_payload(plan)
 
 
 class MemoryCandidateTool:
@@ -304,7 +352,7 @@ def _workout_from_payload(payload: dict) -> Workout:
         for step in payload.get("steps", ())
     )
     pace_profile = PaceProfile.from_payload(payload.get("_pace_profile"))
-    workout_steps = enrich_workout_steps(steps, pace_profile=pace_profile) if pace_profile is not None else steps
+    workout_steps = enrich_workout_steps(steps, pace_profile=pace_profile)
     return Workout.create(
         id=payload.get("id"),
         scheduled_for=_date_arg(payload, "scheduled_for"),

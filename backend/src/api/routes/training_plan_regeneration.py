@@ -20,6 +20,7 @@ from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunR
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.models import UserModel
+from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
 
 router = APIRouter(prefix="/training-plans", tags=["training-plans"])
@@ -54,6 +55,7 @@ def _service(session) -> TrainingPlanRegenerationService:
     return TrainingPlanRegenerationService(
         profiles=athlete_races,
         race_goals=athlete_races,
+        training_plans=SqlAlchemyTrainingPlanRepository(session),
         runs=runs,
         tasks=tasks,
         queue_agent_runs=QueueAgentRunHandler(

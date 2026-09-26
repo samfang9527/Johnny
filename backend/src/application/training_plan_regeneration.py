@@ -96,7 +96,11 @@ class TrainingPlanRegenerationService:
         races = self._future_races(user_id, athlete_today + timedelta(days=1))
         runs = self._user_runs(user_id)
         quota = _quota(runs, athlete_today, profile)
-        strategy = _strategy(races, athlete_today, explicit_race_id=None, force_maintenance=False)
+        strategy = _strategy(
+            races, athlete_today,
+            explicit_race_id=self._current_future_race_id(user_id, races),
+            force_maintenance=False,
+        )
         in_flight = _in_flight_run(runs)
         return RegenerationOptions(
             quota=quota,
@@ -302,6 +306,14 @@ class TrainingPlanRegenerationService:
     def _future_races(self, user_id: str, starts_on: date) -> list[RaceGoal]:
         return self._race_goals.list_race_goals_for_user(user_id, race_date_from=starts_on)
 
+    def _current_future_race_id(self, user_id: str, races: list[RaceGoal]) -> str | None:
+        if self._training_plans is None:
+            return None
+        plan = self._training_plans.get_current_plan_for_user(user_id)
+        if plan is None or plan.user_id != user_id:
+            return None
+        return next((race.id for race in races if race.user_id == user_id and race.id == plan.race_id), None)
+
     def _user_runs(self, user_id: str) -> list[AgentRun]:
         return self._runs.list_runs_for_user(user_id, workflow_name="training_plan_generation")
 
@@ -317,7 +329,7 @@ class TrainingPlanRegenerationService:
 
 
 def _quota(runs: list[AgentRun], quota_day: date, profile: AthleteProfile | None) -> RegenerationQuota:
-    used = sum(_consumes_quota(run, quota_day) for run in runs)
+    used = sum(_consumes_quota(run, quota_day, profile) for run in runs)
     remaining = max(0, MANUAL_REGENERATION_LIMIT - used)
     available = remaining > 0
     return RegenerationQuota(
@@ -444,12 +456,18 @@ def _strategy(
     )
 
 
-def _consumes_quota(run: AgentRun, quota_day: date) -> bool:
+def _consumes_quota(run: AgentRun, quota_day: date, profile: AthleteProfile | None = None) -> bool:
     metadata = run.metadata or {}
+    completed_day = None
+    if run.finished_at is not None:
+        instant = run.finished_at
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+        completed_day = instant.astimezone(_athlete_timezone(profile)).date()
     return (
         run.status == "completed"
         and metadata.get("manual_regeneration") is True
-        and metadata.get("quota_day") == quota_day.isoformat()
+        and completed_day == quota_day
         and bool(metadata.get("created_training_plan_id"))
     )
 

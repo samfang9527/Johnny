@@ -71,6 +71,8 @@ import type {
   TrainingPlanRegenerationRequest,
   TrainingPlanRegenerationRun,
   TrainingPlanPhase,
+  TrainingPlanResponse,
+  PlanPhase,
   AthleteBaselineSnapshot,
   SignalCoverageItem,
   WorkoutStep,
@@ -143,8 +145,24 @@ const activeView = ref<ViewKey>(props.initialView ?? viewFromHash() ?? 'today')
 const busyAction = ref('')
 const recommendationStatus = ref(fixtureRecommendation.status)
 const apiRaceSummary = ref<RaceSummary | null>(null)
-const apiTodayWorkout = ref<WorkoutSummary | null>(null)
-const apiWorkouts = ref<WorkoutSummary[]>([])
+const apiTodayWorkoutPayload = ref<Record<string, unknown> | null>(null)
+const apiTodayWorkout = computed(() => {
+  const raw = apiTodayWorkoutPayload.value
+  if (!raw) return null
+  // The Today API selects the source ID; history can only fill details for that exact ID.
+  const original = typeof raw.id === 'string' && raw.id ? apiTrainingPlans.value.flatMap((plan) => Array.isArray(plan.workouts) ? plan.workouts : []).map(asRecord).find((workout) => workout?.id === raw.id) : undefined
+  return mapWorkout({ ...original, ...raw })
+})
+const apiTrainingPlans = ref<TrainingPlanResponse[]>([])
+const activePlan = computed(() => apiTrainingPlans.value.find((plan) => plan.status === 'active'))
+const apiWorkouts = computed(() => {
+  const plan = activePlan.value
+  const workouts = plan && Array.isArray(plan.workouts) ? [...plan.workouts] : []
+  const mapped = workouts.map(mapWorkout).filter((workout): workout is WorkoutSummary => workout !== null)
+  // Today owns predecessor selection; do not infer provenance from superseded plan dates.
+  const today = apiTodayWorkout.value
+  return today?.scheduledFor === todayIsoDate.value ? [today, ...mapped.filter((workout) => workout.id !== today.id && workout.scheduledFor !== todayIsoDate.value)] : mapped
+})
 const apiRecommendation = ref<RecommendationSummary | null>(null)
 const apiRecoveryEvidence = ref<EvidenceItem[]>([])
 const apiUnavailableSignals = ref<string[]>([])
@@ -160,6 +178,14 @@ const providerError = ref('')
 const providerBusy = ref<'' | 'connect' | 'sync' | 'disconnect'>('')
 const pendingDisconnectConnectionId = ref('')
 const userTimezone = ref('UTC')
+const calendarNow = ref(new Date())
+let calendarTimer: ReturnType<typeof setInterval> | undefined
+let sessionGeneration = 0
+let trainingReadVersion = 0
+let trainingReadPending = false
+let trainingReadDate = ''
+const todayPayloadDate = ref('')
+const todayReadFailed = ref(false)
 const conversationMessage = ref('')
 const conversationError = ref('')
 const conversationStatus = ref('')
@@ -186,11 +212,13 @@ const planRegenerationError = ref('')
 const inFlightPlanRegeneration = ref<TrainingPlanRegenerationRun | null>(null)
 const planRegenerationLoadingDialogRef = ref<HTMLElement | null>(null)
 const regenerationPollIntervalMs = 2_000
-const regenerationPollLimit = 12
+const regenerationFastPollCount = 12
 let planRegenerationPollTimer: ReturnType<typeof setTimeout> | undefined
 let planRegenerationPollAttempts = 0
+let planRegenerationObservation = 0
+let isUnmounted = false
 let planRegenerationReturnFocus: HTMLElement | null = null
-const apiPlanPhases = ref<PlanPhaseTimelineSegment[]>([])
+const apiPlanPhases = computed(() => activePlan.value && activePlan.value.ends_on >= todayIsoDate.value ? mapPhaseSegments(activePlan.value.metadata) : [])
 const authStatus = ref<'checking' | 'anonymous' | 'authenticated'>(shouldRequireAuth() ? 'checking' : 'authenticated')
 const currentUser = ref<CurrentUser | null>(null)
 const authMode = ref<'login' | 'signup'>('login')
@@ -218,6 +246,9 @@ const hasActiveDataProvider = computed(() =>
 const effectiveTodayState = computed(() => {
   if (props.todayState !== 'full') {
     return props.todayState
+  }
+  if (hasBackendHydrated.value && shouldRequireAuth() && todayPayloadDate.value !== todayIsoDate.value) {
+    return todayReadFailed.value ? 'error' : 'loading'
   }
   if (hasBackendHydrated.value && shouldRequireAuth() && hasActiveDataProvider.value) {
     return 'full'
@@ -268,7 +299,12 @@ const signalCoverage = computed<SignalCoverageItem[]>(() => {
 const coveredSignalCount = computed(() => signalCoverage.value.filter((item) => item.covered).length)
 const recommendation = computed(() => apiRecommendation.value ?? (shouldRequireAuth() ? null : fixtureRecommendation))
 const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : shouldRequireAuth() ? [] : fixtureWorkouts))
-const journeyPhases = computed(() => fixturePlanPhases)
+const journeyPhases = computed<PlanPhase[]>(() => shouldRequireAuth() ? apiPlanPhases.value.map((segment) => ({
+  id: `${segment.phase}-${segment.startsOn}`,
+  label: segment.label,
+  summary: segment.focus,
+  status: segment.endsOn < todayIsoDate.value ? 'done' : segment.startsOn > todayIsoDate.value ? 'next' : 'current',
+})) : fixturePlanPhases)
 const displayThreads = computed(() => props.conversationThreads ?? fixtureConversationThreads)
 const displayInboxItems = computed(() => {
   const source = props.inboxItems ?? (apiInboxItems.value.length ? apiInboxItems.value : shouldRequireAuth() ? [] : fixtureInboxRecommendations)
@@ -282,7 +318,22 @@ const activeThreadId = ref(displayThreads.value[0]?.id ?? '')
 const activeThread = computed(() => displayThreads.value.find((thread) => thread.id === activeThreadId.value) ?? displayThreads.value[0])
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
 const historicalInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status !== 'pending'))
-const todayIsoDate = computed(() => new Date().toISOString().slice(0, 10))
+const todayIsoDate = computed(() => {
+  const parts = new Intl.DateTimeFormat('en', { timeZone: userTimezone.value, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(calendarNow.value)
+  return ['year', 'month', 'day'].map((key) => parts.find((part) => part.type === key)!.value).join('-')
+})
+const recoveryWindow = computed(() => {
+  if (!shouldRequireAuth() || (activePlan.value && activePlan.value.starts_on <= todayIsoDate.value && activePlan.value.ends_on >= todayIsoDate.value)) return null
+  const previous = apiTrainingPlans.value
+    .filter((plan) => ['active', 'completed', 'superseded'].includes(plan.status) && isIsoDate(plan.ends_on) && plan.ends_on < todayIsoDate.value)
+    .sort((a, b) => b.ends_on.localeCompare(a.ends_on))[0]
+  if (!previous) return null
+  const startsOn = addCalendarDays(previous.ends_on, 1)
+  const endsOn = addCalendarDays(previous.ends_on, 7)
+  if (todayIsoDate.value > endsOn) return null
+  const day = Math.round((Date.parse(`${todayIsoDate.value}T00:00:00Z`) - Date.parse(`${previous.ends_on}T00:00:00Z`)) / 86_400_000)
+  return { startsOn, endsOn, day }
+})
 const upcomingRaceEntries = computed(() => raceEntries.value.filter((race) => race.date >= todayIsoDate.value))
 const dataSourceNeedsAttention = computed(() =>
   Boolean(
@@ -302,7 +353,9 @@ const recoveryFooterText = computed(() => {
 const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
 const todayDecision = computed(() => buildTodayDecision(recommendation.value, recoveryEvidence.value))
 const todayEvidenceChips = computed(() => recoveryEvidence.value.slice(0, 3))
-const currentPlanPhase = computed(() => journeyPhases.value.find((phase) => phase.status === 'current') ?? journeyPhases.value[0])
+const currentPlanPhase = computed(() => journeyPhases.value.find((phase) => phase.status === 'current') ?? (recoveryWindow.value ? {
+  label: '恢復週 · Recovery Window', summary: `上一份計畫已結束，安排七天恢復。第 ${recoveryWindow.value.day} / 7 天`,
+} : { label: journeyPhases.value.length ? '計畫尚未開始' : '尚無有效訓練計畫', summary: journeyPhases.value.length ? '接下來的訓練階段已排定。' : '請重新產生計畫，安排接下來的訓練。' }))
 const signalCoverageSummary = computed(() => `Johnny 已有 ${coveredSignalCount.value}/${signalCoverage.value.length} 個訓練訊號`)
 const weeklyActivityPoints = computed(() => fixtureWeeklyActivity)
 const maxWeeklyDistance = computed(() => Math.max(...weeklyActivityPoints.value.map((point) => point.distanceKm), 1))
@@ -686,6 +739,7 @@ function updateDocumentTitle(label: string) {
 }
 
 async function initializeAuth() {
+  const session = sessionGeneration
   if (!shouldRequireAuth()) {
     authStatus.value = 'authenticated'
     await hydrateFromBackend()
@@ -696,10 +750,12 @@ async function initializeAuth() {
   authError.value = ''
   try {
     const response = await getCurrentUser()
+    if (isUnmounted || session !== sessionGeneration) return
     currentUser.value = response.data
     authStatus.value = 'authenticated'
     await hydrateFromBackend()
   } catch (error) {
+    if (isUnmounted || session !== sessionGeneration) return
     authStatus.value = 'anonymous'
     authError.value = error instanceof ApiRequestError && error.status === 401 ? '' : '登入狀態檢查失敗，請重新登入。'
   }
@@ -736,11 +792,17 @@ async function submitAuth() {
   }
 
   authBusy.value = true
+  const session = ++sessionGeneration
+  trainingReadVersion += 1
+  trainingReadPending = false
   try {
     const response =
       authMode.value === 'signup'
         ? await signUpWithEmail({ display_name: authDisplayName.value.trim(), email, password })
         : await signInWithEmail({ email, password })
+    if (isUnmounted || session !== sessionGeneration) return
+    hasBackendHydrated.value = false
+    todayPayloadDate.value = ''
     currentUser.value = response.data.user
     authDisplayName.value = response.data.user.display_name || authDisplayName.value
     authPassword.value = ''
@@ -749,6 +811,7 @@ async function submitAuth() {
     authMessage.value = authMode.value === 'signup' ? '帳號已建立' : '已登入'
     await hydrateFromBackend()
   } catch (error) {
+    if (isUnmounted || session !== sessionGeneration) return
     authError.value = error instanceof ApiRequestError && error.status === 401 ? 'Email 或密碼不正確' : '登入失敗，請檢查資料後再試。'
   } finally {
     authBusy.value = false
@@ -775,6 +838,7 @@ async function handleGoogleSignIn() {
 }
 
 async function handleSignOut() {
+  stopPlanRegenerationObservation()
   await signOut()
   currentUser.value = null
   authStatus.value = shouldRequireAuth() ? 'anonymous' : 'authenticated'
@@ -782,6 +846,7 @@ async function handleSignOut() {
 
 function handleSessionExpiry(error: unknown): boolean {
   if (shouldRequireAuth() && error instanceof ApiRequestError && error.status === 401) {
+    stopPlanRegenerationObservation()
     currentUser.value = null
     authStatus.value = 'anonymous'
     authError.value = '登入已過期，請重新登入。'
@@ -1185,6 +1250,7 @@ function openRaceGoalModal() {
 }
 
 async function openPlanRegenerationSheet(event?: MouseEvent) {
+  const observation = planRegenerationObservation
   planRegenerationReturnFocus = event?.currentTarget instanceof HTMLElement ? event.currentTarget : document.activeElement instanceof HTMLElement ? document.activeElement : null
   isPlanRegenerationSheetOpen.value = true
   planRegenerationOptions.value = null
@@ -1193,11 +1259,12 @@ async function openPlanRegenerationSheet(event?: MouseEvent) {
   await nextTick()
   planRegenerationLoadingDialogRef.value?.querySelector<HTMLButtonElement>('button')?.focus()
   try {
-    const anchorDate = new Date().toISOString().slice(0, 10)
+    const anchorDate = todayIsoDate.value
     const [optionsResult, racesResult] = await Promise.allSettled([
       getTrainingPlanRegenerationOptions(),
       listRaceGoals(anchorDate),
     ])
+    if (isUnmounted || observation !== planRegenerationObservation) return
     if (optionsResult.status === 'rejected') {
       throw optionsResult.reason
     }
@@ -1209,6 +1276,7 @@ async function openPlanRegenerationSheet(event?: MouseEvent) {
       observePlanRegeneration(optionsResult.value.data.in_flight_run)
     }
   } catch (error) {
+    if (isUnmounted || observation !== planRegenerationObservation) return
     if (!handleSessionExpiry(error)) {
       planRegenerationError.value = '無法取得重新產生選項，請稍後再試。'
     }
@@ -1226,10 +1294,12 @@ function closePlanRegenerationSheet() {
 }
 
 async function confirmPlanRegeneration(payload: TrainingPlanRegenerationRequest) {
+  const observation = planRegenerationObservation
   planRegenerationBusy.value = true
   planRegenerationError.value = ''
   try {
     const response = await startTrainingPlanRegeneration(payload)
+    if (isUnmounted || observation !== planRegenerationObservation) return
     planRegenerationOptions.value = response.data
     const run = response.data.run ?? response.data.in_flight_run
     if (run) {
@@ -1240,6 +1310,7 @@ async function confirmPlanRegeneration(payload: TrainingPlanRegenerationRequest)
     }
     planRegenerationError.value = '目前無法重新產生計畫，請等待下次可用時間。'
   } catch (error) {
+    if (isUnmounted || observation !== planRegenerationObservation) return
     if (!handleSessionExpiry(error)) {
       planRegenerationError.value = '重新產生計畫失敗，請稍後再試。'
     }
@@ -1250,33 +1321,33 @@ async function confirmPlanRegeneration(payload: TrainingPlanRegenerationRequest)
 
 function observePlanRegeneration(run: TrainingPlanRegenerationRun) {
   clearPlanRegenerationPollTimer()
+  planRegenerationObservation += 1
   inFlightPlanRegeneration.value = run
   planRegenerationPollAttempts = 0
-  schedulePlanRegenerationPoll(run.run_id)
+  schedulePlanRegenerationPoll(run.run_id, planRegenerationObservation)
 }
 
-function schedulePlanRegenerationPoll(runId: string) {
-  if (planRegenerationPollAttempts >= regenerationPollLimit) {
-    return
-  }
+function schedulePlanRegenerationPoll(runId: string, observation: number) {
+  if (isUnmounted || observation !== planRegenerationObservation) return
+  const delay = planRegenerationPollAttempts < regenerationFastPollCount ? regenerationPollIntervalMs : Math.min(30_000, regenerationPollIntervalMs * 2 ** Math.min(4, planRegenerationPollAttempts - regenerationFastPollCount + 1))
   planRegenerationPollTimer = setTimeout(() => {
-    void pollPlanRegeneration(runId)
-  }, regenerationPollIntervalMs)
+    void pollPlanRegeneration(runId, observation)
+  }, delay)
 }
 
-async function pollPlanRegeneration(runId: string) {
-  if (inFlightPlanRegeneration.value?.run_id !== runId) {
+async function pollPlanRegeneration(runId: string, observation: number) {
+  if (isUnmounted || observation !== planRegenerationObservation || inFlightPlanRegeneration.value?.run_id !== runId) {
     return
   }
   planRegenerationPollAttempts += 1
   try {
     const response = await getAgentRun(runId)
-    if (inFlightPlanRegeneration.value?.run_id !== runId) {
+    if (isUnmounted || observation !== planRegenerationObservation || inFlightPlanRegeneration.value?.run_id !== runId) {
       return
     }
     if (response.data.status === 'completed') {
       inFlightPlanRegeneration.value = null
-      await refreshCompletedPlanRegeneration()
+      await refreshCompletedPlanRegeneration(observation)
       return
     }
     if (response.data.status === 'failed' || response.data.status === 'cancelled') {
@@ -1284,22 +1355,31 @@ async function pollPlanRegeneration(runId: string) {
       if (planRegenerationOptions.value) {
         planRegenerationOptions.value = { ...planRegenerationOptions.value, in_flight_run: null, run: null }
       }
-      planRegenerationError.value = response.data.error_message || '重新產生計畫未完成，已保留目前課表。'
+      planRegenerationError.value = `${response.data.error_message || '重新產生計畫未完成。'} 已保留目前課表，請稍後重新產生計畫。`
       return
     }
   } catch (error) {
+    if (isUnmounted || observation !== planRegenerationObservation) return
     if (handleSessionExpiry(error)) {
       return
     }
   }
-  schedulePlanRegenerationPoll(runId)
+  schedulePlanRegenerationPoll(runId, observation)
 }
 
-async function refreshCompletedPlanRegeneration() {
-  const [plansResult, optionsResult] = await Promise.allSettled([listTrainingPlans(), getTrainingPlanRegenerationOptions()])
-  if (plansResult.status === 'fulfilled') {
-    applyTrainingPlansPayload(Array.isArray(plansResult.value.data) ? plansResult.value.data : [])
-  } else {
+async function refreshCompletedPlanRegeneration(observation: number) {
+  const read = beginTrainingRead(todayIsoDate.value)
+  const [todayResult, plansResult, racesResult, optionsResult] = await Promise.allSettled([
+    getTodayContext(read.anchorDate), listTrainingPlans(), listRaceGoals(read.anchorDate, sixMonthWindowEnd(read.anchorDate)), getTrainingPlanRegenerationOptions(),
+  ])
+  finishTrainingRead(read)
+  if (!isCurrentTrainingRead(read) || observation !== planRegenerationObservation) {
+    ensureCurrentToday()
+    return
+  }
+  if ([todayResult, plansResult, racesResult, optionsResult].some((result) => result.status === 'rejected' && handleSessionExpiry(result.reason))) return
+  publishTrainingRead(read, todayResult, plansResult, racesResult)
+  if (plansResult.status === 'rejected') {
     planRegenerationError.value = '新的訓練計畫已完成，但暫時無法更新畫面。'
   }
   if (optionsResult.status === 'fulfilled') {
@@ -1312,6 +1392,17 @@ function clearPlanRegenerationPollTimer() {
     clearTimeout(planRegenerationPollTimer)
     planRegenerationPollTimer = undefined
   }
+}
+
+function stopPlanRegenerationObservation() {
+  sessionGeneration += 1
+  trainingReadVersion += 1
+  trainingReadPending = false
+  planRegenerationObservation += 1
+  clearPlanRegenerationPollTimer()
+  inFlightPlanRegeneration.value = null
+  planRegenerationOptions.value = null
+  isPlanRegenerationSheetOpen.value = false
 }
 
 function handlePlanRegenerationLoadingKeydown(event: KeyboardEvent) {
@@ -1408,47 +1499,123 @@ async function handleInboxDiscuss(item: InboxRecommendation) {
 }
 
 onMounted(() => {
+  calendarTimer = setInterval(refreshCalendarDate, 60_000)
+  window.addEventListener('focus', refreshCalendarDate)
   void initializeAuth()
 })
 
 onUnmounted(() => {
-  clearPlanRegenerationPollTimer()
+  isUnmounted = true
+  stopPlanRegenerationObservation()
+  clearInterval(calendarTimer)
+  window.removeEventListener('focus', refreshCalendarDate)
 })
 
+function refreshCalendarDate() {
+  calendarNow.value = new Date()
+  void nextTick(ensureCurrentToday)
+}
+
+watch(todayIsoDate, (anchorDate, previousDate) => {
+  if (anchorDate !== previousDate && hasBackendHydrated.value && shouldRequireAuth() && isAuthenticated.value) {
+    ensureCurrentToday()
+  }
+})
+
+function ensureCurrentToday() {
+  if (!isUnmounted && hasBackendHydrated.value && shouldRequireAuth() && isAuthenticated.value && todayPayloadDate.value !== todayIsoDate.value && (!trainingReadPending || trainingReadDate !== todayIsoDate.value)) {
+    void refreshCalendarPayloads(todayIsoDate.value)
+  }
+}
+
+function beginTrainingRead(anchorDate: string) {
+  trainingReadPending = true
+  trainingReadDate = anchorDate
+  return { version: ++trainingReadVersion, session: sessionGeneration, anchorDate }
+}
+
+type TrainingRead = ReturnType<typeof beginTrainingRead>
+
+function isCurrentTrainingRead(read: TrainingRead) {
+  return !isUnmounted && read.session === sessionGeneration && read.version === trainingReadVersion && read.anchorDate === todayIsoDate.value
+}
+
+function finishTrainingRead(read: TrainingRead) {
+  if (read.version === trainingReadVersion) trainingReadPending = false
+}
+
+function publishTrainingRead(
+  read: TrainingRead,
+  todayResult: PromiseSettledResult<Awaited<ReturnType<typeof getTodayContext>>>,
+  plansResult: PromiseSettledResult<Awaited<ReturnType<typeof listTrainingPlans>>>,
+  racesResult: PromiseSettledResult<Awaited<ReturnType<typeof listRaceGoals>>>,
+) {
+  if (!isCurrentTrainingRead(read)) return
+  if (todayResult.status === 'fulfilled') {
+    applyTodayPayload(todayResult.value.data)
+    todayPayloadDate.value = read.anchorDate
+    todayReadFailed.value = false
+  } else {
+    todayReadFailed.value = true
+  }
+  if (plansResult.status === 'fulfilled') applyTrainingPlansPayload(Array.isArray(plansResult.value.data) ? plansResult.value.data : [])
+  if (racesResult.status === 'fulfilled') applyRaceGoalsPayload(Array.isArray(racesResult.value.data) ? racesResult.value.data : [])
+  hasBackendHydrated.value = true
+}
+
+async function refreshCalendarPayloads(anchorDate: string) {
+  const read = beginTrainingRead(anchorDate)
+  const [todayResult, plansResult, racesResult] = await Promise.allSettled([
+    getTodayContext(anchorDate),
+    listTrainingPlans(),
+    listRaceGoals(anchorDate, sixMonthWindowEnd(anchorDate)),
+  ])
+  finishTrainingRead(read)
+  if (!isCurrentTrainingRead(read)) {
+    ensureCurrentToday()
+    return
+  }
+  if ([todayResult, plansResult, racesResult].some((result) => result.status === 'rejected' && handleSessionExpiry(result.reason))) return
+  publishTrainingRead(read, todayResult, plansResult, racesResult)
+}
+
 async function hydrateFromBackend() {
-  const anchorDate = new Date().toISOString().slice(0, 10)
-  const [todayResult, recommendationsResult, plansResult, racesResult, integrationsResult, profileResult] = await Promise.allSettled([
+  const session = sessionGeneration
+  try {
+    const profileResult = await getAthleteProfile()
+    if (isUnmounted || session !== sessionGeneration) return
+    applyAthleteProfilePayload(profileResult.data)
+  } catch (error) {
+    if (isUnmounted || session !== sessionGeneration || handleSessionExpiry(error)) return
+  }
+  const anchorDate = todayIsoDate.value
+  const read = beginTrainingRead(anchorDate)
+  const [todayResult, recommendationsResult, plansResult, racesResult, integrationsResult] = await Promise.allSettled([
     getTodayContext(anchorDate),
     listRecommendations(),
     listTrainingPlans(),
     listRaceGoals(anchorDate, sixMonthWindowEnd(anchorDate)),
     listIntegrationConnections(),
-    getAthleteProfile(),
   ])
-  const results = [todayResult, recommendationsResult, plansResult, racesResult, integrationsResult, profileResult]
+  finishTrainingRead(read)
+  if (isUnmounted || session !== sessionGeneration) return
+  if (anchorDate !== todayIsoDate.value) {
+    await hydrateFromBackend()
+    return
+  }
+  if (!isCurrentTrainingRead(read)) return
+  const results = [todayResult, recommendationsResult, plansResult, racesResult, integrationsResult]
   if (results.some((result) => result.status === 'rejected' && handleSessionExpiry(result.reason))) {
     return
   }
 
-  if (todayResult.status === 'fulfilled') {
-    applyTodayPayload(todayResult.value.data)
-  }
+  publishTrainingRead(read, todayResult, plansResult, racesResult)
   if (recommendationsResult.status === 'fulfilled') {
     applyRecommendationsPayload(Array.isArray(recommendationsResult.value.data) ? recommendationsResult.value.data : [])
-  }
-  if (plansResult.status === 'fulfilled') {
-    applyTrainingPlansPayload(Array.isArray(plansResult.value.data) ? plansResult.value.data : [])
-  }
-  if (racesResult.status === 'fulfilled') {
-    applyRaceGoalsPayload(Array.isArray(racesResult.value.data) ? racesResult.value.data : [])
   }
   if (integrationsResult.status === 'fulfilled') {
     applyIntegrationsPayload(Array.isArray(integrationsResult.value.data) ? integrationsResult.value.data : [])
   }
-  if (profileResult.status === 'fulfilled') {
-    applyAthleteProfilePayload(profileResult.value.data)
-  }
-  hasBackendHydrated.value = true
 }
 
 function applyAthleteProfilePayload(profile: AthleteProfileResponse) {
@@ -1664,10 +1831,7 @@ function applyTodayPayload(payload: Record<string, unknown>) {
   }
 
   const workouts = Array.isArray(payload.scheduled_workouts) ? payload.scheduled_workouts : []
-  const mappedWorkouts = workouts.map(mapWorkout).filter((workout): workout is WorkoutSummary => workout !== null)
-  if (mappedWorkouts.length) {
-    apiTodayWorkout.value = mappedWorkouts[0]
-  }
+  apiTodayWorkoutPayload.value = workouts.map(asRecord).find((workout) => workout !== undefined) ?? null
 
   const recovery = payload.recovery as Record<string, unknown> | undefined
   const trainingLoad = payload.training_load as Record<string, unknown> | undefined
@@ -1698,18 +1862,11 @@ function applyRecommendationsPayload(items: Array<Record<string, unknown>>) {
   }
 }
 
-function applyTrainingPlansPayload(items: Array<Record<string, unknown>>) {
-  const currentPlan = selectCurrentTrainingPlan(items)
-  const workouts = currentPlan && Array.isArray(currentPlan.workouts) ? currentPlan.workouts : []
-  apiWorkouts.value = workouts.map(mapWorkout).filter((workout): workout is WorkoutSummary => workout !== null)
-  apiPlanPhases.value = currentPlan ? mapPhaseSegments(currentPlan.metadata) : []
+function applyTrainingPlansPayload(items: TrainingPlanResponse[]) {
+  apiTrainingPlans.value = items
 }
 
-function selectCurrentTrainingPlan(items: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
-  return items.find((plan) => plan.status === 'active')
-}
-
-function mapPhaseSegments(metadata: unknown): PlanPhaseTimelineSegment[] {
+function mapPhaseSegments(metadata: unknown): Array<PlanPhaseTimelineSegment & { startsOn: string; endsOn: string }> {
   const phaseSegments = asRecord(metadata)?.phase_segments
   const segments = Array.isArray(phaseSegments) ? phaseSegments : []
   return segments.flatMap((rawSegment) => {
@@ -1725,6 +1882,8 @@ function mapPhaseSegments(metadata: unknown): PlanPhaseTimelineSegment[] {
       label: trainingPlanPhaseLabel(segment.phase),
       focus: typeof segment.focus === 'string' && segment.focus.trim() ? segment.focus : trainingPlanPhaseFocus(segment.phase),
       dateRange: formatPhaseDateRange(segment.starts_on, segment.ends_on),
+      startsOn: segment.starts_on,
+      endsOn: segment.ends_on,
     }
   })
 }
@@ -1734,7 +1893,13 @@ function isTrainingPlanPhase(value: unknown): value is TrainingPlanPhase {
 }
 
 function isIsoDate(value: unknown): value is string {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
+}
+
+function addCalendarDays(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
 }
 
 function trainingPlanPhaseLabel(phase: TrainingPlanPhase): string {
@@ -1814,7 +1979,8 @@ function mapWorkout(raw: unknown): WorkoutSummary | null {
     id: String(workout.id || scheduledFor || crypto.randomUUID()),
     weekday: formatWeekday(scheduledFor),
     dateLabel: formatDateLabel(scheduledFor),
-    type: formatWorkoutType(String(workout.workout_type || 'workout')),
+    scheduledFor,
+    type: typeof workout.display_name === 'string' && workout.display_name.trim() ? workout.display_name : formatWorkoutType(String(workout.workout_type || 'workout')),
     purpose: String(workout.purpose || workout.workout_type || 'Training session'),
     distance: workout.planned_distance_meters ? formatDistance(Number(workout.planned_distance_meters)) : undefined,
     duration: workout.planned_duration_minutes ? `${workout.planned_duration_minutes} 分` : undefined,
@@ -1967,11 +2133,12 @@ function formatWorkoutTarget(target?: WorkoutTarget | null): string {
     return ''
   }
   if (target.kind === 'pace') {
-    return [formatPaceZone(target.zone), formatPaceRange(target.paceRangeSecondsPerKm)].filter(Boolean).join(' · ')
+    const pace = formatPaceRange(target.paceRangeSecondsPerKm)
+    return [formatPaceZone(target.zone), pace || (target.rpe != null ? `RPE ${target.rpe}` : '')].filter(Boolean).join(' · ')
   }
   if (target.kind === 'heart_rate') {
     const range = target.heartRateRangeBpm && target.heartRateRangeBpm.length >= 2 ? `${target.heartRateRangeBpm[0]}-${target.heartRateRangeBpm[1]} bpm` : ''
-    return [target.heartRateZone || 'Heart rate', range].filter(Boolean).join(' · ')
+    return [target.heartRateZone || 'Heart rate', range || (target.rpe != null ? `RPE ${target.rpe}` : '')].filter(Boolean).join(' · ')
   }
   return target.rpe ? `RPE ${target.rpe}` : 'RPE'
 }
@@ -2304,6 +2471,7 @@ function shouldRequireAuth(): boolean {
           <p class="section-label">Error</p>
           <h3>今天資料載入失敗</h3>
           <p>請稍後再試，或先前往資料連接檢查同步狀態。</p>
+          <AppButton v-if="todayReadFailed" tone="neutral" @click="ensureCurrentToday">重新讀取今日資料</AppButton>
           <AppButton tone="neutral" @click="showView('data')">檢查資料</AppButton>
         </article>
 
@@ -2516,22 +2684,31 @@ function shouldRequireAuth(): boolean {
           <div class="plan-journey__intro">
             <span class="card-kicker">目前訓練週期</span>
             <strong>{{ currentPlanPhase.label }}</strong>
-            <p>{{ currentPlanPhase.summary }}。有比賽時 Johnny 會把目標放進旅程；沒有比賽時，這裡仍會用訓練週期安排接下來的節奏。</p>
-          </div>
-          <div class="plan-journey__track" data-testid="plan-journey-track" aria-hidden="true"></div>
-          <article
-            v-for="phase in journeyPhases"
-            :key="phase.id"
-            class="plan-journey__stop"
-            :class="`plan-journey__stop--${phase.status}`"
-            data-testid="plan-journey-stop"
-          >
-            <span class="plan-journey__node" data-testid="plan-journey-node"></span>
-            <div class="plan-journey__meta">
-              <span>{{ formatPlanPhaseLabel(phase.label) }}</span>
-              <strong>{{ phase.summary }}</strong>
+            <p>{{ currentPlanPhase.summary }}</p>
+            <div v-if="recoveryWindow" data-testid="plan-recovery-window" role="status">
+              <p>{{ recoveryWindow.startsOn }} - {{ recoveryWindow.endsOn }} · {{ userTimezone }}</p>
+              <p>上一份計畫已結束，這七天用於恢復，不是新的訓練計畫。第 {{ recoveryWindow.day }} / 7 天</p>
+              <p v-if="activePlan && activePlan.starts_on > todayIsoDate">下一份計畫已排定於 {{ activePlan.starts_on }} 開始。</p>
+              <p v-else-if="inFlightPlanRegeneration">下一份計畫產生中；恢復週結束後，預定 {{ addCalendarDays(recoveryWindow.endsOn, 1) }} 開始。</p>
+              <p v-else-if="recoveryWindow.day === 7">今天是恢復週最後一天，可準備下一份計畫，最早 {{ addCalendarDays(recoveryWindow.endsOn, 1) }} 開始。</p>
             </div>
-          </article>
+          </div>
+          <div class="plan-journey__phases" :class="{ 'plan-journey__phases--empty': !journeyPhases.length }" data-testid="plan-journey-phases">
+            <div class="plan-journey__track" data-testid="plan-journey-track" aria-hidden="true"></div>
+            <article
+              v-for="phase in journeyPhases"
+              :key="phase.id"
+              class="plan-journey__stop"
+              :class="`plan-journey__stop--${phase.status}`"
+              data-testid="plan-journey-stop"
+            >
+              <span class="plan-journey__node" data-testid="plan-journey-node"></span>
+              <div class="plan-journey__meta">
+                <span>{{ formatPlanPhaseLabel(phase.label) }}</span>
+                <strong>{{ phase.summary }}</strong>
+              </div>
+            </article>
+          </div>
           <template v-if="upcomingRaceEntries.length">
             <article v-for="race in upcomingRaceEntries" :key="`${race.name}-${race.date}`" class="plan-race-goal">
               <strong>{{ race.name }}</strong>

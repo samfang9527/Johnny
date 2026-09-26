@@ -2231,6 +2231,10 @@ button:disabled {
   background: color-mix(in srgb, var(--color-soft-mint) 44%, var(--color-card-white));
 }
 
+.plan-journey__phases {
+  display: contents;
+}
+
 .plan-journey__intro strong {
   color: var(--color-deep-green);
   font-family: var(--font-display);
@@ -2564,6 +2568,27 @@ button:disabled {
 }
 
 @media (max-width: 780px) {
+  .plan-training-journey {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plan-training-journey .plan-journey__phases {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(9rem, 1fr));
+    gap: inherit;
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .plan-training-journey .plan-journey__intro {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .plan-training-journey .plan-journey__phases--empty {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .top-nav {
     position: fixed;
     right: 0;

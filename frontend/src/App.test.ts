@@ -147,6 +147,7 @@ describe('Johnny product shell', () => {
 
   it('uses a fixed timezone dropdown in Athlete settings', async () => {
     const wrapper = mount(App)
+    await flushPromises()
 
     await wrapper.get('button[data-view="athlete"]').trigger('click')
 

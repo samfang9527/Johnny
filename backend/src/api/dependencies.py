@@ -173,6 +173,7 @@ def build_request_companion_agent(
             prompt_version="running-companion-v1",
             provider="local",
             model=model or "deterministic-local-companion",
+            transaction_factory=session.begin_nested,
         )
     settings = load_llm_settings()
     if settings is not None:
@@ -181,6 +182,7 @@ def build_request_companion_agent(
             tools=tools,
             prompt_version="running-companion-v1",
             settings=settings,
+            transaction_factory=session.begin_nested,
         )
     return RunningCompanionAgent(
         run_store=SqlAlchemyAgentRunRepository(session),
@@ -189,4 +191,5 @@ def build_request_companion_agent(
         prompt_version="running-companion-v1",
         provider="local",
         model="deterministic-local-companion",
+        transaction_factory=session.begin_nested,
     )

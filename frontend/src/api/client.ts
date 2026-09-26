@@ -15,6 +15,7 @@ import type {
   TrainingPlanRegenerationOptions,
   TrainingPlanRegenerationRequest,
   TrainingPlanRegenerationStartResponse,
+  TrainingPlanResponse,
 } from '../types'
 
 export function getApiBaseUrl(): string {
@@ -138,7 +139,7 @@ export function listRecommendations(): Promise<{ data: Array<Record<string, unkn
   return getJson('/recommendations')
 }
 
-export function listTrainingPlans(): Promise<{ data: Array<Record<string, unknown>> }> {
+export function listTrainingPlans(): Promise<{ data: TrainingPlanResponse[] }> {
   return getJson('/training-plans')
 }
 

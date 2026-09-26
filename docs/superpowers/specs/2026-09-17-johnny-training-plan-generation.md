@@ -60,6 +60,7 @@ Rules:
 - The calendar day uses Athlete Baseline timezone.
 - If Athlete Baseline has no timezone, the server date is the fallback.
 - Only a successfully created new Active Projection consumes quota.
+- Attribute success to the athlete-local activation/completion day, even when the request was queued before midnight. Preserve the request day separately for request identity; retrying the same `client_request_id` still returns the same run.
 - Failed runs, validation failures, queue failures, and in-flight returns do not consume quota.
 - Background generation does not consume quota.
 - This quota model must be implementation-ready for future paid-tier expansion.
@@ -94,6 +95,7 @@ Background generation:
 - The Recovery Window lasts seven full days.
 - On the seventh Recovery Window day, Johnny may generate the next projection.
 - The generated projection starts on the eighth day after the previous projection ended.
+- For a delayed background retry, use the later of that eighth day and athlete-local tomorrow; never backdate the replacement projection.
 
 ## Background Generation
 
@@ -347,6 +349,7 @@ Plan display:
 - Uses `metadata.phase_segments` for the journey timeline.
 - Displays workout phase on workout cards or detail surfaces where useful.
 - Renders structured workout steps in the existing workout detail modal.
+- Shows the seven inclusive days after an ended projection as a distinct Recovery Window, with dates and current recovery day. It is not a Plan Phase or an Active Projection. A covering replacement projection takes precedence.
 
 ## Athlete Baseline Requirements
 

@@ -298,17 +298,20 @@ def _process_task(session: Session, task_id: str) -> None:
 
     workflow_input = dict(payload["input"])
     try:
-        run, workflow_input = _refresh_scheduled_training_plan_context(
-            session,
-            runs=runs,
-            run=run,
-            workflow_name=workflow_name,
-            workflow_input=workflow_input,
-        )
-        if workflow_input != payload["input"]:
-            task.payload = {**payload, "input": dict(workflow_input)}
-            session.flush()
-        result = _dispatch_workflow(session, run, workflow_name, workflow_input)
+        with session.begin_nested():
+            run, workflow_input = _refresh_scheduled_training_plan_context(
+                session,
+                runs=runs,
+                run=run,
+                workflow_name=workflow_name,
+                workflow_input=workflow_input,
+            )
+            if workflow_input != payload["input"]:
+                task.payload = {**payload, "input": dict(workflow_input)}
+                session.flush()
+            result = _dispatch_workflow(session, run, workflow_name, workflow_input)
+            if result.status == "completed":
+                queue.complete(task_id, now=_utc_now())
     except Exception as exc:
         queue.fail(
             task_id,
@@ -320,9 +323,7 @@ def _process_task(session: Session, task_id: str) -> None:
         )
         runs.fail_run(run.fail(error_type=exc.__class__.__name__, error_message=str(exc)))
         return
-    if result.status == "completed":
-        queue.complete(task_id, now=_utc_now())
-    else:
+    if result.status != "completed":
         queue.fail(
             task_id,
             error_type=result.error_type or "WorkflowFailed",

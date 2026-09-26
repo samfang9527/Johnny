@@ -760,6 +760,10 @@ Expected: PASS.
 
 Stage goal: prove the staged work integrates without regressing existing flows.
 
+Completed 2026-09-27 after scoped acceptance repairs and independent spec/quality
+reviews. Final evidence and live-environment limitations are recorded in
+`docs/superpowers/plans/2026-09-26-training-plan-stage7-verification.md`.
+
 ### Task 17: Backend Contract Sweep
 
 **Files:**
@@ -768,7 +772,7 @@ Stage goal: prove the staged work integrates without regressing existing flows.
 **Interfaces:**
 - Consumes all backend stages.
 
-- [ ] **Step 1: Run focused backend suites**
+- [x] **Step 1: Run focused backend suites**
 
 Run:
 
@@ -778,7 +782,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 2: Run integration backend suites**
+- [x] **Step 2: Run integration backend suites**
 
 Run:
 
@@ -788,7 +792,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 3: Run migration tests**
+- [x] **Step 3: Run migration tests**
 
 Run:
 
@@ -806,7 +810,7 @@ Expected: PASS.
 **Interfaces:**
 - Consumes all frontend stages.
 
-- [ ] **Step 1: Run component tests**
+- [x] **Step 1: Run component tests**
 
 Run:
 
@@ -816,7 +820,7 @@ cd frontend && npm run test -- App.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 2: Run build**
+- [x] **Step 2: Run build**
 
 Run:
 
@@ -826,7 +830,7 @@ cd frontend && npm run build
 
 Expected: PASS.
 
-- [ ] **Step 3: Manual smoke**
+- [x] **Step 3: Manual smoke**
 
 Start dev server:
 
@@ -846,14 +850,14 @@ Expected: Plan page opens, regeneration sheet opens, quota state displays, and c
 **Interfaces:**
 - Consumes final implementation.
 
-- [ ] **Step 1: Compare implementation against spec**
+- [x] **Step 1: Compare implementation against spec**
 
 Read every heading in the spec and verify the behavior exists in code or tests.
 
-- [ ] **Step 2: Update docs for intentional changes**
+- [x] **Step 2: Update docs for intentional changes**
 
 Only edit docs when implementation changes a settled decision. Do not backfill incidental implementation details into `CONTEXT.md`.
 
-- [ ] **Step 3: Final status**
+- [x] **Step 3: Final status**
 
 Prepare final implementation summary by stage, including any skipped verification command and reason.

@@ -71,6 +71,7 @@ class WorkoutResponse(BaseModel):
     id: str | None
     scheduled_for: date
     workout_type: str
+    display_name: str | None = None
     purpose: str
     planned_duration_minutes: int | None = None
     planned_distance_meters: int | None = None

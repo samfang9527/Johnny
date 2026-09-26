@@ -360,6 +360,7 @@ class Workout:
             "id": self.id,
             "scheduled_for": self.scheduled_for.isoformat(),
             "workout_type": self.workout_type,
+            "display_name": self.display_name,
             "purpose": self.purpose,
             "planned_duration_minutes": self.planned_duration_minutes,
             "planned_distance_meters": self.planned_distance_meters,
@@ -373,6 +374,23 @@ class Workout:
             "compact_summary": self.compact_summary,
             "status": self.status,
         }
+
+    @property
+    def display_name(self) -> str:
+        label = self.workout_type.replace("_", " ").capitalize()
+        for step in self.steps:
+            if step.step_type == "repeat":
+                work = next((item for item in step.steps if item.step_type in {"work", "hill", "stride"}), None)
+                if work is not None:
+                    workload = f"{work.distance_meters} m" if work.distance_meters else f"{work.duration_seconds} s"
+                    return f"{label} {step.repeat_count} x {workload}"
+        main = next((step for step in self.steps if step.step_type == "work"), None)
+        if main is not None:
+            workload = f"{main.distance_meters} m" if main.distance_meters else f"{main.duration_seconds} s"
+            return f"{label} {workload}"
+        if self.planned_distance_meters is not None:
+            return f"{label} {self.planned_distance_meters / 1000:g} km"
+        return f"{label} {self.planned_duration_minutes} min"
 
     @property
     def compact_summary(self) -> str | None:

@@ -162,6 +162,8 @@ def _skeleton(**overrides):
         "max_runs_per_week": 3,
         "max_hard_sessions_per_week": 2,
         "injury_status": "none",
+        "current_weekly_mileage_km": 40,
+        "experience_level": "advanced",
     }
     arguments.update(overrides)
     return build_plan_skeleton(**arguments)
@@ -174,6 +176,39 @@ def test_build_plan_skeleton_creates_four_week_maintenance_block() -> None:
     assert skeleton.phase_segments == [
         {"phase": "maintenance", "starts_on": "2027-01-04", "ends_on": "2027-01-31"}
     ]
+
+
+def test_missing_baseline_uses_low_risk_load_and_capacity() -> None:
+    skeleton = _skeleton(current_weekly_mileage_km=None, experience_level=None)
+    assert max(w.planned_duration_minutes for w in skeleton.workouts) <= 30
+    assert not any(w.workout_type in {"interval", "tempo", "hill"} for w in skeleton.workouts)
+
+
+def test_mileage_experience_and_maintenance_cycle_determine_load() -> None:
+    beginner = _skeleton(current_weekly_mileage_km=20, experience_level="beginner")
+    experienced = _skeleton(current_weekly_mileage_km=40, experience_level="advanced")
+    same_mileage = _skeleton(current_weekly_mileage_km=40, experience_level="beginner")
+    total = lambda s: sum(w.planned_duration_minutes for w in s.workouts)
+    assert total(beginner) < total(same_mileage) < total(experienced)
+    weeks = [sum(w.planned_duration_minutes for w in experienced.workouts if (w.scheduled_for - experienced.starts_on).days // 7 == i) for i in range(4)]
+    assert weeks[0] < weeks[1] < weeks[2]
+    assert weeks[3] < weeks[0]
+
+
+def test_race_distance_changes_key_sessions_and_long_run_progression() -> None:
+    args = dict(plan_type="race", race_date=date(2027, 2, 28), ends_on=date(2027, 2, 28), current_weekly_mileage_km=40, experience_level="advanced")
+    short = _skeleton(**args, race_distance_meters=5000)
+    long = _skeleton(**args, race_distance_meters=42195)
+    assert short.workouts != long.workouts
+    assert sum(w.planned_duration_minutes for w in long.workouts if w.workout_type == "long_run") > sum(w.planned_duration_minutes for w in short.workouts if w.workout_type == "long_run")
+    assert any(w.workout_type == "interval" for w in short.workouts)
+    assert any(w.workout_type == "tempo" for w in long.workouts)
+
+
+def test_far_future_race_stays_aerobic_without_peak_or_taper() -> None:
+    skeleton = _skeleton(plan_type="race", race_date=date(2027, 12, 1), ends_on=date(2027, 4, 25), current_weekly_mileage_km=40, experience_level="advanced")
+    assert {s["phase"] for s in skeleton.phase_segments} <= {"base", "build"}
+    assert not any(w.workout_type in {"interval", "tempo", "hill"} for w in skeleton.workouts)
 
 
 def test_build_plan_skeleton_creates_contiguous_race_phase_coverage() -> None:
@@ -380,6 +415,12 @@ def _complete_workout(skeleton_workout, *, id: str | None = None) -> Workout:
             ),
             WorkoutStep.create(step_type="cooldown", duration_seconds=600, target=easy_target),
         )
+    if steps:
+        total = sum(step.total_duration_seconds for step in steps)
+        factor = skeleton_workout.planned_duration_minutes * 60 / total
+        def scale(step):
+            return replace(step, duration_seconds=max(1, round(step.duration_seconds * factor)) if step.duration_seconds else None, steps=tuple(scale(s) for s in step.steps))
+        steps = tuple(scale(step) for step in steps)
     return Workout.create(
         id=id,
         scheduled_for=skeleton_workout.scheduled_for,

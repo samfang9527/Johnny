@@ -211,6 +211,7 @@ export interface WorkoutSummary {
   id: string
   weekday: string
   dateLabel: string
+  scheduledFor?: string
   type: string
   purpose: string
   distance?: string
