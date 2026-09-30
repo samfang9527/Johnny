@@ -41,6 +41,7 @@ def get_start_regeneration_handler(session: SessionDependency) -> StartRegenerat
         profiles=athlete_races,
         race_goals=athlete_races,
         runs=runs,
+        training_plans=SqlAlchemyTrainingPlanRepository(session),
         queue_agent_runs=QueueAgentRunHandler(
             runs=runs,
             queue=tasks,

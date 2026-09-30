@@ -98,6 +98,17 @@ def _manual_state(
     return athlete_today, races, user_runs, quota
 
 
+def _current_plan_race_id(
+    training_plans: RegenerationPlans | None, user_id: str, races: list[RaceGoal],
+) -> str | None:
+    if training_plans is None:
+        return None
+    plan = training_plans.get_current_plan_for_user(user_id)
+    if plan is None or plan.user_id != user_id:
+        return None
+    return next((race.id for race in races if race.user_id == user_id and race.id == plan.race_id), None)
+
+
 class GetRegenerationOptionsHandler:
     def __init__(
         self, *, profiles: RegenerationProfiles, race_goals: RegenerationRaceGoals,
@@ -115,11 +126,7 @@ class GetRegenerationOptionsHandler:
             user_id=user_id, today=today, profiles=self._profiles,
             race_goals=self._race_goals, runs=self._runs, current_instant=self._current_instant,
         )
-        race_id = None
-        if self._training_plans is not None:
-            plan = self._training_plans.get_current_plan_for_user(user_id)
-            if plan is not None and plan.user_id == user_id:
-                race_id = next((race.id for race in races if race.user_id == user_id and race.id == plan.race_id), None)
+        race_id = _current_plan_race_id(self._training_plans, user_id, races)
         strategy = choose_regeneration_strategy(
             races, starts_on=athlete_today + timedelta(days=1),
             explicit_race_id=race_id, force_maintenance=False,
@@ -134,13 +141,14 @@ class GetRegenerationOptionsHandler:
 class StartRegenerationHandler:
     def __init__(
         self, *, profiles: RegenerationProfiles, race_goals: RegenerationRaceGoals,
-        runs: RegenerationRuns,
+        runs: RegenerationRuns, training_plans: RegenerationPlans | None = None,
         queue_agent_runs: RegenerationQueue, lock_user: Callable[[str], None],
         current_instant: Callable[[], datetime] | None = None,
     ) -> None:
         self._profiles = profiles
         self._race_goals = race_goals
         self._runs = runs
+        self._training_plans = training_plans
         self._queue_agent_runs = queue_agent_runs
         self._lock_user = lock_user
         self._current_instant = current_instant or (lambda: datetime.now(timezone.utc))
@@ -151,9 +159,12 @@ class StartRegenerationHandler:
             user_id=user_id, today=today, profiles=self._profiles,
             race_goals=self._race_goals, runs=self._runs, current_instant=self._current_instant,
         )
+        race_id = request.race_id
+        if request.plan_type == "race" and race_id is None:
+            race_id = _current_plan_race_id(self._training_plans, user_id, races)
         strategy = choose_regeneration_strategy(
             races, starts_on=athlete_today + timedelta(days=1),
-            explicit_race_id=request.race_id, force_maintenance=request.plan_type == "maintenance",
+            explicit_race_id=race_id, force_maintenance=request.plan_type == "maintenance",
         )
         admission = decide_regeneration_admission(runs, quota, request.client_request_id)
         if admission.action == "reuse":
@@ -228,7 +239,7 @@ class TrainingPlanRegenerationService:
     ) -> RegenerationStartResult:
         return StartRegenerationHandler(
             profiles=self._profiles, race_goals=self._race_goals,
-            runs=self._runs,
+            runs=self._runs, training_plans=self._training_plans,
             queue_agent_runs=self._queue_agent_runs, lock_user=lambda user_id: None,
             current_instant=self._current_instant,
         ).handle(user_id=user_id, request=request, today=today)

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from src.application.async_agent_runs import QueueAgentRunHandler
 from src.application.interfaces.task_queue import AgentTask, TaskEnvelope
-from src.application.training_plan_regeneration import RegenerationRequest, TrainingPlanRegenerationService
+from src.application.training_plan_regeneration import RegenerationRequest, StartRegenerationHandler, TrainingPlanRegenerationService
 from src.domain.agent_runtime import AgentRun
 from src.domain.athlete_race import AthleteProfile, RaceGoal
 from src.domain.training_plan import TrainingPlan
@@ -101,6 +101,39 @@ def test_missing_explicit_race_does_not_queue_maintenance_instead() -> None:
     assert result.default_strategy.reason == "explicit_race_unavailable"
     assert result.run is None
     assert tasks.items == []
+
+
+def test_start_reads_current_plan_after_lock_only_for_omitted_race_id() -> None:
+    races = [_race("primary", date(2026, 11, 1)), _race("current", date(2026, 12, 1), priority="secondary")]
+    current_plan = replace(_active_plan(ends_on=date(2026, 10, 15)), race_id="current")
+
+    for request, expected_events, expected_race in (
+        (_request("default"), ["lock", "read"], "current"),
+        (_request("explicit", race_id="primary"), ["lock"], "primary"),
+        (_request("maintenance", plan_type="maintenance"), ["lock"], None),
+    ):
+        events: list[str] = []
+        runs = _FakeRunStore()
+        tasks = _FakeTaskQueue()
+
+        class RecordingPlans:
+            def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
+                events.append("read")
+                return current_plan
+
+        handler = StartRegenerationHandler(
+            profiles=_FakeProfiles(_profile()), race_goals=_FakeRaces(races),
+            training_plans=RecordingPlans(), runs=runs,
+            queue_agent_runs=QueueAgentRunHandler(runs=runs, queue=tasks, prompt_version="v1"),
+            lock_user=lambda user_id: events.append("lock"),
+            current_instant=lambda: CURRENT_INSTANT,
+        )
+
+        result = handler.handle(user_id="athlete-1", request=request, today=TODAY)
+
+        assert events == expected_events
+        assert result.default_strategy.race_id == expected_race
+        assert tasks.items[0].payload["input"]["race_id"] == expected_race
 
 
 def test_start_reuses_an_existing_in_flight_manual_run() -> None:

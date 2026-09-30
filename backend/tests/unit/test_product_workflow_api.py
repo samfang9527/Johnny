@@ -670,6 +670,50 @@ def test_training_plan_regeneration_options_returns_quota_strategy_and_run_slots
     assert data["run"] is None
 
 
+def test_regeneration_without_race_id_uses_options_current_plan_race() -> None:
+    from datetime import date, timedelta
+
+    from sqlalchemy import select
+
+    from src.infrastructure.database.models import AgentRunModel, TrainingPlanModel
+
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "current-plan-race-user"}
+    race_date = (date.today() + timedelta(days=80)).isoformat()
+    primary = client.post(
+        "/api/v1/races", headers=headers,
+        json={"name": "Primary", "race_date": race_date, "distance_meters": 21097, "priority": "primary"},
+    ).json()["data"]
+    current_race = client.post(
+        "/api/v1/races", headers=headers,
+        json={"name": "Current", "race_date": race_date, "distance_meters": 10000, "priority": "secondary"},
+    ).json()["data"]
+    with session_factory() as session:
+        session.add(TrainingPlanModel(
+            user_id="current-plan-race-user", race_id=current_race["id"], name="Active Projection",
+            starts_on=date.today(), ends_on=date.today() + timedelta(days=28), status="active",
+            metadata_json={},
+        ))
+        session.commit()
+
+    options = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+    started = client.post(
+        "/api/v1/training-plans/regenerations", headers=headers,
+        json={"client_request_id": "default-current-race", "plan_type": "race"},
+    )
+
+    assert primary["id"] != current_race["id"]
+    assert options.status_code == 200
+    assert started.status_code == 200
+    assert options.json()["data"]["default_strategy"]["race_id"] == current_race["id"]
+    assert started.json()["data"]["default_strategy"] == options.json()["data"]["default_strategy"]
+    with session_factory() as session:
+        run = session.scalar(select(AgentRunModel).where(
+            AgentRunModel.id == started.json()["data"]["run"]["run_id"]
+        ))
+        assert run.metadata_json["race_id"] == current_race["id"]
+
+
 def test_training_plan_regeneration_options_returns_exhausted_quota_payload() -> None:
     from datetime import date, datetime, timezone
 
