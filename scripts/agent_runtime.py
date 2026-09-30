@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import logging
-import os
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -108,9 +107,12 @@ def work_loop(session_factory, *, idle_timeout_seconds: float | None = None, int
         time.sleep(interval_seconds)
 
 
-def smoke(session: Session, *, user_id: str, timeout_seconds: float = 30.0, workflow: str = "conversation") -> int:
+def smoke(
+    session: Session, *, user_id: str, timeout_seconds: float = 30.0,
+    workflow: str = "conversation", live_openai: bool = False,
+) -> int:
     if workflow == "conversation":
-        run = build_request_companion_agent(session).run_conversation(
+        run = build_request_companion_agent(session, provider=None if live_openai else "local").run_conversation(
             user_id=user_id,
             message="How should I adjust today's training?",
         )
@@ -126,7 +128,7 @@ def smoke(session: Session, *, user_id: str, timeout_seconds: float = 30.0, work
             payload={"anchor_date": date.today().isoformat(), "force": True},
         )
     if workflow in {"training_plan_generation", "all"}:
-        _training_plan_queue_handler(session).queue_run(
+        (_training_plan_queue_handler(session) if live_openai else handler).queue_run(
             user_id=user_id,
             workflow_name="training_plan_generation",
             trigger_type="manual",
@@ -163,9 +165,7 @@ def main() -> int:
     args = parser.parse_args()
 
     live_openai = getattr(args, "live_openai", False)
-    if not live_openai:
-        os.environ.pop("LLM_PROVIDER", None)
-    elif load_llm_settings() is None:
+    if live_openai and load_llm_settings() is None:
         print("LLM_PROVIDER=openai, LLM_MODEL, and OPENAI_API_KEY or LLM_API_KEY are required.", file=sys.stderr)
         return 2
 
@@ -197,7 +197,10 @@ def main() -> int:
             session.commit()
             return 0
         if args.command == "smoke":
-            result = smoke(session, user_id=args.user_id, timeout_seconds=args.timeout_seconds, workflow=args.workflow)
+            result = smoke(
+                session, user_id=args.user_id, timeout_seconds=args.timeout_seconds,
+                workflow=args.workflow, live_openai=live_openai,
+            )
             session.commit()
             return result
     return 2

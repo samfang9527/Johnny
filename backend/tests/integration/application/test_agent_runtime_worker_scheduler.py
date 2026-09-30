@@ -674,6 +674,79 @@ def test_agent_runtime_cli_work_drain_does_not_require_smoke_openai_flag(tmp_pat
     assert "processed=0" in capsys.readouterr().out
 
 
+def test_agent_runtime_cli_worker_preserves_provider_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setattr(
+        sys, "argv",
+        ["agent_runtime.py", "--database-url", f"sqlite:///{tmp_path / 'worker.db'}", "work-drain"],
+    )
+
+    assert main() == 0
+    import os
+    assert os.environ["LLM_PROVIDER"] == "openai"
+
+
+def test_worker_uses_queued_local_provider_with_openai_environment(sqlite_session_factory, monkeypatch) -> None:
+    from src.api.dependencies import build_request_companion_agent
+    from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
+
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "changed-model")
+    with sqlite_session_factory() as session:
+        agent = build_request_companion_agent(session, provider="local", model="deterministic-local-companion")
+    assert isinstance(agent._model_gateway, LocalCompanionModelGateway)
+
+
+def test_worker_uses_queued_openai_model_not_current_environment(sqlite_session_factory, monkeypatch) -> None:
+    from src.api import dependencies
+
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "changed-model")
+    seen = []
+    monkeypatch.setattr(dependencies, "build_running_companion_agent", lambda **kwargs: seen.append(kwargs["settings"]) or object())
+    with sqlite_session_factory() as session:
+        dependencies.build_request_companion_agent(session, provider="openai", model="queued-model")
+    assert len(seen) == 1
+    assert seen[0].model == "queued-model"
+
+
+def test_worker_fails_queued_openai_run_without_key(sqlite_session_factory, monkeypatch) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        ensure_current_user(uow.session, CurrentUser(id="missing-worker-key"))
+        queued = QueueAgentRunHandler(
+            runs=SqlAlchemyAgentRunRepository(uow.session),
+            queue=SqlAlchemyAgentTaskQueue(uow.session),
+            prompt_version="running-companion-v1", provider="openai", model="queued-model",
+        ).queue_run(
+            user_id="missing-worker-key", workflow_name="training_plan_generation",
+            trigger_type="manual", idempotency_key="missing-worker-key",
+            payload={"plan_type": "base", "starts_on": "2027-01-01"},
+        )
+        assert work_drain(uow.session) == 1
+        run = uow.session.get(AgentRunModel, queued.run.id)
+        task = uow.session.scalar(select(AgentTaskModel).where(AgentTaskModel.payload["run_id"].as_string() == run.id))
+        assert run.status == "failed"
+        assert task.status == "failed"
+        assert run.provider == "openai"
+        assert "required" in run.error_message
+
+
+def test_worker_rejects_unknown_persisted_provider(sqlite_session_factory) -> None:
+    from src.api.dependencies import build_request_companion_agent
+
+    with sqlite_session_factory() as session:
+        try:
+            build_request_companion_agent(session, provider="other", model="unknown")
+        except ValueError as exc:
+            assert "provider" in str(exc).lower()
+        else:
+            assert False, "unknown provider should fail"
+
+
 def test_smoke_flow_queues_with_http_drains_worker_and_polls_completion(monkeypatch) -> None:
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     engine = create_engine(
