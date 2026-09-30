@@ -15,6 +15,32 @@ class LlmSettings:
     api_key: str
 
 
+def resolve_queued_training_plan_provider() -> tuple[str, str]:
+    provider = _normalized_env("LLM_PROVIDER")
+    if provider and provider not in ("openai", "local"):
+        raise LlmSettingsError(f"Unsupported LLM_PROVIDER: {provider}")
+
+    api_key = _env("LLM_API_KEY") or _env("OPENAI_API_KEY")
+    if not api_key:
+        return "local", "deterministic-local-companion"
+
+    model = _env("LLM_MODEL")
+    if not model:
+        raise LlmSettingsError("LLM_MODEL is required when an API key is configured")
+    return "openai", model
+
+
+def load_openai_settings_for_queued_model(model: str) -> LlmSettings:
+    persisted_model = model.strip() if model else None
+    if not persisted_model:
+        raise LlmSettingsError("Queued OpenAI model is required")
+
+    api_key = _env("LLM_API_KEY") or _env("OPENAI_API_KEY")
+    if not api_key:
+        raise LlmSettingsError("OPENAI_API_KEY or LLM_API_KEY is required for queued OpenAI runs")
+    return LlmSettings(provider="openai", model=persisted_model, api_key=api_key)
+
+
 def load_llm_settings() -> LlmSettings | None:
     provider = _normalized_env("LLM_PROVIDER")
     if not provider:
