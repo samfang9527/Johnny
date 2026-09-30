@@ -89,6 +89,25 @@ def test_schedule_once_enqueues_today_daily_jobs_for_context_ready_active_users(
     assert daily_check_tasks[0].payload == {"anchor_date": "2027-01-28"}
 
 
+def test_scheduler_training_plan_queue_uses_resolved_provider(sqlite_session_factory, monkeypatch) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        ensure_current_user(uow.session, CurrentUser(id="scheduled-provider-user"))
+        handler = agent_runtime._training_plan_queue_handler(uow.session)
+        result = handler.queue_run(
+            user_id="scheduled-provider-user",
+            workflow_name="training_plan_generation",
+            trigger_type="scheduled",
+            idempotency_key="scheduled-provider-test",
+            payload={"plan_type": "base", "starts_on": "2027-01-01"},
+        )
+        uow.commit()
+
+    assert (result.run.provider, result.run.model) == ("openai", "test-model")
+
+
 def test_work_drain_daily_check_queues_one_background_generation_for_repeated_checks(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     anchor = datetime.now(timezone.utc).date()

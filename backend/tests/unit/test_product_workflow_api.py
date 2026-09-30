@@ -714,6 +714,54 @@ def test_regeneration_without_race_id_uses_options_current_plan_race() -> None:
         assert run.metadata_json["race_id"] == current_race["id"]
 
 
+def test_regeneration_queue_pins_provider_and_reuses_run_after_environment_change(monkeypatch) -> None:
+    from sqlalchemy import select
+
+    from src.infrastructure.database.models import AgentRunModel
+
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "provider-regeneration-user"}
+    payload = {"client_request_id": "provider-request", "plan_type": "maintenance"}
+    first = client.post("/api/v1/training-plans/regenerations", headers=headers, json=payload)
+    monkeypatch.delenv("LLM_API_KEY")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    second = client.post("/api/v1/training-plans/regenerations", headers=headers, json=payload)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["data"]["run"]["run_id"] == second.json()["data"]["run"]["run_id"]
+    with session_factory() as session:
+        run = session.scalar(select(AgentRunModel).where(
+            AgentRunModel.id == first.json()["data"]["run"]["run_id"]
+        ))
+        assert (run.provider, run.model) == ("openai", "test-model")
+
+
+def test_raw_training_plan_queue_selects_openai_without_changing_daily_provider(monkeypatch) -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "provider-raw-user"}
+    training = client.post(
+        "/api/v1/agent-runs/training-plan-generation", headers=headers,
+        json={"plan_type": "base", "starts_on": "2027-02-01"},
+    )
+    daily = client.post(
+        "/api/v1/agent-runs/daily-recommendation", headers=headers,
+        json={"anchor_date": "2027-02-01"},
+    )
+
+    assert training.status_code == daily.status_code == 200
+    training_run = client.get(training.json()["data"]["poll_url"], headers=headers).json()["data"]
+    daily_run = client.get(daily.json()["data"]["poll_url"], headers=headers).json()["data"]
+    assert (training_run["provider"], training_run["model"]) == ("openai", "test-model")
+    assert (daily_run["provider"], daily_run["model"]) == ("local", "deterministic-local-companion")
+
+
 def test_training_plan_regeneration_options_returns_exhausted_quota_payload() -> None:
     from datetime import date, datetime, timezone
 

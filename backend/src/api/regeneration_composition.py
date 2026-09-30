@@ -17,6 +17,7 @@ from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueu
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.models import UserModel
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
+from src.infrastructure.llm.settings import resolve_queued_training_plan_provider
 
 
 def get_regeneration_options_handler(session: SessionDependency) -> GetRegenerationOptionsHandler:
@@ -37,6 +38,7 @@ def get_start_regeneration_handler(session: SessionDependency) -> StartRegenerat
     athlete_races = SqlAlchemyAthleteRaceRepository(session)
     runs = SqlAlchemyAgentRunRepository(session)
     tasks = SqlAlchemyAgentTaskQueue(session)
+    provider, model = resolve_queued_training_plan_provider()
     return StartRegenerationHandler(
         profiles=athlete_races,
         race_goals=athlete_races,
@@ -46,8 +48,8 @@ def get_start_regeneration_handler(session: SessionDependency) -> StartRegenerat
             runs=runs,
             queue=tasks,
             prompt_version="running-companion-v1",
-            provider="local",
-            model="deterministic-local-companion",
+            provider=provider,
+            model=model,
         ),
         lock_user=lambda user_id: _lock_user(session, user_id),
     )

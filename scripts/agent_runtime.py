@@ -28,7 +28,7 @@ from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthlet
 from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, UserModel
 from src.infrastructure.database.session import create_database_engine, create_session_factory, get_database_url
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
-from src.infrastructure.llm.settings import load_llm_settings
+from src.infrastructure.llm.settings import load_llm_settings, resolve_queued_training_plan_provider
 
 
 DEFAULT_CLAIM_TIMEOUT = timedelta(minutes=5)
@@ -126,7 +126,7 @@ def smoke(session: Session, *, user_id: str, timeout_seconds: float = 30.0, work
             payload={"anchor_date": date.today().isoformat(), "force": True},
         )
     if workflow in {"training_plan_generation", "all"}:
-        handler.queue_run(
+        _training_plan_queue_handler(session).queue_run(
             user_id=user_id,
             workflow_name="training_plan_generation",
             trigger_type="manual",
@@ -213,6 +213,17 @@ def _queue_handler(session: Session) -> QueueAgentRunHandler:
     )
 
 
+def _training_plan_queue_handler(session: Session) -> QueueAgentRunHandler:
+    provider, model = resolve_queued_training_plan_provider()
+    return QueueAgentRunHandler(
+        runs=SqlAlchemyAgentRunRepository(session),
+        queue=SqlAlchemyAgentTaskQueue(session),
+        prompt_version="running-companion-v1",
+        provider=provider,
+        model=model,
+    )
+
+
 def _training_plan_regeneration_service(session: Session) -> TrainingPlanRegenerationService:
     athlete_races = SqlAlchemyAthleteRaceRepository(session)
     runs = SqlAlchemyAgentRunRepository(session)
@@ -223,7 +234,7 @@ def _training_plan_regeneration_service(session: Session) -> TrainingPlanRegener
         training_plans=SqlAlchemyTrainingPlanRepository(session),
         runs=runs,
         tasks=tasks,
-        queue_agent_runs=_queue_handler(session),
+        queue_agent_runs=_training_plan_queue_handler(session),
         current_instant=_utc_now,
     )
 
