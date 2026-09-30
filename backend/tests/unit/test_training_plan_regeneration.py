@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 
-from src.api.schemas.training_plan_regeneration import TrainingPlanRegenerationRequest
 from src.application.async_agent_runs import QueueAgentRunHandler
 from src.application.interfaces.task_queue import AgentTask, TaskEnvelope
-from src.application.training_plan_regeneration import TrainingPlanRegenerationService
+from src.application.training_plan_regeneration import RegenerationRequest, TrainingPlanRegenerationService
 from src.domain.agent_runtime import AgentRun
 from src.domain.athlete_race import AthleteProfile, RaceGoal
 from src.domain.training_plan import TrainingPlan
@@ -92,6 +91,16 @@ def test_failed_manual_regeneration_does_not_consume_quota() -> None:
     assert result.quota.available is True
     assert result.run is not None
     assert len(tasks.items) == 1
+
+
+def test_missing_explicit_race_does_not_queue_maintenance_instead() -> None:
+    service, _, tasks = _service()
+
+    result = service.start("athlete-1", _request("missing-race", race_id="gone"), TODAY)
+
+    assert result.default_strategy.reason == "explicit_race_unavailable"
+    assert result.run is None
+    assert tasks.items == []
 
 
 def test_start_reuses_an_existing_in_flight_manual_run() -> None:
@@ -494,8 +503,8 @@ def _active_plan(*, ends_on: date) -> TrainingPlan:
     )
 
 
-def _request(client_request_id: str, *, plan_type: str = "race") -> TrainingPlanRegenerationRequest:
-    return TrainingPlanRegenerationRequest(client_request_id=client_request_id, plan_type=plan_type)
+def _request(client_request_id: str, *, plan_type: str = "race", race_id: str | None = None) -> RegenerationRequest:
+    return RegenerationRequest(client_request_id=client_request_id, plan_type=plan_type, race_id=race_id)
 
 
 def _execution_key() -> str:

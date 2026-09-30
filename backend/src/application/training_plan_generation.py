@@ -16,9 +16,13 @@ from src.domain.training_plan import (
     WorkoutTarget,
     validate_phase_segments,
 )
+from src.domain.training_plan_regeneration import (
+    RaceStrategySelection,
+    projection_window,
+    select_race_strategy,
+)
 
 
-RACE_PRIORITY_RANK = {"primary": 0, "secondary": 1, "tune_up": 2}
 DEFAULT_TRAINING_DAYS = ("tuesday", "thursday", "sunday")
 DAY_INDEX = {
     "monday": 0,
@@ -30,13 +34,6 @@ DAY_INDEX = {
     "sunday": 6,
 }
 QUALITY_WORKOUT_TYPES = ("interval", "tempo", "hill")
-
-
-@dataclass(frozen=True)
-class RaceStrategySelection:
-    race_id: str | None
-    plan_type: str
-    reason: str
 
 
 @dataclass(frozen=True)
@@ -62,45 +59,6 @@ class CompletionRepairResult:
     repaired_week_indexes: list[int]
     repaired_workout_ids: list[str]
     reason: str | None
-
-
-def select_race_strategy(
-    race_goals: Sequence[dict],
-    anchor: date,
-    explicit_race_id: str | None,
-    force_maintenance: bool,
-) -> RaceStrategySelection:
-    if force_maintenance:
-        return RaceStrategySelection(race_id=None, plan_type="maintenance", reason="maintenance_forced")
-
-    future_races = [race for race in race_goals if _race_date(race) >= anchor]
-    if explicit_race_id is not None:
-        explicit_race = next((race for race in future_races if race.get("id") == explicit_race_id), None)
-        if explicit_race is not None:
-            return RaceStrategySelection(race_id=explicit_race_id, plan_type="race", reason="explicit_race")
-        return RaceStrategySelection(race_id=None, plan_type="maintenance", reason="explicit_race_unavailable")
-
-    ranked_races = [race for race in future_races if race.get("priority") in RACE_PRIORITY_RANK]
-    if not ranked_races:
-        return RaceStrategySelection(race_id=None, plan_type="maintenance", reason="no_future_race")
-
-    selected_race = min(
-        ranked_races,
-        key=lambda race: (RACE_PRIORITY_RANK[race["priority"]], _race_date(race)),
-    )
-    return RaceStrategySelection(race_id=selected_race.get("id"), plan_type="race", reason="priority_and_date")
-
-
-def projection_window(anchor: date, race_date: date | None, plan_type: str) -> tuple[date, date]:
-    if plan_type == "maintenance":
-        return anchor, anchor + timedelta(weeks=4) - timedelta(days=1)
-    if plan_type != "race":
-        raise ValueError(f"unsupported plan type: {plan_type}")
-    if race_date is None:
-        raise ValueError("race plan requires a race date")
-
-    horizon_end = anchor + timedelta(weeks=16) - timedelta(days=1)
-    return anchor, min(race_date, horizon_end)
 
 
 def effective_hard_session_limit(
@@ -636,10 +594,3 @@ def _phase_by_day(phase_segments: Sequence[dict]) -> dict[date, str]:
             phases[current_day] = segment["phase"]
             current_day += timedelta(days=1)
     return phases
-
-
-def _race_date(race: dict) -> date:
-    race_date = race["race_date"]
-    if isinstance(race_date, date):
-        return race_date
-    return date.fromisoformat(race_date)
