@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable, Literal
+from typing import Callable, Literal, Protocol
 
 from src.application.async_agent_runs import QueuedAgentRun
 from src.domain.agent_runtime import AgentRun
@@ -61,6 +61,138 @@ class BackgroundProjectionCandidate:
     strategy: RegenerationStrategy
 
 
+class RegenerationProfiles(Protocol):
+    def get_profile_for_user(self, user_id: str) -> AthleteProfile | None: ...
+
+
+class RegenerationRaceGoals(Protocol):
+    def list_race_goals_for_user(self, user_id: str, *, race_date_from: date) -> list[RaceGoal]: ...
+
+
+class RegenerationPlans(Protocol):
+    def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None: ...
+
+
+class RegenerationRuns(Protocol):
+    def list_runs_for_user(self, user_id: str, *, workflow_name: str) -> list[AgentRun]: ...
+
+
+class RegenerationQueue(Protocol):
+    def queue_run(
+        self, *, user_id: str, workflow_name: str, trigger_type: str,
+        idempotency_key: str, payload: dict, requeue_terminal: bool,
+    ) -> QueuedAgentRun: ...
+
+
+def _manual_state(
+    *, user_id: str, today: date, profiles: RegenerationProfiles,
+    race_goals: RegenerationRaceGoals, runs: RegenerationRuns,
+    current_instant: Callable[[], datetime],
+) -> tuple[date, list[RaceGoal], list[AgentRun], RegenerationQuota]:
+    profile = profiles.get_profile_for_user(user_id)
+    instant = current_instant()
+    athlete_today = athlete_local_day(instant, profile, today)
+    races = race_goals.list_race_goals_for_user(user_id, race_date_from=athlete_today + timedelta(days=1))
+    user_runs = runs.list_runs_for_user(user_id, workflow_name="training_plan_generation")
+    quota = calculate_regeneration_quota(user_runs, profile, current_instant=instant, fallback_today=today)
+    return athlete_today, races, user_runs, quota
+
+
+class GetRegenerationOptionsHandler:
+    def __init__(
+        self, *, profiles: RegenerationProfiles, race_goals: RegenerationRaceGoals,
+        training_plans: RegenerationPlans | None, runs: RegenerationRuns,
+        current_instant: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._profiles = profiles
+        self._race_goals = race_goals
+        self._training_plans = training_plans
+        self._runs = runs
+        self._current_instant = current_instant or (lambda: datetime.now(timezone.utc))
+
+    def handle(self, *, user_id: str, today: date) -> RegenerationOptions:
+        athlete_today, races, runs, quota = _manual_state(
+            user_id=user_id, today=today, profiles=self._profiles,
+            race_goals=self._race_goals, runs=self._runs, current_instant=self._current_instant,
+        )
+        race_id = None
+        if self._training_plans is not None:
+            plan = self._training_plans.get_current_plan_for_user(user_id)
+            if plan is not None and plan.user_id == user_id:
+                race_id = next((race.id for race in races if race.user_id == user_id and race.id == plan.race_id), None)
+        strategy = choose_regeneration_strategy(
+            races, starts_on=athlete_today + timedelta(days=1),
+            explicit_race_id=race_id, force_maintenance=False,
+        )
+        in_flight = in_flight_run(runs)
+        return RegenerationOptions(
+            quota=quota, default_strategy=strategy,
+            in_flight_run=_run_reference(in_flight) if in_flight is not None else None,
+        )
+
+
+class StartRegenerationHandler:
+    def __init__(
+        self, *, profiles: RegenerationProfiles, race_goals: RegenerationRaceGoals,
+        runs: RegenerationRuns,
+        queue_agent_runs: RegenerationQueue, lock_user: Callable[[str], None],
+        current_instant: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._profiles = profiles
+        self._race_goals = race_goals
+        self._runs = runs
+        self._queue_agent_runs = queue_agent_runs
+        self._lock_user = lock_user
+        self._current_instant = current_instant or (lambda: datetime.now(timezone.utc))
+
+    def handle(self, *, user_id: str, request: RegenerationRequest, today: date) -> RegenerationStartResult:
+        self._lock_user(user_id)
+        athlete_today, races, runs, quota = _manual_state(
+            user_id=user_id, today=today, profiles=self._profiles,
+            race_goals=self._race_goals, runs=self._runs, current_instant=self._current_instant,
+        )
+        strategy = choose_regeneration_strategy(
+            races, starts_on=athlete_today + timedelta(days=1),
+            explicit_race_id=request.race_id, force_maintenance=request.plan_type == "maintenance",
+        )
+        admission = decide_regeneration_admission(runs, quota, request.client_request_id)
+        if admission.action == "reuse":
+            existing_run = admission.existing_run
+            assert existing_run is not None
+            is_same_request = (
+                existing_run.metadata.get("manual_regeneration") is True
+                and existing_run.metadata.get("client_request_id") == request.client_request_id
+            )
+            in_flight = existing_run if existing_run.status in {"queued", "started"} and not is_same_request else None
+            return RegenerationStartResult(
+                quota=quota, default_strategy=strategy,
+                in_flight_run=_run_reference(in_flight) if in_flight is not None else None,
+                run=_run_reference(existing_run),
+            )
+        if admission.action == "unavailable" or strategy.reason == "explicit_race_unavailable":
+            return RegenerationStartResult(quota=quota, default_strategy=strategy, in_flight_run=None, run=None)
+
+        queued = self._queue_agent_runs.queue_run(
+            user_id=user_id, workflow_name="training_plan_generation", trigger_type="manual",
+            idempotency_key=_training_plan_execution_key(user_id),
+            payload={
+                "race_id": strategy.race_id,
+                "plan_type": strategy.plan_type,
+                "starts_on": strategy.starts_on.isoformat(),
+                "plan_horizon_weeks": strategy.plan_horizon_weeks,
+                "client_request_id": request.client_request_id,
+                "manual_regeneration": True,
+                "quota_day": quota.quota_day.isoformat(),
+            },
+            requeue_terminal=True,
+        )
+        run = RegenerationRun(
+            run_id=queued.run.id or "", status=queued.run.status,
+            workflow_name=queued.run.workflow_name, poll_url=queued.poll_url,
+        )
+        return RegenerationStartResult(quota=quota, default_strategy=strategy, in_flight_run=run, run=run)
+
+
 class TrainingPlanRegenerationService:
     def __init__(
         self,
@@ -82,23 +214,11 @@ class TrainingPlanRegenerationService:
         self._current_instant = current_instant or (lambda: datetime.now(timezone.utc))
 
     def options(self, user_id: str, today: date) -> RegenerationOptions:
-        profile = self._profiles.get_profile_for_user(user_id)
-        current_instant = self._current_instant()
-        athlete_today = athlete_local_day(current_instant, profile, today)
-        races = self._future_races(user_id, athlete_today + timedelta(days=1))
-        runs = self._user_runs(user_id)
-        quota = calculate_regeneration_quota(runs, profile, current_instant=current_instant, fallback_today=today)
-        strategy = choose_regeneration_strategy(
-            races, starts_on=athlete_today + timedelta(days=1),
-            explicit_race_id=self._current_future_race_id(user_id, races),
-            force_maintenance=False,
-        )
-        in_flight = in_flight_run(runs)
-        return RegenerationOptions(
-            quota=quota,
-            default_strategy=strategy,
-            in_flight_run=_run_reference(in_flight) if in_flight is not None else None,
-        )
+        return GetRegenerationOptionsHandler(
+            profiles=self._profiles, race_goals=self._race_goals,
+            training_plans=self._training_plans, runs=self._runs,
+            current_instant=self._current_instant,
+        ).handle(user_id=user_id, today=today)
 
     def start(
         self,
@@ -106,69 +226,12 @@ class TrainingPlanRegenerationService:
         request: RegenerationRequest,
         today: date,
     ) -> RegenerationStartResult:
-        profile = self._profiles.get_profile_for_user(user_id)
-        current_instant = self._current_instant()
-        athlete_today = athlete_local_day(current_instant, profile, today)
-        races = self._future_races(user_id, athlete_today + timedelta(days=1))
-        runs = self._user_runs(user_id)
-        quota = calculate_regeneration_quota(runs, profile, current_instant=current_instant, fallback_today=today)
-        strategy = choose_regeneration_strategy(
-            races, starts_on=athlete_today + timedelta(days=1),
-            explicit_race_id=request.race_id,
-            force_maintenance=request.plan_type == "maintenance",
-        )
-        admission = decide_regeneration_admission(runs, quota, request.client_request_id)
-        if admission.action == "reuse":
-            existing_run = admission.existing_run
-            assert existing_run is not None
-            is_same_request = (
-                existing_run.metadata.get("manual_regeneration") is True
-                and existing_run.metadata.get("client_request_id") == request.client_request_id
-            )
-            in_flight = existing_run if existing_run.status in {"queued", "started"} and not is_same_request else None
-            return RegenerationStartResult(
-                quota=quota,
-                default_strategy=strategy,
-                in_flight_run=_run_reference(in_flight) if in_flight is not None else None,
-                run=_run_reference(existing_run),
-            )
-        if admission.action == "unavailable" or strategy.reason == "explicit_race_unavailable":
-            return RegenerationStartResult(
-                quota=quota,
-                default_strategy=strategy,
-                in_flight_run=None,
-                run=None,
-            )
-
-        payload = {
-            "race_id": strategy.race_id,
-            "plan_type": strategy.plan_type,
-            "starts_on": strategy.starts_on.isoformat(),
-            "plan_horizon_weeks": strategy.plan_horizon_weeks,
-            "client_request_id": request.client_request_id,
-            "manual_regeneration": True,
-            "quota_day": quota.quota_day.isoformat(),
-        }
-        queued = self._queue_agent_runs.queue_run(
-            user_id=user_id,
-            workflow_name="training_plan_generation",
-            trigger_type="manual",
-            idempotency_key=_training_plan_execution_key(user_id),
-            payload=payload,
-            requeue_terminal=True,
-        )
-        run = RegenerationRun(
-            run_id=queued.run.id or "",
-            status=queued.run.status,
-            workflow_name=queued.run.workflow_name,
-            poll_url=queued.poll_url,
-        )
-        return RegenerationStartResult(
-            quota=quota,
-            default_strategy=strategy,
-            in_flight_run=run,
-            run=run,
-        )
+        return StartRegenerationHandler(
+            profiles=self._profiles, race_goals=self._race_goals,
+            runs=self._runs,
+            queue_agent_runs=self._queue_agent_runs, lock_user=lambda user_id: None,
+            current_instant=self._current_instant,
+        ).handle(user_id=user_id, request=request, today=today)
 
     def find_users_needing_projection(self, today: date) -> list[BackgroundProjectionCandidate]:
         if self._training_plans is None:
@@ -289,17 +352,6 @@ class TrainingPlanRegenerationService:
             explicit_race_id=None,
             force_maintenance=False,
         )
-
-    def _future_races(self, user_id: str, starts_on: date) -> list[RaceGoal]:
-        return self._race_goals.list_race_goals_for_user(user_id, race_date_from=starts_on)
-
-    def _current_future_race_id(self, user_id: str, races: list[RaceGoal]) -> str | None:
-        if self._training_plans is None:
-            return None
-        plan = self._training_plans.get_current_plan_for_user(user_id)
-        if plan is None or plan.user_id != user_id:
-            return None
-        return next((race.id for race in races if race.user_id == user_id and race.id == plan.race_id), None)
 
     def _user_runs(self, user_id: str) -> list[AgentRun]:
         return self._runs.list_runs_for_user(user_id, workflow_name="training_plan_generation")

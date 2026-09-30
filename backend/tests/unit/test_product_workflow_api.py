@@ -758,39 +758,31 @@ def test_training_plan_regeneration_start_reuses_in_flight_run() -> None:
     assert options.json()["data"]["in_flight_run"] == first.json()["data"]["run"]
 
 
-def test_training_plan_regeneration_start_locks_user_before_run_admission(monkeypatch) -> None:
-    from sqlalchemy.dialects import postgresql
-
+def test_training_plan_regeneration_route_maps_request_to_application_value(monkeypatch) -> None:
     from src.api.dependencies import CurrentUser
     from src.api.routes import training_plan_regeneration as route
     from src.api.schemas.training_plan_regeneration import TrainingPlanRegenerationRequest
+    from src.application.training_plan_regeneration import RegenerationRequest
 
-    class LockCapturingSession:
-        locked = False
+    session = object()
 
-        def scalar(self, statement):
-            sql = str(statement.compile(dialect=postgresql.dialect()))
-            self.locked = "FOR UPDATE" in sql
-            return object()
-
-    session = LockCapturingSession()
-
-    class AdmissionService:
-        def start(self, user_id, payload, today):
-            assert session.locked is True
+    class CommandHandler:
+        def handle(self, *, user_id, request, today):
+            assert user_id == "lock-user"
+            assert isinstance(request, RegenerationRequest)
+            assert request == RegenerationRequest("lock-check", "maintenance", None)
             return object()
 
     monkeypatch.setattr(route, "ensure_current_user", lambda session, current_user: object())
-    monkeypatch.setattr(route, "_service", lambda session: AdmissionService())
     monkeypatch.setattr(route, "_response", lambda result: {})
 
     response = route.start_regeneration(
         TrainingPlanRegenerationRequest(client_request_id="lock-check", plan_type="maintenance"),
         CurrentUser(id="lock-user"),
         session,
+        CommandHandler(),
     )
 
-    assert session.locked is True
     assert response.data == {}
 
 

@@ -9,7 +9,7 @@ from sqlalchemy import select
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 import scripts.agent_runtime as worker
 from src.api.dependencies import CurrentUser, ensure_current_user
-from src.api.routes.training_plan_regeneration import _service
+from src.api.regeneration_composition import get_regeneration_options_handler
 from src.api.routes.today import get_today
 from src.application.agent_tools import TodayWorkoutTool
 from src.application.training_analytics import BuildTodayContextHandler
@@ -205,9 +205,9 @@ def test_worker_commit_rolls_back_failed_activation_and_quota(sqlite_session_fac
         previous = SqlAlchemyAgentRunRepository(session).get_run_for_user("athlete", previous_success.id)
         assert previous.status == "completed"
         assert previous.metadata == previous_success.metadata
-        assert _service(session).options("athlete", TODAY - timedelta(days=1)).quota.used == 1
+        assert get_regeneration_options_handler(session).handle(user_id="athlete", today=TODAY - timedelta(days=1)).quota.used == 1
         assert session.get(AgentTaskModel, queued.task.id).status == "failed"
-        options = _service(session).options("athlete", TODAY)
+        options = get_regeneration_options_handler(session).handle(user_id="athlete", today=TODAY)
         assert options.quota.used == 0
         assert options.quota.available
 
@@ -251,10 +251,10 @@ def test_api_service_defaults_to_current_future_race_then_falls_back(sqlite_sess
         ))
         plans = SqlAlchemyTrainingPlanRepository(session)
         plan = plans.save_plan("athlete", replace(_plan("athlete"), race_id=secondary.id))
-        assert _service(session).options("athlete", TODAY).default_strategy.race_id == secondary.id
-        assert _service(session).options("athlete", secondary.race_date).default_strategy.race_id == primary.id
+        assert get_regeneration_options_handler(session).handle(user_id="athlete", today=TODAY).default_strategy.race_id == secondary.id
+        assert get_regeneration_options_handler(session).handle(user_id="athlete", today=secondary.race_date).default_strategy.race_id == primary.id
         plans.save_plan("athlete", replace(plan, race_id=None))
-        assert _service(session).options("athlete", TODAY).default_strategy.race_id == primary.id
+        assert get_regeneration_options_handler(session).handle(user_id="athlete", today=TODAY).default_strategy.race_id == primary.id
 
 
 def test_same_run_repair_rolls_back_first_save_before_success(sqlite_session_factory, monkeypatch):
@@ -291,5 +291,5 @@ def test_same_run_repair_rolls_back_first_save_before_success(sqlite_session_fac
         run = SqlAlchemyAgentRunRepository(session).get_run_for_user("athlete", queued.run.id)
         assert run.status == "completed"
         assert run.metadata["created_training_plan_id"] == active.id
-        assert _service(session).options("athlete", TODAY).quota.used == 1
+        assert get_regeneration_options_handler(session).handle(user_id="athlete", today=TODAY).quota.used == 1
         assert _today(session, "athlete")["scheduled_workouts"][0]["id"] == original.workouts[0].id

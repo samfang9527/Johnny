@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter
-from sqlalchemy import select
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
+from src.api.regeneration_composition import (
+    RegenerationOptionsHandlerDependency,
+    StartRegenerationHandlerDependency,
+)
 from src.api.schemas.common import DataEnvelope
 from src.api.schemas.training_plan_regeneration import (
     RegenerationQuotaResponse,
@@ -14,13 +17,7 @@ from src.api.schemas.training_plan_regeneration import (
     TrainingPlanRegenerationRequest,
     TrainingPlanRegenerationResponse,
 )
-from src.application.async_agent_runs import QueueAgentRunHandler
-from src.application.training_plan_regeneration import TrainingPlanRegenerationService
-from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
-from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
-from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
-from src.infrastructure.database.models import UserModel
-from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
+from src.application.training_plan_regeneration import RegenerationRequest
 
 
 router = APIRouter(prefix="/training-plans", tags=["training-plans"])
@@ -30,9 +27,10 @@ router = APIRouter(prefix="/training-plans", tags=["training-plans"])
 def get_regeneration_options(
     current_user: CurrentUserDependency,
     session: SessionDependency,
+    handler: RegenerationOptionsHandlerDependency,
 ) -> DataEnvelope[TrainingPlanRegenerationResponse]:
     ensure_current_user(session, current_user)
-    result = _service(session).options(current_user.id, date.today())
+    result = handler.handle(user_id=current_user.id, today=date.today())
     return DataEnvelope(data=_response(result))
 
 
@@ -41,31 +39,16 @@ def start_regeneration(
     payload: TrainingPlanRegenerationRequest,
     current_user: CurrentUserDependency,
     session: SessionDependency,
+    handler: StartRegenerationHandlerDependency,
 ) -> DataEnvelope[TrainingPlanRegenerationResponse]:
     ensure_current_user(session, current_user)
-    session.scalar(select(UserModel).where(UserModel.id == current_user.id).with_for_update())
-    result = _service(session).start(current_user.id, payload, date.today())
-    return DataEnvelope(data=_response(result))
-
-
-def _service(session) -> TrainingPlanRegenerationService:
-    athlete_races = SqlAlchemyAthleteRaceRepository(session)
-    runs = SqlAlchemyAgentRunRepository(session)
-    tasks = SqlAlchemyAgentTaskQueue(session)
-    return TrainingPlanRegenerationService(
-        profiles=athlete_races,
-        race_goals=athlete_races,
-        training_plans=SqlAlchemyTrainingPlanRepository(session),
-        runs=runs,
-        tasks=tasks,
-        queue_agent_runs=QueueAgentRunHandler(
-            runs=runs,
-            queue=tasks,
-            prompt_version="running-companion-v1",
-            provider="local",
-            model="deterministic-local-companion",
-        ),
+    request = RegenerationRequest(
+        client_request_id=payload.client_request_id,
+        plan_type=payload.plan_type,
+        race_id=payload.race_id,
     )
+    result = handler.handle(user_id=current_user.id, request=request, today=date.today())
+    return DataEnvelope(data=_response(result))
 
 
 def _response(result) -> TrainingPlanRegenerationResponse:
