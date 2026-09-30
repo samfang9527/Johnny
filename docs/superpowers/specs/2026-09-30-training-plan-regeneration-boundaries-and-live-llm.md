@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Make UI-triggered training-plan regeneration follow Johnny's Route -> CQRS handler -> Domain aggregate -> data-access boundary, then verify a real OpenAI-generated result through that same production queue and worker path. This work does not change the athlete-facing regeneration contract, quota, safety rules, or canonical Plan Skeleton.
+Make UI-triggered training-plan regeneration follow Johnny's Route -> CQRS handler -> domain model/policy -> data-access seam, then verify a real OpenAI-generated result through that same production queue and worker path. This work does not change the athlete-facing regeneration contract, quota, safety rules, or canonical Plan Skeleton.
 
 The existing training-plan generation spec and skeleton ADR remain authoritative for workout completeness and activation. This spec only covers regeneration ownership, provider selection, and live verification.
 
@@ -20,11 +20,11 @@ The regeneration route validates HTTP input, invokes a query or command handler 
 
 The composition root (`src.api.dependencies` or a dedicated API composition module) constructs concrete SQL adapters and handlers from the request session. This is the only API-side place that knows both application ports and infrastructure implementations. Request-scoped session commit/rollback remains the transaction boundary. Existing user bootstrap can remain in an auth dependency. The `GET /regeneration-options` query performs no regeneration mutation; the `POST /regenerations` command holds the user lock while reading quota/in-flight state and queueing, preserving atomic idempotency.
 
-### CQRS Handlers and Domain Aggregate
+### CQRS Handlers and Domain Model
 
 Define a query handler for regeneration options and a command handler for starting regeneration. Both accept transport-independent inputs: `user_id`, dates or clock, and a domain/application request value containing `client_request_id`, `plan_type`, and optional `race_id`. Neither application handler imports API schemas or SQL adapters. Explicit repository/queue/user-lock protocols describe the data access it needs; avoid a generic repository or broad Unit of Work rewrite.
 
-Introduce an `AthletePlanRegeneration` domain aggregate rooted in one athlete's planning state: Athlete Baseline, future Race Strategies, relevant Agent Runs, and current Active Projection. It owns default strategy, athlete-local quota day, quota consumption, same-request reuse, in-flight reuse, and whether a new run may be queued. It returns a decision and queue intent, not a SQL operation or HTTP response. The application handler loads a consistent snapshot, asks the aggregate to decide, then performs the chosen queue action through a port. This aggregate is reconstructed from existing records and does not require another table. Existing `TrainingPlan` remains the aggregate for a saved projection; regeneration must not mutate it while merely queueing. Background discovery uses the same pure strategy rules without forcing its separate recovery-window workflow into the manual command handler.
+Reuse the existing `TrainingPlan` aggregate and `TrainingPlanStore` seam for current-plan lookup and projection invariants. A separate, pure regeneration decision policy consumes Athlete Baseline, future Race Strategies, relevant Agent Runs, and the current Active Projection. It decides default strategy, athlete-local quota day, quota consumption, same-request reuse, in-flight reuse, and whether a new run may be queued. It returns a decision and queue intent, not a SQL operation or HTTP response. The application handler loads a consistent snapshot, calls the policy, then performs the chosen queue action through a port. There is no new aggregate or table: run history and quota do not become fields on `TrainingPlan`, and merely queueing does not mutate a plan. Background discovery uses the same pure strategy rules without forcing its separate recovery-window workflow into the manual command handler.
 
 Keep current rules: explicit maintenance is valid even with future races; current future strategy is the default; priority then date selects other races; tomorrow is the manual start; one successful manual activation per athlete-local day consumes quota; same `client_request_id` returns the same run; any other in-flight run is reused; quota exhaustion returns `run: null`; background generation does not consume manual quota. A completed, fully validated new projection supersedes the old one only in its existing save transaction. No migration or API response shape change is expected.
 
@@ -50,7 +50,7 @@ The Python SDK's Responses API is the live gateway already used by Johnny; follo
 
 ## Verification and Acceptance
 
-1. Static boundary test or import check proves the regeneration route does not import infrastructure/SQLAlchemy, and application/domain regeneration code does not import `src.api` or `src.infrastructure`.
+1. Static boundary test or import check proves the regeneration route does not import infrastructure/SQLAlchemy, and application/domain regeneration code does not import `src.api` or `src.infrastructure`. Both plan CRUD and regeneration use the existing `TrainingPlan` model/repository rather than duplicating them.
 2. Existing route and service tests retain options, manual request, race selection, idempotency, in-flight, quota, and activation behavior. Add domain-decision tests independent of database and handler tests using injected ports.
 3. Provider tests cover: key+model queues OpenAI even without `LLM_PROVIDER`; no key queues local; key without model errors; existing local run stays local; reused run keeps its provider; missing worker key for an OpenAI run fails visibly without invoking the local gateway; a worker model setting change does not change an already queued run. Verify UI, raw training-plan API, background queueing, and CLI worker modes.
 4. Full backend suite passes. Frontend contract and tests remain unchanged unless an actual response compatibility issue is found.
