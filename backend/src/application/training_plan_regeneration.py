@@ -9,6 +9,7 @@ from src.domain.agent_runtime import AgentRun
 from src.domain.athlete_race import AthleteProfile, RaceGoal
 from src.domain.training_plan import TrainingPlan
 from src.domain.training_plan_regeneration import (
+    MANUAL_REGENERATION_LIMIT,
     RegenerationQuota,
     RegenerationStrategy,
     athlete_local_day,
@@ -87,14 +88,14 @@ class RegenerationQueue(Protocol):
 def _manual_state(
     *, user_id: str, today: date, profiles: RegenerationProfiles,
     race_goals: RegenerationRaceGoals, runs: RegenerationRuns,
-    current_instant: Callable[[], datetime],
+    current_instant: Callable[[], datetime], quota_limit: int,
 ) -> tuple[date, list[RaceGoal], list[AgentRun], RegenerationQuota]:
     profile = profiles.get_profile_for_user(user_id)
     instant = current_instant()
     athlete_today = athlete_local_day(instant, profile, today)
     races = race_goals.list_race_goals_for_user(user_id, race_date_from=athlete_today + timedelta(days=1))
     user_runs = runs.list_runs_for_user(user_id, workflow_name="training_plan_generation")
-    quota = calculate_regeneration_quota(user_runs, profile, current_instant=instant, fallback_today=today)
+    quota = calculate_regeneration_quota(user_runs, profile, current_instant=instant, fallback_today=today, limit=quota_limit)
     return athlete_today, races, user_runs, quota
 
 
@@ -114,17 +115,20 @@ class GetRegenerationOptionsHandler:
         self, *, profiles: RegenerationProfiles, race_goals: RegenerationRaceGoals,
         training_plans: RegenerationPlans | None, runs: RegenerationRuns,
         current_instant: Callable[[], datetime] | None = None,
+        quota_limit: int = MANUAL_REGENERATION_LIMIT,
     ) -> None:
         self._profiles = profiles
         self._race_goals = race_goals
         self._training_plans = training_plans
         self._runs = runs
         self._current_instant = current_instant or (lambda: datetime.now(timezone.utc))
+        self._quota_limit = quota_limit
 
     def handle(self, *, user_id: str, today: date) -> RegenerationOptions:
         athlete_today, races, runs, quota = _manual_state(
             user_id=user_id, today=today, profiles=self._profiles,
             race_goals=self._race_goals, runs=self._runs, current_instant=self._current_instant,
+            quota_limit=self._quota_limit,
         )
         race_id = _current_plan_race_id(self._training_plans, user_id, races)
         strategy = choose_regeneration_strategy(
@@ -144,6 +148,7 @@ class StartRegenerationHandler:
         runs: RegenerationRuns, training_plans: RegenerationPlans | None = None,
         queue_agent_runs: RegenerationQueue, lock_user: Callable[[str], None],
         current_instant: Callable[[], datetime] | None = None,
+        quota_limit: int = MANUAL_REGENERATION_LIMIT,
     ) -> None:
         self._profiles = profiles
         self._race_goals = race_goals
@@ -152,12 +157,14 @@ class StartRegenerationHandler:
         self._queue_agent_runs = queue_agent_runs
         self._lock_user = lock_user
         self._current_instant = current_instant or (lambda: datetime.now(timezone.utc))
+        self._quota_limit = quota_limit
 
     def handle(self, *, user_id: str, request: RegenerationRequest, today: date) -> RegenerationStartResult:
         self._lock_user(user_id)
         athlete_today, races, runs, quota = _manual_state(
             user_id=user_id, today=today, profiles=self._profiles,
             race_goals=self._race_goals, runs=self._runs, current_instant=self._current_instant,
+            quota_limit=self._quota_limit,
         )
         race_id = request.race_id
         if request.plan_type == "race" and race_id is None:

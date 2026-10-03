@@ -184,6 +184,31 @@ def test_missing_baseline_uses_low_risk_load_and_capacity() -> None:
     assert not any(w.workout_type in {"interval", "tempo", "hill"} for w in skeleton.workouts)
 
 
+def test_established_beginner_can_have_one_quality_session_beside_long_run() -> None:
+    skeleton = _skeleton(
+        starts_on=date(2026, 10, 3), ends_on=date(2026, 11, 21),
+        plan_type="race", race_date=date(2026, 11, 21), race_distance_meters=40000,
+        preferred_training_days=("tuesday", "sunday", "wednesday", "friday", "saturday"),
+        max_runs_per_week=5, max_hard_sessions_per_week=2,
+        current_weekly_mileage_km=40, experience_level="beginner",
+    )
+
+    quality = {"interval", "tempo", "hill"}
+    assert any(workout.workout_type in quality for workout in skeleton.workouts)
+    for week in range(7):
+        week_workouts = [workout for workout in skeleton.workouts if (workout.scheduled_for - skeleton.starts_on).days // 7 == week]
+        assert sum(workout.workout_type in quality | {"long_run"} for workout in week_workouts) <= 2
+
+
+def test_lower_mileage_beginner_keeps_conservative_aerobic_skeleton() -> None:
+    skeleton = _skeleton(
+        current_weekly_mileage_km=30, experience_level="beginner",
+        max_runs_per_week=5, max_hard_sessions_per_week=2,
+    )
+
+    assert not any(workout.workout_type in {"interval", "tempo", "hill"} for workout in skeleton.workouts)
+
+
 def test_mileage_experience_and_maintenance_cycle_determine_load() -> None:
     beginner = _skeleton(current_weekly_mileage_km=20, experience_level="beginner")
     experienced = _skeleton(current_weekly_mileage_km=40, experience_level="advanced")

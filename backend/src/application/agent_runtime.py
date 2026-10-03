@@ -15,6 +15,7 @@ from src.domain.agent_runtime import (
     ModelResponse,
     SafetyDecision,
 )
+from src.domain.training_plan import workout_purpose_zh
 
 
 PRODUCT_RUN_METADATA_KEYS = (
@@ -210,7 +211,10 @@ class RunningCompanionAgent:
                         "Generate a validated active training plan only. Store it with createTrainingPlan. "
                         "Do not create recommendations in this workflow. plan_skeleton owns the plan dates, "
                         "weekly structure, phase segments, and workouts. You must not move workout dates or "
-                        "change the weekly structure; call createTrainingPlan using the plan_skeleton dates."
+                        "change the weekly structure; call createTrainingPlan using the plan_skeleton dates. "
+                        "Write all athlete-facing text in Traditional Chinese (zh-TW), including plan name, "
+                        "workout purpose, coach notes, step notes, and weekly rationales. Keep canonical "
+                        "workout types, phases, step types, and target zones as their schema enum values."
                     ),
                 },
                 {"role": "user", "content": "Create an active running training plan."},
@@ -863,7 +867,7 @@ def _fallback_training_plan_arguments(context: dict) -> dict:
         if isinstance(workout, dict)
     ]
     return {
-        "name": "Fallback Generated Plan",
+        "name": "Johnny 訓練計畫",
         "race_id": context.get("selected_race_id"),
         "starts_on": starts_on.isoformat(),
         "ends_on": ends_on.isoformat(),
@@ -872,7 +876,7 @@ def _fallback_training_plan_arguments(context: dict) -> dict:
             "previous_plan_id": context.get("previous_plan_id"),
             "version": context.get("version", 1),
             "generation_mode": "fallback",
-            "continuity_summary": "Fallback plan created after generated plan validation failed.",
+            "continuity_summary": "生成內容驗證失敗後，已套用保守課表範本。",
             "phase_segments": skeleton.get("phase_segments", ()),
         },
         "workouts": workouts,
@@ -881,13 +885,7 @@ def _fallback_training_plan_arguments(context: dict) -> dict:
 
 
 def _fallback_workout_purpose(workout_type: str) -> str:
-    return {
-        "easy_run": "Aerobic base",
-        "interval": "Controlled speed development",
-        "hill": "Hill strength development",
-        "tempo": "Sustained threshold development",
-        "long_run": "Endurance progression",
-    }.get(workout_type, "Scheduled training")
+    return workout_purpose_zh(workout_type)
 
 
 def _fallback_workout_payload(

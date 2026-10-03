@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+import logging
 import sys
 
 from fastapi.testclient import TestClient
@@ -566,7 +567,7 @@ def test_legacy_scheduled_training_plan_derives_previous_end_before_execution(
     assert generated_plan.race_id == "legacy-planned-race"
 
 
-def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_session_factory) -> None:
+def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_session_factory, caplog) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
         _create_context_ready_user(uow.session, "worker-user")
@@ -591,16 +592,17 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
             workflow_name="training_plan_generation",
             trigger_type="manual",
             idempotency_key="training:worker-user:2027-01-28",
-            payload={"plan_type": "base", "starts_on": "2027-01-01"},
+            payload={"plan_type": "base", "starts_on": "2027-01-01", "goal_notes": "private-runner-note"},
         )
 
-        processed = work_drain(uow.session)
+        with caplog.at_level(logging.INFO, logger="scripts.agent_runtime"):
+            processed = work_drain(uow.session)
         daily_run = handler_runs.get_run_for_user("worker-user", daily.run.id)
         training_run = handler_runs.get_run_for_user("worker-user", training.run.id)
         generated_plan = uow.session.scalar(
             select(TrainingPlanModel).where(
                 TrainingPlanModel.user_id == "worker-user",
-                TrainingPlanModel.name == "Local Generated Skeleton Plan",
+                TrainingPlanModel.name == "Johnny 訓練計畫",
             )
         )
         recommendation_count = len(uow.session.scalars(select(RecommendationModel)).all())
@@ -616,6 +618,12 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
     ]
     assert {workout.details["phase"] for workout in generated_plan.workouts} == {"maintenance"}
     assert recommendation_count == 1
+    assert "worker task claimed task_id=" in caplog.text
+    assert f"worker workflow started run_id={training.run.id} workflow=training_plan_generation provider=local" in caplog.text
+    assert f"worker workflow finished run_id={training.run.id} workflow=training_plan_generation status=completed" in caplog.text
+    assert "worker task finished task_id=" in caplog.text
+    assert "duration_ms=" in caplog.text
+    assert "private-runner-note" not in caplog.text
 
 
 def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_session_factory) -> None:
@@ -711,7 +719,7 @@ def test_worker_uses_queued_openai_model_not_current_environment(sqlite_session_
     assert seen[0].model == "queued-model"
 
 
-def test_worker_fails_queued_openai_run_without_key(sqlite_session_factory, monkeypatch) -> None:
+def test_worker_fails_queued_openai_run_without_key(sqlite_session_factory, monkeypatch, caplog) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -726,13 +734,18 @@ def test_worker_fails_queued_openai_run_without_key(sqlite_session_factory, monk
             trigger_type="manual", idempotency_key="missing-worker-key",
             payload={"plan_type": "base", "starts_on": "2027-01-01"},
         )
-        assert work_drain(uow.session) == 1
+        with caplog.at_level(logging.INFO, logger="scripts.agent_runtime"):
+            assert work_drain(uow.session) == 1
         run = uow.session.get(AgentRunModel, queued.run.id)
         task = uow.session.scalar(select(AgentTaskModel).where(AgentTaskModel.payload["run_id"].as_string() == run.id))
         assert run.status == "failed"
         assert task.status == "failed"
         assert run.provider == "openai"
         assert "required" in run.error_message
+        assert f"worker workflow started run_id={run.id} workflow=training_plan_generation provider=openai" in caplog.text
+        assert f"worker workflow raised run_id={run.id} workflow=training_plan_generation error_type=" in caplog.text
+        assert "status=failed" in caplog.text
+        assert "OPENAI_API_KEY" not in caplog.text
 
 
 def test_worker_rejects_unknown_persisted_provider(sqlite_session_factory) -> None:
@@ -804,4 +817,4 @@ def test_smoke_flow_queues_with_http_drains_worker_and_polls_completion(monkeypa
     assert daily_run["status"] == "completed"
     assert training_run["status"] == "completed"
     assert len(recommendations) == 1
-    assert any(plan["name"] == "Local Generated Skeleton Plan" and plan["status"] == "active" for plan in plans)
+    assert any(plan["name"] == "Johnny 訓練計畫" and plan["status"] == "active" for plan in plans)

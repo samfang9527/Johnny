@@ -105,7 +105,7 @@ def test_incomplete_generation_gets_model_repair_then_preserves_original_week(se
     from src.application.training_plan_generation import build_plan_skeleton
 
     skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, max_hard_sessions_per_week=0)
-    original = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "Original valid coaching", "planned_duration_minutes": w.planned_duration_minutes} for w in skeleton.workouts[:3]]
+    original = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "原本有效的訓練目的", "planned_duration_minutes": w.planned_duration_minutes} for w in skeleton.workouts[:3]]
     arguments = {"name": "Partial", "starts_on": "2027-01-04", "ends_on": "2027-01-31", "workouts": original}
     if second_output == "outside":
         arguments["workouts"] = [*original, {**original[0], "scheduled_for": "2027-02-01"}]
@@ -124,7 +124,7 @@ def test_incomplete_generation_gets_model_repair_then_preserves_original_week(se
     second_arguments = {**arguments, "workouts": []}
     second_arguments["name"] = "Repaired plan"
     if second_output == "complete":
-        second_arguments["workouts"] = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "Repaired model coaching", "planned_duration_minutes": w.planned_duration_minutes} for w in skeleton.workouts]
+        second_arguments["workouts"] = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "修復後的訓練目的", "planned_duration_minutes": w.planned_duration_minutes} for w in skeleton.workouts]
     if second_output == "malformed":
         second_arguments["ends_on"] = "2026-01-01"
     second = ModelResponse(content="Repair", tool_calls=() if second_output in {"absent", "empty_name_absent"} else (ToolCallRequest(tool_name="createTrainingPlan", arguments=second_arguments),))
@@ -145,10 +145,10 @@ def test_incomplete_generation_gets_model_repair_then_preserves_original_week(se
     assert len(store.saved.workouts) == len(skeleton.workouts)
     assert store.saved.metadata["internal"]["model_repair"]["attempted"] is True
     if second_output == "complete":
-        assert all(w.purpose == "Repaired model coaching" for w in store.saved.workouts)
+        assert all(w.purpose == "修復後的訓練目的" for w in store.saved.workouts)
         assert "completion_repair" not in store.saved.metadata["internal"]
         return
-    assert [w.purpose for w in store.saved.workouts[:3]] == ["Original valid coaching"] * 3
+    assert [w.purpose for w in store.saved.workouts[:3]] == ["原本有效的訓練目的"] * 3
     assert len(preserved_ids) == 3 and all(preserved_ids)
     assert [w.id for w in store.saved.workouts[:3]] == preserved_ids
     repair = store.saved.metadata["internal"]["completion_repair"]
@@ -932,7 +932,7 @@ def test_training_plan_generation_uses_fallback_after_one_failed_repair() -> Non
 
     assert result.status == "completed"
     assert len(plan_tool.calls) == 3
-    assert plan_tool.calls[-1]["arguments"]["name"] == "Fallback Generated Plan"
+    assert plan_tool.calls[-1]["arguments"]["name"] == "Johnny 訓練計畫"
     assert plan_tool.calls[-1]["arguments"]["race_id"] is None
     assert plan_tool.calls[-1]["arguments"]["metadata"]["phase_segments"] == [
         {

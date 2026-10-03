@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from src.domain.agent_runtime import ModelRequest, ModelResponse, TokenUsage, ToolCallRequest
+from src.domain.training_plan import workout_purpose_zh
 
 
 class LocalCompanionModelGateway:
@@ -103,7 +104,7 @@ def _plan_arguments(context: dict) -> dict:
         if isinstance(workout, dict)
     ]
     return {
-        "name": "Local Generated Skeleton Plan",
+        "name": "Johnny 訓練計畫",
         "race_id": context.get("selected_race_id"),
         "starts_on": starts_on.isoformat(),
         "ends_on": ends_on.isoformat(),
@@ -123,14 +124,7 @@ def _date_from_context(value) -> date | None:
 
 
 def _workout_purpose(workout_type: str) -> str:
-    return {
-        "easy_run": "Aerobic base",
-        "interval": "Controlled speed development",
-        "hill": "Hill strength development",
-        "strength": "Durability and injury resistance",
-        "tempo": "Sustained threshold development",
-        "long_run": "Endurance progression",
-    }.get(workout_type, "Scheduled training")
+    return workout_purpose_zh(workout_type)
 
 
 def _required_skeleton_date(workout: dict) -> date:
@@ -158,7 +152,7 @@ def _workout_payload(
             "planned_duration_minutes": duration_minutes,
             "planned_distance_meters": planned_distance_meters,
             "phase": phase,
-            "coach_note": "Keep every repeat controlled and recover with an easy jog.",
+            "coach_note": "每趟保持穩定，組間以輕鬆慢跑恢復。",
             "steps": [
                 {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
                 {
@@ -181,7 +175,7 @@ def _workout_payload(
             "planned_duration_minutes": duration_minutes,
             "planned_distance_meters": planned_distance_meters,
             "phase": phase,
-            "coach_note": "Keep the tempo effort smooth and sustainable.",
+            "coach_note": "節奏維持平順，以能穩定完成全程為原則。",
             "steps": [
                 {"type": "warmup", "duration_seconds": warmup_seconds, "target": {"kind": "rpe", "rpe": 3}},
                 {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
@@ -196,7 +190,7 @@ def _workout_payload(
             "planned_duration_minutes": duration_minutes,
             "planned_distance_meters": planned_distance_meters,
             "phase": phase,
-            "coach_note": "Keep each hill repeat powerful and controlled.",
+            "coach_note": "上坡保持穩定出力，留意跑姿不要僵硬。",
             "steps": [
                 {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
                 {

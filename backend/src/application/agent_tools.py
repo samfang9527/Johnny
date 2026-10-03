@@ -14,7 +14,7 @@ from src.application.training_plan_generation import (
 from src.application.training_targets import PaceProfile, enrich_workout_steps
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
-from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, validate_phase_segments
+from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, validate_phase_segments, workout_coach_note_zh, workout_purpose_zh
 
 
 class AgentToolRegistry:
@@ -268,6 +268,12 @@ class CreateTrainingPlanTool:
             replace(workout, steps=enrich_workout_steps(workout.steps, pace_profile=canonical_pace_profile))
             for workout in plan.workouts
         ))
+        if skeleton is not None:
+            plan = replace(
+                plan,
+                name=plan.name if _has_chinese(plan.name) else "Johnny 訓練計畫",
+                workouts=tuple(_localize_workout_copy(workout) for workout in plan.workouts),
+            )
         if trusted_context.get("model_repair_reason"):
             internal = dict(plan.metadata.get("internal") or {})
             internal["model_repair"] = {"attempted": True, "reason": trusted_context["model_repair_reason"]}
@@ -292,6 +298,31 @@ class IncompleteTrainingPlan(ValueError):
     def __init__(self, plan: TrainingPlan, reason: str) -> None:
         super().__init__(f"model repair required: {reason}")
         self.plan_payload = _plan_payload(plan)
+
+
+def _has_chinese(value: str | None) -> bool:
+    return bool(value and any("\u4e00" <= character <= "\u9fff" for character in value))
+
+
+def _localize_workout_copy(workout: Workout) -> Workout:
+    coach_note = workout.coach_note
+    if coach_note and not _has_chinese(coach_note):
+        coach_note = workout_coach_note_zh(workout.workout_type)
+    return replace(
+        workout,
+        purpose=workout.purpose if _has_chinese(workout.purpose) else workout_purpose_zh(workout.workout_type),
+        coach_note=coach_note,
+        steps=tuple(_localize_step_copy(step) for step in workout.steps),
+    )
+
+
+def _localize_step_copy(step: WorkoutStep) -> WorkoutStep:
+    return replace(
+        step,
+        notes=step.notes if _has_chinese(step.notes) else None,
+        grade_notes=step.grade_notes if _has_chinese(step.grade_notes) else None,
+        steps=tuple(_localize_step_copy(nested) for nested in step.steps),
+    )
 
 
 class MemoryCandidateTool:

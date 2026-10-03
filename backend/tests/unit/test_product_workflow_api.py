@@ -803,6 +803,71 @@ def test_training_plan_regeneration_options_returns_exhausted_quota_payload() ->
     assert blocked.json()["data"]["run"] is None
 
 
+def test_development_quota_override_is_visible_to_ui_and_production_ignores_it(monkeypatch) -> None:
+    from datetime import datetime, timezone
+
+    from src.domain.agent_runtime import AgentRun
+    from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
+
+    monkeypatch.setenv("JOHNNY_DEV_REGENERATION_DAILY_LIMIT", "10")
+    monkeypatch.setenv("JOHNNY_AUTH_ALLOW_HEADER_USER", "true")
+    monkeypatch.setenv("ENV", "development")
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "dev-quota-user"}
+    assert client.get("/api/v1/training-plans/regeneration-options", headers=headers).status_code == 200
+    with session_factory() as session:
+        SqlAlchemyAgentRunRepository(session).create_run(AgentRun(
+            user_id="dev-quota-user", trigger_type="manual", workflow_name="training_plan_generation",
+            prompt_version="v1", status="completed", finished_at=datetime.now(timezone.utc),
+            metadata={"manual_regeneration": True, "created_training_plan_id": "previous-plan"},
+        ))
+        session.commit()
+
+    development = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+    assert development.status_code == 200
+    assert development.json()["data"]["quota"]["limit"] == 10
+    assert development.json()["data"]["quota"]["used"] == 1
+    queued = client.post("/api/v1/training-plans/regenerations", headers=headers, json={
+        "client_request_id": "dev-second-request", "plan_type": "maintenance",
+    })
+    assert queued.status_code == 200
+    assert queued.json()["data"]["run"] is not None
+
+    monkeypatch.setenv("ENV", "production")
+    production = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+    assert production.status_code == 200
+    assert production.json()["data"]["quota"]["limit"] == 1
+
+
+def test_athlete_profile_threshold_pace_round_trips_and_validates() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "pace-profile-user"}
+    payload = {
+        "timezone": "Asia/Taipei", "current_weekly_mileage_km": 40,
+        "preferred_training_days": ["tuesday", "sunday"],
+        "preferred_long_run_day": "sunday", "max_runs_per_week": 5,
+        "training_preferences": {"surface": "trail"},
+        "threshold_pace_seconds_per_km": 300,
+    }
+
+    saved = client.put("/api/v1/athlete/profile", headers=headers, json=payload)
+    assert saved.status_code == 200
+    assert saved.json()["data"]["threshold_pace_seconds_per_km"] == 300
+    assert saved.json()["data"]["training_preferences"] == {"surface": "trail", "threshold_pace_seconds_per_km": 300}
+
+    loaded = client.get("/api/v1/athlete/profile", headers=headers)
+    assert loaded.json()["data"]["threshold_pace_seconds_per_km"] == 300
+    invalid = client.put("/api/v1/athlete/profile", headers=headers, json={**payload, "threshold_pace_seconds_per_km": -1})
+    assert invalid.status_code == 422
+
+    cleared = client.put("/api/v1/athlete/profile", headers=headers, json={**payload, "threshold_pace_seconds_per_km": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["threshold_pace_seconds_per_km"] is None
+    assert cleared.json()["data"]["training_preferences"] == {"surface": "trail"}
+
+
 def test_training_plan_regeneration_options_selects_maintenance_without_future_races() -> None:
     from datetime import date, timedelta
 

@@ -28,6 +28,7 @@ from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, At
 from src.infrastructure.database.session import create_database_engine, create_session_factory, get_database_url
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.llm.settings import load_llm_settings, resolve_queued_training_plan_provider
+from src.infrastructure.logging.logger_config import setup_logging
 
 
 DEFAULT_CLAIM_TIMEOUT = timedelta(minutes=5)
@@ -78,7 +79,28 @@ def work_one(session: Session, *, now: datetime | None = None) -> bool:
     claimed = queue.claim_next(now=now or _utc_now(), claim_timeout=DEFAULT_CLAIM_TIMEOUT)
     if claimed is None:
         return False
-    _process_task(session, claimed.id)
+    started = time.monotonic()
+    run_id = claimed.payload.get("run_id") if isinstance(claimed.payload, dict) else None
+    logger.info(
+        "worker task claimed task_id=%s task_type=%s run_id=%s correlation_id=%s retry_count=%s",
+        claimed.id, claimed.task_type, run_id, claimed.correlation_id, claimed.retry_count,
+    )
+    try:
+        _process_task(session, claimed.id)
+    except Exception as exc:
+        logger.error(
+            "worker task raised task_id=%s task_type=%s run_id=%s error_type=%s duration_ms=%s",
+            claimed.id, claimed.task_type, run_id, type(exc).__name__,
+            round((time.monotonic() - started) * 1000),
+        )
+        raise
+    task = session.get(AgentTaskModel, claimed.id)
+    logger.info(
+        "worker task finished task_id=%s task_type=%s run_id=%s status=%s error_type=%s duration_ms=%s",
+        claimed.id, claimed.task_type, run_id, task.status if task else "missing",
+        task.last_error_type if task else None,
+        round((time.monotonic() - started) * 1000),
+    )
     return True
 
 
@@ -163,6 +185,8 @@ def main() -> int:
     smoke_parser.add_argument("--workflow", default="conversation")
     smoke_parser.add_argument("--live-openai", action="store_true")
     args = parser.parse_args()
+    setup_logging()
+    logger.info("agent runtime command started command=%s", args.command)
 
     live_openai = getattr(args, "live_openai", False)
     if live_openai and load_llm_settings() is None:
@@ -311,6 +335,11 @@ def _process_task(session: Session, task_id: str) -> None:
         return
 
     workflow_input = dict(payload["input"])
+    started = time.monotonic()
+    logger.info(
+        "worker workflow started run_id=%s workflow=%s provider=%s model=%s task_id=%s",
+        run_id, workflow_name, run.provider, run.model, task_id,
+    )
     try:
         with session.begin_nested():
             run, workflow_input = _refresh_scheduled_training_plan_context(
@@ -327,6 +356,11 @@ def _process_task(session: Session, task_id: str) -> None:
             if result.status == "completed":
                 queue.complete(task_id, now=_utc_now())
     except Exception as exc:
+        logger.error(
+            "worker workflow raised run_id=%s workflow=%s error_type=%s task_id=%s duration_ms=%s",
+            run_id, workflow_name, type(exc).__name__, task_id,
+            round((time.monotonic() - started) * 1000),
+        )
         queue.fail(
             task_id,
             error_type=exc.__class__.__name__,
@@ -337,6 +371,11 @@ def _process_task(session: Session, task_id: str) -> None:
         )
         runs.fail_run(run.fail(error_type=exc.__class__.__name__, error_message=str(exc)))
         return
+    logger.info(
+        "worker workflow finished run_id=%s workflow=%s status=%s error_type=%s task_id=%s duration_ms=%s",
+        run_id, workflow_name, result.status, result.error_type, task_id,
+        round((time.monotonic() - started) * 1000),
+    )
     if result.status != "completed":
         queue.fail(
             task_id,

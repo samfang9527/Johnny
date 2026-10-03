@@ -299,7 +299,7 @@ def test_training_plan_repository_round_trips_structured_steps_and_plan_metadata
         assert loaded.metadata["version"] == 2
         assert loaded.workouts[0].phase == "build"
         assert loaded.workouts[0].coach_note == "Keep the first two reps controlled."
-        assert loaded.workouts[0].compact_summary == "15 min warmup + 4 x (800m interval / 400m easy) + 10 min cooldown"
+        assert loaded.workouts[0].compact_summary == "暖身 15 分鐘 ＋ 4 組（主課表・間歇配速 800 公尺／組間恢復・輕鬆配速 400 公尺） ＋ 緩和 10 分鐘"
         assert loaded.workouts[0].steps[1].repeat_count == 4
 
 

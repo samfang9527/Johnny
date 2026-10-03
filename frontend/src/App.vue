@@ -299,6 +299,7 @@ const signalCoverage = computed<SignalCoverageItem[]>(() => {
 const coveredSignalCount = computed(() => signalCoverage.value.filter((item) => item.covered).length)
 const recommendation = computed(() => apiRecommendation.value ?? (shouldRequireAuth() ? null : fixtureRecommendation))
 const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : shouldRequireAuth() ? [] : fixtureWorkouts))
+const visibleTrainingWeeks = ref(1)
 const journeyPhases = computed<PlanPhase[]>(() => shouldRequireAuth() ? apiPlanPhases.value.map((segment) => ({
   id: `${segment.phase}-${segment.startsOn}`,
   label: segment.label,
@@ -322,6 +323,28 @@ const todayIsoDate = computed(() => {
   const parts = new Intl.DateTimeFormat('en', { timeZone: userTimezone.value, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(calendarNow.value)
   return ['year', 'month', 'day'].map((key) => parts.find((part) => part.type === key)!.value).join('-')
 })
+const scheduleWeekStart = computed(() => {
+  const plan = activePlan.value
+  if (plan && isIsoDate(plan.starts_on) && isIsoDate(plan.ends_on)) {
+    if (todayIsoDate.value < plan.starts_on && apiTodayWorkout.value?.scheduledFor === todayIsoDate.value) {
+      return todayIsoDate.value
+    }
+    const elapsed = Math.floor((Date.parse(`${todayIsoDate.value}T00:00:00Z`) - Date.parse(`${plan.starts_on}T00:00:00Z`)) / 604_800_000)
+    const lastWeek = Math.floor((Date.parse(`${plan.ends_on}T00:00:00Z`) - Date.parse(`${plan.starts_on}T00:00:00Z`)) / 604_800_000)
+    return addCalendarDays(plan.starts_on, Math.min(Math.max(elapsed, 0), lastWeek) * 7)
+  }
+  const dates = displayWorkouts.value.map((workout) => workout.scheduledFor).filter(isIsoDate).sort()
+  return dates.find((value) => value >= todayIsoDate.value) ?? dates[dates.length - 1] ?? null
+})
+const visibleScheduleEnd = computed(() => scheduleWeekStart.value ? addCalendarDays(scheduleWeekStart.value, visibleTrainingWeeks.value * 7 - 1) : null)
+const visibleScheduleWorkouts = computed(() => {
+  if (!scheduleWeekStart.value || !visibleScheduleEnd.value) return displayWorkouts.value
+  return displayWorkouts.value
+    .filter((workout) => isIsoDate(workout.scheduledFor) && workout.scheduledFor >= scheduleWeekStart.value! && workout.scheduledFor <= visibleScheduleEnd.value!)
+    .sort((left, right) => left.scheduledFor!.localeCompare(right.scheduledFor!))
+})
+const hasMoreTrainingWeeks = computed(() => Boolean(visibleScheduleEnd.value && displayWorkouts.value.some((workout) => isIsoDate(workout.scheduledFor) && workout.scheduledFor > visibleScheduleEnd.value!)))
+watch([scheduleWeekStart, () => activePlan.value?.id], () => { visibleTrainingWeeks.value = 1 })
 const recoveryWindow = computed(() => {
   if (!shouldRequireAuth() || (activePlan.value && activePlan.value.starts_on <= todayIsoDate.value && activePlan.value.ends_on >= todayIsoDate.value)) return null
   const previous = apiTrainingPlans.value
@@ -386,6 +409,15 @@ const selectedWorkoutDetail = computed(() => {
   return [todayWorkout.value, ...displayWorkouts.value].find((workout) => workout.id === id) ?? null
 })
 const selectedWorkoutRows = computed(() => (selectedWorkoutDetail.value ? buildWorkoutStepRows(selectedWorkoutDetail.value.steps ?? []) : []))
+const selectedWorkoutStages = computed(() => {
+  const stages: Array<{ key: WorkoutStageKey; label: string; rows: WorkoutStepRow[] }> = []
+  for (const row of selectedWorkoutRows.value) {
+    const last = stages[stages.length - 1]
+    if (last?.key === row.stage) last.rows.push(row)
+    else stages.push({ key: row.stage, label: workoutStageLabel(row.stage), rows: [row] })
+  }
+  return stages
+})
 
 type RecoveryDecision = {
   label: '可以照課表' | '建議保守' | '建議休息'
@@ -406,7 +438,10 @@ type WorkoutStepRow = {
   target: string
   note: string
   depth: number
+  stage: WorkoutStageKey
 }
+
+type WorkoutStageKey = 'warmup' | 'main' | 'recovery' | 'cooldown'
 
 type PlanPhaseTimelineSegment = {
   phase: TrainingPlanPhase
@@ -430,6 +465,7 @@ type AthleteSettingsForm = {
   preferredLongRunDay: string
   maxRunsPerWeek: string
   maxHardSessionsPerWeek: string
+  thresholdPace: string
   unitPreference: 'metric' | 'imperial'
   injuryStatus: 'none' | 'current' | 'recent' | 'recurring'
   injuryAreas: string[]
@@ -1628,6 +1664,7 @@ function applyAthleteProfilePayload(profile: AthleteProfileResponse) {
   }
   const unitPreference = profile.unit_preference === 'imperial' ? 'imperial' : 'metric'
   const mileageKm = numberValue(profile.current_weekly_mileage_km) ?? 0
+  const thresholdPace = numberValue(profile.threshold_pace_seconds_per_km ?? profile.training_preferences?.threshold_pace_seconds_per_km)
   athleteSettings.value = {
     timezone: timezone || userTimezone.value,
     experienceLevel: isExperienceLevel(profile.experience_level) ? profile.experience_level : '',
@@ -1636,6 +1673,7 @@ function applyAthleteProfilePayload(profile: AthleteProfileResponse) {
     preferredLongRunDay: typeof profile.preferred_long_run_day === 'string' ? profile.preferred_long_run_day : 'sunday',
     maxRunsPerWeek: String(numberValue(profile.max_runs_per_week) ?? 3),
     maxHardSessionsPerWeek: String(numberValue(profile.max_hard_sessions_per_week) ?? 2),
+    thresholdPace: thresholdPace && thresholdPace > 0 ? formatPace(thresholdPace) : '',
     unitPreference,
     injuryStatus: isInjuryStatus(profile.injury_status) ? profile.injury_status : 'none',
     injuryAreas: Array.isArray(profile.injury_areas) ? profile.injury_areas.map(String) : [],
@@ -1653,6 +1691,7 @@ function defaultAthleteSettingsForm(): AthleteSettingsForm {
     preferredLongRunDay: 'sunday',
     maxRunsPerWeek: '3',
     maxHardSessionsPerWeek: '2',
+    thresholdPace: '',
     unitPreference: 'metric',
     injuryStatus: 'none',
     injuryAreas: [],
@@ -1727,6 +1766,9 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   const maxRunsPerWeek = Number(form.maxRunsPerWeek)
   const maxHardSessionsPerWeekRaw = String(form.maxHardSessionsPerWeek ?? '').trim()
   const maxHardSessionsPerWeek = Number(maxHardSessionsPerWeekRaw)
+  const thresholdPaceText = form.thresholdPace.trim()
+  const thresholdPaceMatch = /^(\d{1,2}):([0-5]\d)$/.exec(thresholdPaceText)
+  const thresholdPaceSeconds = thresholdPaceMatch ? Number(thresholdPaceMatch[1]) * 60 + Number(thresholdPaceMatch[2]) : null
   const normalizedDays = form.preferredTrainingDays.map((day) => day.trim().toLowerCase())
   const uniqueDays = new Set(normalizedDays)
   if (!form.timezone.trim() || !isValidTimezone(form.timezone.trim())) {
@@ -1743,6 +1785,10 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   }
   if (!maxHardSessionsPerWeekRaw || !Number.isInteger(maxHardSessionsPerWeek) || maxHardSessionsPerWeek < 0 || maxHardSessionsPerWeek > 2) {
     setAthleteSettingsError('maxHardSessionsPerWeek', '質量課表必須介於 0 到 2')
+    return null
+  }
+  if (thresholdPaceText && (thresholdPaceSeconds === null || thresholdPaceSeconds < 120 || thresholdPaceSeconds > 900)) {
+    setAthleteSettingsError('thresholdPace', '請輸入 2:00 到 15:00 的分/公里配速')
     return null
   }
   if (uniqueDays.size !== normalizedDays.length) {
@@ -1766,6 +1812,7 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
     max_runs_per_week: maxRunsPerWeek,
     max_hard_sessions_per_week: maxHardSessionsPerWeek,
     unit_preference: form.unitPreference,
+    threshold_pace_seconds_per_km: thresholdPaceSeconds,
     injury_status: form.injuryStatus,
     injury_areas: form.injuryAreas.map((area) => area.trim().toLowerCase()),
     injury_notes: form.injuryNotes.trim() || null,
@@ -1981,16 +2028,16 @@ function mapWorkout(raw: unknown): WorkoutSummary | null {
     dateLabel: formatDateLabel(scheduledFor),
     scheduledFor,
     type: typeof workout.display_name === 'string' && workout.display_name.trim() ? workout.display_name : formatWorkoutType(String(workout.workout_type || 'workout')),
-    purpose: String(workout.purpose || workout.workout_type || 'Training session'),
+    purpose: workout.purpose ? String(workout.purpose) : workoutPurpose(String(workout.workout_type || 'workout')),
     distance: workout.planned_distance_meters ? formatDistance(Number(workout.planned_distance_meters)) : undefined,
     duration: workout.planned_duration_minutes ? `${workout.planned_duration_minutes} 分` : undefined,
     pace: formatPaceRange(workout.pace_range_seconds_per_km),
     heartRateZone: workout.heart_rate_zone ? String(workout.heart_rate_zone) : undefined,
-    phase: workout.phase ? String(workout.phase) : undefined,
+    phase: workout.phase ? formatPlanPhase(String(workout.phase)) : undefined,
     coachNote: workout.coach_note ? String(workout.coach_note) : undefined,
     stepSummary: workout.compact_summary ? String(workout.compact_summary) : undefined,
     steps,
-    status: String(workout.status || 'planned'),
+    status: formatWorkoutStatus(String(workout.status || 'planned')),
   }
 }
 
@@ -2073,20 +2120,22 @@ function closeWorkoutDetails() {
   selectedWorkoutId.value = null
 }
 
-function buildWorkoutStepRows(steps: WorkoutStep[], depth = 0, prefix = 'step'): WorkoutStepRow[] {
+function buildWorkoutStepRows(steps: WorkoutStep[], depth = 0, prefix = 'step', parentStage?: WorkoutStageKey): WorkoutStepRow[] {
   return steps.flatMap((step, index) => {
     const key = `${prefix}-${index}`
+    const stage = parentStage ?? workoutStepStage(step.type)
     if (step.type === 'repeat') {
       return [
         {
           key,
-          label: `${step.repeatCount || 1} x`,
+          label: `${step.repeatCount || 1} 組`,
           load: '重複組',
           target: '',
           note: step.notes || '',
           depth,
+          stage,
         },
-        ...buildWorkoutStepRows(step.steps ?? [], depth + 1, key),
+        ...buildWorkoutStepRows(step.steps ?? [], depth + 1, key, stage),
       ]
     }
     return [
@@ -2097,22 +2146,57 @@ function buildWorkoutStepRows(steps: WorkoutStep[], depth = 0, prefix = 'step'):
         target: formatWorkoutTarget(step.target),
         note: [step.notes, step.gradeNotes].filter(Boolean).join(' · '),
         depth,
+        stage,
       },
     ]
   })
 }
 
+function workoutStepStage(type: WorkoutStep['type']): WorkoutStageKey {
+  if (type === 'warmup') return 'warmup'
+  if (type === 'cooldown') return 'cooldown'
+  if (type === 'recovery') return 'recovery'
+  return 'main'
+}
+
+function workoutStageLabel(stage: WorkoutStageKey): string {
+  return { warmup: '暖身', main: '主課表', recovery: '恢復', cooldown: '緩和' }[stage]
+}
+
+function workoutStagePreview(workout: WorkoutSummary): Array<{ label: string; load: string }> {
+  return (workout.steps ?? []).map((step) => {
+    const label = workoutStageLabel(workoutStepStage(step.type))
+    if (step.type === 'repeat') {
+      const work = step.steps?.find((part) => ['work', 'hill', 'stride'].includes(part.type))
+      return { label, load: `${step.repeatCount || 1} 組${work ? ` × ${formatWorkoutStepLoad(work)}` : ''}` }
+    }
+    return { label, load: formatWorkoutStepLoad(step) }
+  }).filter((item) => item.load)
+}
+
+function workoutPurpose(type: string): string {
+  return ({ easy_run: '維持有氧基礎', recovery: '促進恢復', long_run: '建立長距離耐力', tempo: '提升持續配速能力', interval: '提升速度與有氧能力', hill: '建立爬坡力量與跑姿穩定性' } as Record<string, string>)[type] ?? '完成本次訓練'
+}
+
+function formatPlanPhase(value: string): string {
+  return ({ base: '基礎期', build: '建構期', peak: '高峰期', taper: '減量期', race: '賽事期', maintenance: '維持期' } as Record<string, string>)[value] ?? value
+}
+
+function formatWorkoutStatus(value: string): string {
+  return ({ planned: '已安排', adjusted: '已調整', completed: '已完成', skipped: '已跳過' } as Record<string, string>)[value] ?? value
+}
+
 function formatWorkoutStepLabel(value: WorkoutStep['type']): string {
   const labels: Record<WorkoutStep['type'], string> = {
-    warmup: 'Warmup',
-    work: 'Work',
-    recovery: 'Recovery',
-    cooldown: 'Cooldown',
-    repeat: 'Repeat',
-    drill: 'Drill',
-    stride: 'Stride',
-    hill: 'Hill',
-    free_run: 'Free run',
+    warmup: '暖身跑',
+    work: '訓練段',
+    recovery: '組間恢復',
+    cooldown: '緩和跑',
+    repeat: '重複組',
+    drill: '跑姿練習',
+    stride: '加速跑',
+    hill: '坡跑',
+    free_run: '自由跑',
   }
   return labels[value] ?? value
 }
@@ -2134,7 +2218,7 @@ function formatWorkoutTarget(target?: WorkoutTarget | null): string {
   }
   if (target.kind === 'pace') {
     const pace = formatPaceRange(target.paceRangeSecondsPerKm)
-    return [formatPaceZone(target.zone), pace || (target.rpe != null ? `RPE ${target.rpe}` : '')].filter(Boolean).join(' · ')
+    return [formatPaceZone(target.zone), pace ? `估計 ${pace}` : '', target.rpe != null ? `RPE ${target.rpe}` : ''].filter(Boolean).join(' · ')
   }
   if (target.kind === 'heart_rate') {
     const range = target.heartRateRangeBpm && target.heartRateRangeBpm.length >= 2 ? `${target.heartRateRangeBpm[0]}-${target.heartRateRangeBpm[1]} bpm` : ''
@@ -2235,10 +2319,7 @@ function statusLabel(status: RecommendationStatus): string {
 }
 
 function formatWorkoutType(value: string): string {
-  return value
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+  return ({ easy_run: '輕鬆跑', recovery: '恢復跑', long_run: '長跑', tempo: '節奏跑', interval: '間歇跑', hill: '坡跑', strength: '肌力訓練', cross_training: '交叉訓練', rest: '休息' } as Record<string, string>)[value] ?? '訓練'
 }
 
 function formatDistance(meters: number): string {
@@ -2274,13 +2355,13 @@ function formatPaceZone(value?: string | null): string {
     return ''
   }
   const labels: Record<string, string> = {
-    easy: 'Easy',
-    steady: 'Steady',
-    marathon: 'Marathon',
-    threshold: 'Threshold',
-    interval: 'Interval',
-    repetition: 'Repetition',
-    rpe_only: 'RPE only',
+    easy: '輕鬆配速',
+    steady: '穩定配速',
+    marathon: '馬拉松配速',
+    threshold: '乳酸閾值配速',
+    interval: '間歇配速',
+    repetition: '短間歇配速',
+    rpe_only: '體感強度',
   }
   return labels[value] ?? value
 }
@@ -2565,7 +2646,7 @@ function shouldRequireAuth(): boolean {
           <p class="section-label">今日課表</p>
           <h3>{{ todayWorkout.type }}</h3>
           <p>{{ todayWorkout.purpose }}</p>
-          <p v-if="todayWorkout.stepSummary" class="workout-step-summary">{{ todayWorkout.stepSummary }}</p>
+          <p v-if="workoutStagePreview(todayWorkout).length" class="workout-step-summary">{{ workoutStagePreview(todayWorkout).map((step) => `${step.label} ${step.load}`).join(' · ') }}</p>
           <div class="metric-row">
             <span v-if="todayWorkout.distance">{{ todayWorkout.distance }}</span>
             <span v-if="todayWorkout.duration">{{ todayWorkout.duration }}</span>
@@ -2763,29 +2844,35 @@ function shouldRequireAuth(): boolean {
         <section class="schedule-section" aria-labelledby="schedule-title">
           <div class="section-heading">
             <div>
-              <p class="section-label">Workout context</p>
+              <p class="section-label">課表安排</p>
               <h3 id="schedule-title">接下來課表</h3>
             </div>
-            <StatusBadge tone="info">{{ displayWorkouts.length }} 項</StatusBadge>
+            <StatusBadge tone="info">{{ visibleScheduleWorkouts.length }} 項</StatusBadge>
           </div>
 
-          <div v-if="displayWorkouts.length" class="schedule-list">
-            <article v-for="workout in displayWorkouts" :key="workout.id" class="schedule-row">
+          <div v-if="scheduleWeekStart && visibleScheduleEnd" class="schedule-week-heading" data-testid="training-week-range">
+            <strong>{{ visibleTrainingWeeks === 1 ? '本週課表' : `已顯示 ${visibleTrainingWeeks} 週` }}</strong>
+            <span>{{ formatDateLabel(scheduleWeekStart) }}–{{ formatDateLabel(visibleScheduleEnd) }}</span>
+          </div>
+
+          <div v-if="visibleScheduleWorkouts.length" class="schedule-list">
+            <article v-for="workout in visibleScheduleWorkouts" :key="workout.id" class="schedule-row" :data-testid="`schedule-workout-${workout.id}`">
               <div class="schedule-row__date">
                 <strong>{{ workout.weekday }}</strong>
                 <span>{{ workout.dateLabel }}</span>
               </div>
-              <div>
+              <div class="schedule-row__content">
                 <h3>{{ workout.type }}</h3>
-                <p>{{ workout.purpose }}</p>
-                <p v-if="workout.stepSummary" class="workout-step-summary">{{ workout.stepSummary }}</p>
+                <div v-if="workoutStagePreview(workout).length" class="workout-stage-preview" aria-label="課表步驟摘要">
+                  <span v-for="(stage, index) in workoutStagePreview(workout)" :key="`${stage.label}-${index}`"><small>{{ stage.label }}</small><strong>{{ stage.load }}</strong></span>
+                </div>
+                <p v-else class="schedule-row__purpose">{{ workout.purpose }}</p>
               </div>
               <div class="schedule-row__meta">
-                <div class="metric-row">
+                <div class="schedule-row__facts">
                   <span v-if="workout.distance">{{ workout.distance }}</span>
                   <span v-if="workout.duration">{{ workout.duration }}</span>
-                  <span v-if="workout.pace">{{ workout.pace }}</span>
-                  <span>{{ workout.status }}</span>
+                  <span v-if="workout.phase">{{ workout.phase }}</span>
                 </div>
                 <AppButton
                   v-if="hasWorkoutDetails(workout)"
@@ -2799,7 +2886,10 @@ function shouldRequireAuth(): boolean {
               </div>
             </article>
           </div>
-          <article v-else class="state-panel">
+          <div v-if="hasMoreTrainingWeeks" class="schedule-load-more">
+            <AppButton tone="neutral" type="button" data-testid="load-next-training-week" @click="visibleTrainingWeeks += 1">載入下一週</AppButton>
+          </div>
+          <article v-if="!visibleScheduleWorkouts.length" class="state-panel">
             <p class="section-label">Empty</p>
             <h3>目前沒有已排定課表</h3>
             <p>建立訓練計畫後，Johnny 會在這裡依日期整理接下來的課表。</p>
@@ -3136,6 +3226,21 @@ function shouldRequireAuth(): boolean {
             </label>
 
             <label>
+              閾值配速（分/公里，可選）
+              <input
+                v-model="athleteSettings.thresholdPace"
+                name="thresholdPace"
+                type="text"
+                inputmode="numeric"
+                placeholder="5:00"
+                autocomplete="off"
+                :aria-invalid="athleteSettingsFieldErrors.thresholdPace ? 'true' : 'false'"
+                aria-describedby="athlete-threshold-pace-error athlete-settings-status"
+              />
+              <span v-if="athleteSettingsFieldErrors.thresholdPace" id="athlete-threshold-pace-error" class="field-error">{{ athleteSettingsFieldErrors.thresholdPace }}</span>
+            </label>
+
+            <label>
               偏好長跑日
               <select
                 v-model="athleteSettings.preferredLongRunDay"
@@ -3322,37 +3427,44 @@ function shouldRequireAuth(): boolean {
       @keydown.esc="closeWorkoutDetails"
     >
       <section class="app-dialog__panel workout-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="workout-detail-title" tabindex="-1">
-        <div class="section-heading">
+        <div class="workout-detail-dialog__header">
           <div>
-            <p class="section-label">{{ selectedWorkoutDetail.dateLabel }} · {{ selectedWorkoutDetail.weekday }}</p>
+            <p class="workout-detail-dialog__eyebrow">{{ selectedWorkoutDetail.dateLabel }} · {{ selectedWorkoutDetail.weekday }}<span v-if="selectedWorkoutDetail.phase"> · {{ selectedWorkoutDetail.phase }}</span></p>
             <h3 id="workout-detail-title">{{ selectedWorkoutDetail.type }}</h3>
           </div>
-          <AppButton tone="neutral" type="button" data-testid="workout-detail-close" @click="closeWorkoutDetails">關閉</AppButton>
+          <AppButton tone="neutral" type="button" data-testid="workout-detail-close" aria-label="關閉課表詳情" title="關閉" @click="closeWorkoutDetails"><span aria-hidden="true">×</span></AppButton>
         </div>
-        <p>{{ selectedWorkoutDetail.purpose }}</p>
-        <p v-if="selectedWorkoutDetail.stepSummary" class="workout-detail-summary">{{ selectedWorkoutDetail.stepSummary }}</p>
-        <div class="metric-row">
-          <span v-if="selectedWorkoutDetail.distance">{{ selectedWorkoutDetail.distance }}</span>
-          <span v-if="selectedWorkoutDetail.duration">{{ selectedWorkoutDetail.duration }}</span>
-          <span v-if="selectedWorkoutDetail.pace">{{ selectedWorkoutDetail.pace }}</span>
-          <span v-if="selectedWorkoutDetail.heartRateZone">{{ selectedWorkoutDetail.heartRateZone }}</span>
-          <span v-if="selectedWorkoutDetail.phase">{{ selectedWorkoutDetail.phase }}</span>
+        <div class="workout-detail-dialog__facts" aria-label="課表資訊">
+          <div v-if="selectedWorkoutDetail.distance"><small>距離</small><strong>{{ selectedWorkoutDetail.distance }}</strong></div>
+          <div v-if="selectedWorkoutDetail.duration"><small>時間</small><strong>{{ selectedWorkoutDetail.duration }}</strong></div>
+          <div v-if="selectedWorkoutDetail.pace"><small>目標配速</small><strong>{{ selectedWorkoutDetail.pace }}</strong></div>
+          <div v-if="selectedWorkoutDetail.heartRateZone"><small>心率區間</small><strong>{{ selectedWorkoutDetail.heartRateZone }}</strong></div>
         </div>
-        <div v-if="selectedWorkoutRows.length" class="workout-step-list" aria-label="課表步驟">
-          <div
-            v-for="row in selectedWorkoutRows"
-            :key="row.key"
-            class="workout-step-row"
-            :class="`workout-step-row--depth-${row.depth}`"
-          >
-            <strong>{{ row.label }}</strong>
-            <span>{{ row.load }}</span>
-            <span v-if="row.target">{{ row.target }}</span>
-            <small v-if="row.note">{{ row.note }}</small>
-          </div>
-        </div>
-        <article v-if="selectedWorkoutDetail.coachNote" class="coach-note">
-          <p class="section-label">Coach note</p>
+        <div class="workout-detail-dialog__purpose"><strong>訓練目的</strong><p>{{ selectedWorkoutDetail.purpose }}</p></div>
+        <div v-if="selectedWorkoutStages.length" class="workout-detail-dialog__section-label">課表步驟</div>
+        <ol v-if="selectedWorkoutStages.length" class="workout-stage-list" aria-label="課表步驟" data-testid="workout-detail-steps">
+          <li v-for="(stage, stageIndex) in selectedWorkoutStages" :key="`${stage.key}-${stageIndex}`" class="workout-stage" :class="`workout-stage--${stage.key}`">
+            <div class="workout-stage__heading">
+              <span class="workout-stage__index">{{ String(stageIndex + 1).padStart(2, '0') }}</span>
+              <h4>{{ stage.label }}</h4>
+            </div>
+            <div class="workout-step-list">
+              <div
+                v-for="row in stage.rows"
+                :key="row.key"
+                class="workout-step-row"
+                :class="`workout-step-row--depth-${row.depth}`"
+              >
+                <strong>{{ row.label }}</strong>
+                <span>{{ row.load }}</span>
+                <span v-if="row.target">{{ row.target }}</span>
+                <small v-if="row.note">{{ row.note }}</small>
+              </div>
+            </div>
+          </li>
+        </ol>
+        <article v-if="selectedWorkoutDetail.coachNote" class="coach-note" data-testid="workout-detail-coach-note">
+          <p class="section-label">Johnny 提醒</p>
           <p>{{ selectedWorkoutDetail.coachNote }}</p>
         </article>
       </section>

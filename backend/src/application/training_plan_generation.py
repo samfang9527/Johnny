@@ -15,6 +15,7 @@ from src.domain.training_plan import (
     WorkoutStep,
     WorkoutTarget,
     validate_phase_segments,
+    workout_purpose_zh,
 )
 from src.domain.training_plan_regeneration import (
     RaceStrategySelection,
@@ -105,8 +106,11 @@ def build_plan_skeleton(
     )
     known_mileage = current_weekly_mileage_km is not None and current_weekly_mileage_km > 0
     quality_allowed = (
-        known_mileage and current_weekly_mileage_km >= 20
-        and experience_level in {"intermediate", "advanced"} and injury_status == "none"
+        known_mileage and injury_status == "none"
+        and (
+            (current_weekly_mileage_km >= 20 and experience_level in {"intermediate", "advanced"})
+            or (current_weekly_mileage_km >= 40 and experience_level == "beginner")
+        )
     )
     aerobic_only = plan_type == "race" and (race_date is None or race_date > ends_on)
     if not quality_allowed or aerobic_only:
@@ -463,13 +467,7 @@ def _template_workout(skeleton_workout: SkeletonWorkout, _week_index: int) -> Wo
 
 
 def _template_purpose(workout_type: str) -> str:
-    return {
-        "easy_run": "Easy aerobic running",
-        "long_run": "Aerobic endurance",
-        "tempo": "Threshold development",
-        "interval": "Interval development",
-        "hill": "Hill strength development",
-    }.get(workout_type, "Scheduled training")
+    return workout_purpose_zh(workout_type)
 
 
 def _template_steps(workout_type: str, planned_duration_minutes: int | None) -> tuple[WorkoutStep, ...]:

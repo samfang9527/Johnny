@@ -16,6 +16,7 @@ export interface AthleteProfileResponse {
   max_runs_per_week?: number | null
   max_hard_sessions_per_week?: number | null
   unit_preference?: 'metric' | 'imperial' | null
+  threshold_pace_seconds_per_km?: number | null
   training_preferences?: Record<string, unknown>
   injury_status?: 'none' | 'current' | 'recent' | 'recurring' | null
   injury_areas?: string[] | null
@@ -31,6 +32,7 @@ export interface AthleteProfileSavePayload {
   max_runs_per_week: number
   max_hard_sessions_per_week: number
   unit_preference: 'metric' | 'imperial'
+  threshold_pace_seconds_per_km: number | null
   injury_status: 'none' | 'current' | 'recent' | 'recurring'
   injury_areas: string[]
   injury_notes: string | null

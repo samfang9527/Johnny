@@ -35,6 +35,11 @@ def save_profile(
     training_preferences = dict(existing.preferences.training_preferences) if existing is not None else {}
     if "training_preferences" in payload.model_fields_set:
         training_preferences.update(payload.training_preferences)
+    if "threshold_pace_seconds_per_km" in payload.model_fields_set:
+        if payload.threshold_pace_seconds_per_km is None:
+            training_preferences.pop("threshold_pace_seconds_per_km", None)
+        else:
+            training_preferences["threshold_pace_seconds_per_km"] = payload.threshold_pace_seconds_per_km
 
     profile = AthleteProfile.create(
         user_id=current_user.id,
@@ -57,6 +62,9 @@ def save_profile(
 
 
 def _profile_response(profile: AthleteProfile) -> AthleteProfileResponse:
+    threshold_pace = profile.preferences.training_preferences.get("threshold_pace_seconds_per_km")
+    if not isinstance(threshold_pace, int) or isinstance(threshold_pace, bool) or not 120 <= threshold_pace <= 900:
+        threshold_pace = None
     return AthleteProfileResponse(
         id=profile.id,
         user_id=profile.user_id,
@@ -68,6 +76,7 @@ def _profile_response(profile: AthleteProfile) -> AthleteProfileResponse:
         max_runs_per_week=profile.preferences.max_runs_per_week,
         max_hard_sessions_per_week=profile.preferences.max_hard_sessions_per_week,
         unit_preference=profile.preferences.unit_preference,
+        threshold_pace_seconds_per_km=threshold_pace,
         training_preferences=profile.preferences.training_preferences,
         injury_status=profile.preferences.injury_status,
         injury_areas=list(profile.preferences.injury_areas),

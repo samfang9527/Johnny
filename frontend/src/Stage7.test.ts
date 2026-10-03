@@ -333,10 +333,39 @@ describe('Stage 7 frontend acceptance', () => {
       workout('legacy', '2026-09-28'),
     ] })])
     expect(app.text()).toContain('6 x 400m Intervals')
-    expect(app.text()).toContain('Easy Run')
+    expect(app.text()).toContain('輕鬆跑')
     await app.get('[data-testid="workout-detail-canonical"]').trigger('click')
     expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('RPE 8')
     expect(app.get('#workout-detail-title').text()).toBe('6 x 400m Intervals')
+  })
+  it('shows one plan week first, loads the next, and labels executable workout stages', async () => {
+    const app = await render([plan('maintenance', { starts_on: '2026-09-27', ends_on: '2026-10-24', workouts: [
+      { ...workout('first-week', '2026-09-27'), workout_type: 'interval', display_name: 'Intervals', steps: [
+        { type: 'warmup', duration_seconds: 600, target: { kind: 'rpe', rpe: 3 } },
+        { type: 'repeat', repeat_count: 4, steps: [
+          { type: 'work', distance_meters: 400, target: { kind: 'rpe', rpe: 8 } },
+          { type: 'recovery', duration_seconds: 90, target: { kind: 'rpe', rpe: 2 } },
+        ] },
+        { type: 'cooldown', duration_seconds: 600, target: { kind: 'rpe', rpe: 3 } },
+      ] },
+      workout('second-week', '2026-10-04'),
+      workout('third-week', '2026-10-11'),
+    ] })])
+
+    const schedule = app.get('.schedule-section')
+    expect(schedule.find('[data-testid="schedule-workout-first-week"]').exists()).toBe(true)
+    expect(schedule.find('[data-testid="schedule-workout-second-week"]').exists()).toBe(false)
+    expect(schedule.find('[data-testid="schedule-workout-third-week"]').exists()).toBe(false)
+    await app.get('[data-testid="workout-detail-first-week"]').trigger('click')
+    const detail = app.get('[data-testid="workout-detail-modal"]')
+    expect(detail.text()).toContain('暖身')
+    expect(detail.text()).toContain('主課表')
+    expect(detail.text()).toContain('緩和')
+    expect(detail.text()).toContain('4 組')
+    await app.get('[data-testid="workout-detail-close"]').trigger('click')
+    await app.get('[data-testid="load-next-training-week"]').trigger('click')
+    expect(schedule.find('[data-testid="schedule-workout-second-week"]').exists()).toBe(true)
+    expect(schedule.find('[data-testid="schedule-workout-third-week"]').exists()).toBe(false)
   })
   it.each([
     [null, 8, 'threshold · RPE 8'],

@@ -97,6 +97,17 @@ def test_quota_uses_athlete_local_completion_day_at_midnight() -> None:
     assert quota.next_available_at.isoformat() == "2026-09-19T00:00:00+08:00"
 
 
+def test_development_quota_limit_can_be_injected_without_changing_default() -> None:
+    runs = [_run("completed", "completed", finished_at=datetime(2026, 9, 17, 16, tzinfo=timezone.utc), created_plan_id="plan")]
+    current = datetime(2026, 9, 18, 4, tzinfo=timezone.utc)
+
+    default = calculate_regeneration_quota(runs, _profile(), current_instant=current, fallback_today=date(2026, 9, 18))
+    development = calculate_regeneration_quota(runs, _profile(), current_instant=current, fallback_today=date(2026, 9, 18), limit=10)
+
+    assert (default.limit, default.remaining, default.available) == (1, 0, False)
+    assert (development.limit, development.remaining, development.available) == (10, 9, True)
+
+
 def test_only_successful_manual_activation_consumes_quota() -> None:
     instant = datetime(2026, 9, 17, 2, tzinfo=timezone.utc)
     quota = calculate_regeneration_quota(

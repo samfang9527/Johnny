@@ -308,6 +308,25 @@ def test_completion_templates_have_numeric_targets_and_canonical_names() -> None
         assert workout["display_name"] != workout["purpose"]
 
 
+def test_plan_tool_replaces_english_only_model_copy_before_saving() -> None:
+    from src.application.agent_runtime import _fallback_training_plan_arguments
+
+    skeleton = _eight_week_skeleton()
+    arguments = _fallback_training_plan_arguments({"plan_skeleton": _skeleton_payload(skeleton)})
+    arguments["name"] = "English plan"
+    arguments["workouts"][0]["purpose"] = "Improve aerobic fitness"
+    arguments["workouts"][0]["coach_note"] = "Keep effort easy."
+    arguments["trusted_context"] = {"plan_skeleton": _skeleton_payload(skeleton)}
+
+    saved = CreateTrainingPlanTool(training_plans=FakeTrainingPlanStore(None)).run(
+        user_id="user-1", arguments=arguments,
+    )["training_plan"]
+
+    assert saved["name"] == "Johnny 訓練計畫"
+    assert saved["workouts"][0]["purpose"] == "維持有氧基礎"
+    assert saved["workouts"][0]["coach_note"] == "以能交談的強度完成，不必追求速度。"
+
+
 def test_runtime_fallback_key_sessions_fit_deterministic_duration_budget() -> None:
     from src.application.agent_runtime import _fallback_training_plan_arguments
     skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, current_weekly_mileage_km=25, experience_level="intermediate")
@@ -594,7 +613,7 @@ def test_create_training_plan_tool_repairs_eight_week_output_and_preserves_valid
             "ends_on": skeleton.ends_on.isoformat(),
             "metadata": {"phase_segments": skeleton.phase_segments},
             "workouts": [
-                _model_workout_payload(workout, purpose="Model coaching detail") for workout in valid_weeks
+                _model_workout_payload(workout, purpose="模型提供的訓練目的") for workout in valid_weeks
             ],
             "trusted_context": {"plan_skeleton": skeleton_payload},
         },
@@ -604,7 +623,7 @@ def test_create_training_plan_tool_repairs_eight_week_output_and_preserves_valid
     repair = payload["completion_repair"]
     assert len(saved["workouts"]) == len(skeleton.workouts)
     assert [workout["purpose"] for workout in saved["workouts"][: len(valid_weeks)]] == [
-        "Model coaching detail"
+        "模型提供的訓練目的"
     ] * len(valid_weeks)
     assert repair["repaired_week_indexes"] == [2, 3, 4, 5, 6, 7]
     assert repair == saved["metadata"]["internal"]["completion_repair"]

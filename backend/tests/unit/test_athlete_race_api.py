@@ -39,6 +39,7 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
         "max_runs_per_week": 2,
         "max_hard_sessions_per_week": 1,
         "unit_preference": "metric",
+        "threshold_pace_seconds_per_km": None,
         "training_preferences": {"surface": "road"},
         "injury_status": "recent",
         "injury_areas": ["calf", "quad"],

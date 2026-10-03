@@ -142,7 +142,8 @@ def test_interval_workout_accepts_repeat_steps_and_derives_compact_summary() -> 
 
     assert workout.phase == "build"
     assert workout.coach_note == "Keep the first two reps controlled."
-    assert workout.compact_summary == "15 min warmup + 4 x (800m interval / 400m easy) + 10 min cooldown"
+    assert workout.display_name == "間歇跑 · 4 組 × 800 公尺"
+    assert workout.compact_summary == "暖身 15 分鐘 ＋ 4 組（主課表・間歇配速 800 公尺／組間恢復・輕鬆配速 400 公尺） ＋ 緩和 10 分鐘"
     assert workout.to_payload()["steps"][1]["repeat_count"] == 4
 
 

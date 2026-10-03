@@ -101,7 +101,7 @@ def test_training_plan_routes_accept_and_return_structured_workout_details() -> 
     assert plan["metadata"]["plan_series_id"] == "series-1"
     assert workout["phase"] == "build"
     assert workout["coach_note"] == "Keep the first two reps controlled."
-    assert workout["compact_summary"] == "15 min warmup + 4 x (800m interval / 400m easy) + 10 min cooldown"
+    assert workout["compact_summary"] == "暖身 15 分鐘 ＋ 4 組（主課表・間歇配速 800 公尺／組間恢復・輕鬆配速 400 公尺） ＋ 緩和 10 分鐘"
     assert workout["steps"][1]["repeat_count"] == 4
 
 

@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getGoogleSignInRedirectUrl, getLocalApiBaseUrl } from './api/client'
 import App from './App.vue'
 
@@ -69,6 +69,8 @@ function mockAuthenticatedToday({
 
 describe('Johnny product shell', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
     window.location.hash = ''
     document.body.innerHTML = ''
     vi.stubGlobal(
@@ -79,6 +81,7 @@ describe('Johnny product shell', () => {
       }),
     )
   })
+  afterEach(() => { vi.useRealTimers() })
 
   it('renders the Today adjust decision card with factual evidence', () => {
     const wrapper = mount(App)
@@ -455,6 +458,7 @@ describe('Johnny product shell', () => {
                 max_runs_per_week: 3,
                 max_hard_sessions_per_week: 2,
                 unit_preference: 'metric',
+                threshold_pace_seconds_per_km: 300,
                 training_preferences: { surface: 'trail' },
                 injury_status: 'none',
                 injury_areas: [],
@@ -473,6 +477,7 @@ describe('Johnny product shell', () => {
           max_runs_per_week: 3,
           max_hard_sessions_per_week: 0,
           unit_preference: 'imperial',
+          threshold_pace_seconds_per_km: 315,
           injury_status: 'current',
           injury_areas: ['other'],
           injury_notes: 'Left calf watch',
@@ -490,6 +495,7 @@ describe('Johnny product shell', () => {
                 max_runs_per_week: 3,
                 max_hard_sessions_per_week: 0,
                 unit_preference: 'imperial',
+                threshold_pace_seconds_per_km: 315,
                 training_preferences: { surface: 'trail' },
                 injury_status: 'current',
                 injury_areas: ['other'],
@@ -509,6 +515,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('select[name="experienceLevel"]').text()).toContain('未設定')
     expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('32.2')
     expect((wrapper.get('input[name="maxHardSessionsPerWeek"]').element as HTMLInputElement).value).toBe('2')
+    expect((wrapper.get('input[name="thresholdPace"]').element as HTMLInputElement).value).toBe('5:00')
 
     await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('')
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
@@ -517,12 +524,19 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('#athlete-max-hard-sessions-error').text()).toBe('質量課表必須介於 0 到 2')
     expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(0)
 
+    await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('2')
+    await wrapper.get('input[name="thresholdPace"]').setValue('5:99')
+    await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
+    expect(wrapper.get('input[name="thresholdPace"]').attributes('aria-invalid')).toBe('true')
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(0)
+
     await wrapper.get('select[name="unitPreference"]').setValue('imperial')
     expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('20.0')
 
     await wrapper.get('select[name="experienceLevel"]').setValue('intermediate')
     await wrapper.get('input[name="currentWeeklyMileage"]').setValue('25.0')
     await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('0')
+    await wrapper.get('input[name="thresholdPace"]').setValue('5:15')
     await wrapper.get('select[name="injuryStatus"]').setValue('current')
     await wrapper.get('input[name="injuryArea-other"]').setValue(true)
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
@@ -701,7 +715,7 @@ describe('Johnny product shell', () => {
                   {
                     type: 'work',
                     distance_meters: 800,
-                    target: { kind: 'pace', zone: 'interval', pace_range_seconds_per_km: [278, 286], confidence: 'high' },
+                    target: { kind: 'pace', zone: 'interval', pace_range_seconds_per_km: [278, 286], rpe: 8, confidence: 'high' },
                   },
                   {
                     type: 'recovery',
@@ -730,15 +744,19 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.get('[data-today-section="workout"]').text()).toContain('4 x (800m interval / 400m easy)')
+    expect(wrapper.get('[data-today-section="workout"]').text()).toContain('主課表 4 組 × 0.8 km')
     await wrapper.get('button[data-testid="today-workout-detail"]').trigger('click')
 
     const modal = wrapper.get('[data-testid="workout-detail-modal"]')
-    expect(modal.text()).toContain('4 x')
+    expect(modal.text()).toContain('4 組')
     expect(modal.text()).toContain('0.8 km')
-    expect(modal.text()).toContain('Interval')
+    expect(modal.text()).toContain('間歇配速')
+    expect(modal.text()).toContain('RPE 8')
     expect(modal.text()).toContain('0.4 km')
     expect(modal.text()).toContain('維持可控')
+    expect(modal.get('#workout-detail-title').text()).toContain('間歇跑')
+    expect(modal.get('[data-testid="workout-detail-steps"]').text()).toContain('暖身')
+    expect(modal.get('[data-testid="workout-detail-coach-note"]').text()).toContain('維持可控')
   })
 
   it('keeps missing signals in recovery when Today has enough data and no recommendation', async () => {

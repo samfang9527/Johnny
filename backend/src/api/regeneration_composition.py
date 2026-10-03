@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Annotated
 
 from fastapi import Depends
@@ -12,12 +13,22 @@ from src.application.training_plan_regeneration import (
     GetRegenerationOptionsHandler,
     StartRegenerationHandler,
 )
+from src.domain.training_plan_regeneration import MANUAL_REGENERATION_LIMIT
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.models import UserModel
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.llm.settings import resolve_queued_training_plan_provider
+
+
+def _manual_regeneration_limit() -> int:
+    if os.getenv("ENV", "").strip().lower() not in {"local", "development"}:
+        return MANUAL_REGENERATION_LIMIT
+    configured = os.getenv("JOHNNY_DEV_REGENERATION_DAILY_LIMIT", "").strip()
+    if not configured.isdecimal():
+        return MANUAL_REGENERATION_LIMIT
+    return min(max(int(configured), 1), 100)
 
 
 def get_regeneration_options_handler(session: SessionDependency) -> GetRegenerationOptionsHandler:
@@ -27,6 +38,7 @@ def get_regeneration_options_handler(session: SessionDependency) -> GetRegenerat
         race_goals=athlete_races,
         training_plans=SqlAlchemyTrainingPlanRepository(session),
         runs=SqlAlchemyAgentRunRepository(session),
+        quota_limit=_manual_regeneration_limit(),
     )
 
 
@@ -52,6 +64,7 @@ def get_start_regeneration_handler(session: SessionDependency) -> StartRegenerat
             model=model,
         ),
         lock_user=lambda user_id: _lock_user(session, user_id),
+        quota_limit=_manual_regeneration_limit(),
     )
 
 

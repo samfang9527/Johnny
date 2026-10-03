@@ -106,7 +106,7 @@ def test_canonical_name_uses_repeat_workload_not_model_copy() -> None:
     from src.domain.training_plan import Workout, WorkoutStep, WorkoutTarget
 
     workout = Workout.create(scheduled_for=date(2027, 1, 4), workout_type="interval", purpose="Model title", steps=(WorkoutStep.create(step_type="repeat", repeat_count=4, steps=(WorkoutStep.create(step_type="work", distance_meters=400, target=WorkoutTarget.rpe(8)), WorkoutStep.create(step_type="recovery", distance_meters=200, target=WorkoutTarget.rpe(3)))),))
-    assert workout.to_payload()["display_name"] == "Interval 4 x 400 m"
+    assert workout.to_payload()["display_name"] == "間歇跑 · 4 組 × 400 公尺"
     assert replace(workout, purpose="Another title", coach_note="Flashy name").to_payload()["display_name"] == workout.to_payload()["display_name"]
 
 
@@ -117,4 +117,4 @@ def test_product_plan_response_exposes_canonical_name() -> None:
 
     workout = Workout.create(scheduled_for=date(2027, 1, 4), workout_type="easy_run", purpose="LLM title", planned_duration_minutes=20)
     plan = TrainingPlan.create(user_id="athlete", name="Plan", starts_on=workout.scheduled_for, ends_on=workout.scheduled_for, workouts=(workout,))
-    assert _plan_response(plan).model_dump()["workouts"][0]["display_name"] == "Easy run 20 min"
+    assert _plan_response(plan).model_dump()["workouts"][0]["display_name"] == "輕鬆跑 · 20 分鐘"

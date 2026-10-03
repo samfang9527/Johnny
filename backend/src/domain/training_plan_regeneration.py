@@ -103,15 +103,17 @@ def choose_regeneration_strategy(
 
 def calculate_regeneration_quota(
     runs: Sequence[AgentRun], profile: AthleteProfile | None, *,
-    current_instant: datetime, fallback_today: date,
+    current_instant: datetime, fallback_today: date, limit: int = MANUAL_REGENERATION_LIMIT,
 ) -> RegenerationQuota:
+    if limit < 1:
+        raise ValueError("manual regeneration limit must be positive")
     quota_day = athlete_local_day(current_instant, profile, fallback_today)
     used = sum(_consumes_quota(run, quota_day, profile) for run in runs)
-    remaining = max(0, MANUAL_REGENERATION_LIMIT - used)
+    remaining = max(0, limit - used)
     available = remaining > 0
     timezone_info = _athlete_timezone(profile) or timezone.utc
     return RegenerationQuota(
-        quota_day=quota_day, limit=MANUAL_REGENERATION_LIMIT, used=used,
+        quota_day=quota_day, limit=limit, used=used,
         remaining=remaining, available=available,
         next_available_at=None if available else datetime.combine(
             quota_day + timedelta(days=1), time.min, tzinfo=timezone_info,

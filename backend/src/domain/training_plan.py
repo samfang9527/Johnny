@@ -47,6 +47,44 @@ SUPPORTED_WORKOUT_TYPES = frozenset(
         "cross_training",
     }
 )
+WORKOUT_TYPE_LABELS = {
+    "easy_run": "輕鬆跑", "long_run": "長跑", "tempo": "節奏跑", "interval": "間歇跑",
+    "hill": "坡跑", "recovery": "恢復跑", "rest": "休息", "strength": "肌力訓練",
+    "cross_training": "交叉訓練",
+}
+WORKOUT_PURPOSES = {
+    "easy_run": "維持有氧基礎", "long_run": "建立長距離耐力", "tempo": "提升持續配速能力",
+    "interval": "提升速度與有氧能力", "hill": "建立爬坡力量與跑姿穩定性",
+    "recovery": "促進恢復", "rest": "充分休息", "strength": "建立肌力與身體穩定性",
+    "cross_training": "以低衝擊活動維持心肺能力",
+}
+WORKOUT_COACH_NOTES = {
+    "easy_run": "以能交談的強度完成，不必追求速度。",
+    "long_run": "前段保持保守，留意補水與後段的穩定度。",
+    "tempo": "保持可持續的節奏，不要一開始就加速。",
+    "interval": "每趟保持穩定，組間以輕鬆慢跑恢復。",
+    "hill": "上坡保持穩定出力，留意跑姿不要僵硬。",
+    "recovery": "放慢速度，以身體恢復為優先。",
+}
+STEP_TYPE_LABELS = {
+    "warmup": "暖身", "work": "主課表", "recovery": "組間恢復", "cooldown": "緩和",
+    "repeat": "重複組", "drill": "跑姿練習", "stride": "加速跑", "hill": "坡跑",
+    "free_run": "自由跑",
+}
+PACE_ZONE_LABELS = {
+    "easy": "輕鬆配速", "steady": "穩定配速", "marathon": "馬拉松配速",
+    "threshold": "乳酸閾值配速", "interval": "間歇配速", "repetition": "短間歇配速",
+    "rpe_only": "體感強度",
+}
+
+
+def workout_purpose_zh(workout_type: str) -> str:
+    return WORKOUT_PURPOSES.get(workout_type, "完成本次訓練")
+
+
+def workout_coach_note_zh(workout_type: str) -> str:
+    return WORKOUT_COACH_NOTES.get(workout_type, "依照身體狀態調整，必要時降低強度。")
+
 SUPPORTED_PLAN_PHASES = frozenset({"base", "build", "peak", "taper", "race", "maintenance"})
 HARD_SESSION_WORKOUT_TYPES = frozenset({"interval", "tempo", "hill", "long_run"})
 VALID_PLAN_STATUSES = frozenset({"active", "completed", "archived", "draft", "superseded"})
@@ -377,20 +415,21 @@ class Workout:
 
     @property
     def display_name(self) -> str:
-        label = self.workout_type.replace("_", " ").capitalize()
+        label = WORKOUT_TYPE_LABELS.get(self.workout_type, "訓練")
         for step in self.steps:
             if step.step_type == "repeat":
                 work = next((item for item in step.steps if item.step_type in {"work", "hill", "stride"}), None)
                 if work is not None:
-                    workload = f"{work.distance_meters} m" if work.distance_meters else f"{work.duration_seconds} s"
-                    return f"{label} {step.repeat_count} x {workload}"
+                    workload = _format_step_load(work)
+                    return f"{label} · {step.repeat_count} 組 × {workload}"
         main = next((step for step in self.steps if step.step_type == "work"), None)
         if main is not None:
-            workload = f"{main.distance_meters} m" if main.distance_meters else f"{main.duration_seconds} s"
-            return f"{label} {workload}"
+            return f"{label} · {_format_step_load(main)}"
         if self.planned_distance_meters is not None:
-            return f"{label} {self.planned_distance_meters / 1000:g} km"
-        return f"{label} {self.planned_duration_minutes} min"
+            return f"{label} · {_format_distance(self.planned_distance_meters)}"
+        if self.planned_duration_minutes is not None:
+            return f"{label} · {self.planned_duration_minutes} 分鐘"
+        return label
 
     @property
     def compact_summary(self) -> str | None:
@@ -570,16 +609,16 @@ class PlanAdjustmentProposal:
 
 
 def format_workout_steps_compact(steps: tuple[WorkoutStep, ...]) -> str:
-    return " + ".join(_format_step_compact(step) for step in steps)
+    return " ＋ ".join(_format_step_compact(step) for step in steps)
 
 
 def _format_step_compact(step: WorkoutStep) -> str:
     if step.step_type == "repeat":
-        nested = " / ".join(_format_step_compact(nested_step) for nested_step in step.steps)
-        return f"{step.repeat_count} x ({nested})"
+        nested = "／".join(_format_step_compact(nested_step) for nested_step in step.steps)
+        return f"{step.repeat_count} 組（{nested}）"
     load = _format_step_load(step)
     label = _format_step_label(step)
-    return f"{load} {label}".strip()
+    return f"{label} {load}".strip()
 
 
 def _format_step_load(step: WorkoutStep) -> str:
@@ -591,23 +630,24 @@ def _format_step_load(step: WorkoutStep) -> str:
 
 
 def _format_step_label(step: WorkoutStep) -> str:
+    step_label = STEP_TYPE_LABELS.get(step.step_type, "訓練")
     if step.target is not None and step.target.kind == "pace" and step.target.zone:
-        return step.target.zone
+        return f"{step_label}・{PACE_ZONE_LABELS.get(step.target.zone, '指定配速')}"
     if step.target is not None and step.target.kind == "heart_rate" and step.target.heart_rate_zone:
-        return step.target.heart_rate_zone
-    return step.step_type
+        return f"{step_label}・心率區間 {step.target.heart_rate_zone}"
+    return step_label
 
 
 def _format_distance(distance_meters: int) -> str:
     if distance_meters >= 1000 and distance_meters % 1000 == 0:
-        return f"{distance_meters // 1000}km"
-    return f"{distance_meters}m"
+        return f"{distance_meters // 1000} 公里"
+    return f"{distance_meters} 公尺"
 
 
 def _format_duration(duration_seconds: int) -> str:
     if duration_seconds % 60 == 0:
-        return f"{duration_seconds // 60} min"
-    return f"{duration_seconds} sec"
+        return f"{duration_seconds // 60} 分鐘"
+    return f"{duration_seconds} 秒"
 
 
 def _normalize_target(target: WorkoutTarget | dict[str, Any] | None) -> WorkoutTarget | None:
