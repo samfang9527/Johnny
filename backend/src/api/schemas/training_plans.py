@@ -41,13 +41,23 @@ class WorkoutStepPayload(BaseModel):
 
 class WorkoutRequest(BaseModel):
     scheduled_for: date
-    workout_type: str
+    workout_type: Literal[
+        "easy_run",
+        "long_run",
+        "tempo",
+        "interval",
+        "hill",
+        "recovery",
+        "rest",
+        "strength",
+        "cross_training",
+    ]
     purpose: str
     planned_duration_minutes: int | None = Field(default=None, gt=0)
     planned_distance_meters: int | None = Field(default=None, gt=0)
     pace_range_seconds_per_km: list[int] | None = None
     heart_rate_zone: str | None = None
-    phase: str | None = None
+    phase: Literal["base", "build", "peak", "taper", "race", "maintenance"] | None = None
     coach_note: str | None = Field(default=None, max_length=500)
     steps: list[WorkoutStepPayload] = Field(default_factory=list)
     status: str = "planned"
@@ -61,12 +71,13 @@ class WorkoutResponse(BaseModel):
     id: str | None
     scheduled_for: date
     workout_type: str
+    display_name: str | None = None
     purpose: str
     planned_duration_minutes: int | None = None
     planned_distance_meters: int | None = None
     pace_range_seconds_per_km: list[int] | None = None
     heart_rate_zone: str | None = None
-    phase: str | None = None
+    phase: Literal["base", "build", "peak", "taper", "race", "maintenance"] | None = None
     coach_note: str | None = None
     steps: list[dict[str, Any]] = Field(default_factory=list)
     compact_summary: str | None = None

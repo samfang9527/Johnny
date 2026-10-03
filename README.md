@@ -61,7 +61,7 @@ Install dependencies:
 
 ```bash
 cd frontend
-npm install
+npm ci
 ```
 
 Prepare local configuration:
@@ -190,3 +190,14 @@ PYTHONPATH=backend ./.venv/bin/python -m src.infrastructure.integrations.garminc
 The `JOHNNY_GARMINCONNECT_SESSION_FILE` name is retained for compatibility, but the value is now passed to `garminconnect` as its token-store path. If no valid token-store file exists, the probe can log in with `JOHNNY_GARMINCONNECT_EMAIL` and `JOHNNY_GARMINCONNECT_PASSWORD` and let `garminconnect` write refreshed tokens to that local path. Probe credentials are local-only. Application sync stores either non-sensitive credential references or encrypted private-mode credential payloads, never the raw Garmin password, cookies, unencrypted token-store JSON, or unencrypted provider token values.
 
 Manual end-to-end local testing is documented in `docs/manual_test_runbook.md`.
+
+Training plan integration verification has separate opt-in runbooks:
+
+- [PostgreSQL verification](docs/training_plan_postgresql_verification.md)
+- [Live LLM verification](docs/training_plan_live_llm_verification.md)
+
+Recoverable local cleanup archives are kept under the gitignored
+`.local-backups/` directory. The 2026-09-27 archive includes a manifest, original
+duplicate files, and the previous frontend dependency tree; do not delete or
+restore these blindly. Rebuilding the existing frontend lockfile restored tests
+and builds in the original project directory without a temporary source copy.

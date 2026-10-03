@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 from src.domain.agent_runtime import ModelRequest, ModelResponse, TokenUsage, ToolCallRequest
+from src.domain.training_plan import workout_purpose_zh
 
 
 class LocalCompanionModelGateway:
@@ -80,22 +81,36 @@ def _recommendation_arguments(*, title: str, rationale: str) -> dict:
 
 
 def _plan_arguments(context: dict) -> dict:
-    starts_on = _date_from_context(context.get("starts_on")) or date.today()
-    ends_on = starts_on + timedelta(days=27)
-    workouts = []
-    workout_types = ("easy_run", "interval", "tempo", "long_run")
-    for week in range(4):
-        week_start = starts_on + timedelta(days=week * 7)
-        for offset, workout_type in zip((1, 3, 5, 6), workout_types):
-            scheduled_for = week_start + timedelta(days=offset)
-            if scheduled_for > ends_on:
-                continue
-            workouts.append(_workout_payload(scheduled_for=scheduled_for, workout_type=workout_type, week=week, offset=offset))
+    skeleton = context.get("plan_skeleton")
+    if not isinstance(skeleton, dict):
+        raise ValueError("plan skeleton is required for local training plan generation")
+    starts_on = _date_from_context(skeleton.get("starts_on"))
+    ends_on = _date_from_context(skeleton.get("ends_on"))
+    if starts_on is None or ends_on is None:
+        raise ValueError("plan skeleton dates are required")
+    skeleton_workouts = skeleton.get("workouts")
+    if not isinstance(skeleton_workouts, list):
+        raise ValueError("plan skeleton workouts are required")
+    workouts = [
+        _workout_payload(
+            scheduled_for=_required_skeleton_date(workout),
+            workout_type=str(workout["workout_type"]),
+            phase=str(workout["phase"]),
+            planned_duration_minutes=workout.get("planned_duration_minutes"),
+            planned_distance_meters=workout.get("planned_distance_meters"),
+            week=(_required_skeleton_date(workout) - starts_on).days // 7,
+        )
+        for workout in skeleton_workouts
+        if isinstance(workout, dict)
+    ]
     return {
-        "name": "Local Generated Four Week Plan",
+        "name": "Johnny 訓練計畫",
         "race_id": context.get("selected_race_id"),
         "starts_on": starts_on.isoformat(),
         "ends_on": ends_on.isoformat(),
+        "metadata": {
+            "phase_segments": skeleton.get("phase_segments", ()),
+        },
         "workouts": workouts,
     }
 
@@ -109,25 +124,35 @@ def _date_from_context(value) -> date | None:
 
 
 def _workout_purpose(workout_type: str) -> str:
-    return {
-        "easy_run": "Aerobic base",
-        "interval": "Controlled speed development",
-        "strength": "Durability and injury resistance",
-        "tempo": "Sustained threshold development",
-        "long_run": "Endurance progression",
-    }[workout_type]
+    return workout_purpose_zh(workout_type)
 
 
-def _workout_payload(*, scheduled_for: date, workout_type: str, week: int, offset: int) -> dict:
-    duration_minutes = 30 + week * 5 + offset * 3
+def _required_skeleton_date(workout: dict) -> date:
+    scheduled_for = _date_from_context(workout.get("scheduled_for"))
+    if scheduled_for is None:
+        raise ValueError("plan skeleton workout date is required")
+    return scheduled_for
+
+
+def _workout_payload(
+    *,
+    scheduled_for: date,
+    workout_type: str,
+    phase: str,
+    planned_duration_minutes: int | None,
+    planned_distance_meters: int | None,
+    week: int,
+) -> dict:
+    duration_minutes = planned_duration_minutes or 45
     if workout_type == "interval":
         return {
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": workout_type,
             "purpose": _workout_purpose(workout_type),
-            "planned_duration_minutes": max(duration_minutes, 50),
-            "phase": "build",
-            "coach_note": "Keep every repeat controlled and recover with an easy jog.",
+            "planned_duration_minutes": duration_minutes,
+            "planned_distance_meters": planned_distance_meters,
+            "phase": phase,
+            "coach_note": "每趟保持穩定，組間以輕鬆慢跑恢復。",
             "steps": [
                 {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
                 {
@@ -142,18 +167,40 @@ def _workout_payload(*, scheduled_for: date, workout_type: str, week: int, offse
             ],
         }
     if workout_type == "tempo":
-        work_duration_seconds = 1_500 + week * 120
-        planned_duration_minutes = (600 + work_duration_seconds + 600 + 59) // 60
+        warmup_seconds, work_duration_seconds, cooldown_seconds = _tempo_step_durations(duration_minutes, week)
         return {
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": workout_type,
             "purpose": _workout_purpose(workout_type),
-            "planned_duration_minutes": planned_duration_minutes,
-            "phase": "build",
-            "coach_note": "Keep the tempo effort smooth and sustainable.",
+            "planned_duration_minutes": duration_minutes,
+            "planned_distance_meters": planned_distance_meters,
+            "phase": phase,
+            "coach_note": "節奏維持平順，以能穩定完成全程為原則。",
+            "steps": [
+                {"type": "warmup", "duration_seconds": warmup_seconds, "target": {"kind": "rpe", "rpe": 3}},
+                {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
+                {"type": "cooldown", "duration_seconds": cooldown_seconds, "target": {"kind": "rpe", "rpe": 2}},
+            ],
+        }
+    if workout_type == "hill":
+        return {
+            "scheduled_for": scheduled_for.isoformat(),
+            "workout_type": workout_type,
+            "purpose": _workout_purpose(workout_type),
+            "planned_duration_minutes": duration_minutes,
+            "planned_distance_meters": planned_distance_meters,
+            "phase": phase,
+            "coach_note": "上坡保持穩定出力，留意跑姿不要僵硬。",
             "steps": [
                 {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
-                {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
+                {
+                    "type": "repeat",
+                    "repeat_count": 4,
+                    "steps": [
+                        {"type": "hill", "duration_seconds": 120, "target": {"kind": "rpe", "rpe": 8}},
+                        {"type": "recovery", "duration_seconds": 300, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
+                    ],
+                },
                 {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
             ],
         }
@@ -162,7 +209,8 @@ def _workout_payload(*, scheduled_for: date, workout_type: str, week: int, offse
         "workout_type": workout_type,
         "purpose": _workout_purpose(workout_type),
         "planned_duration_minutes": duration_minutes,
-        "phase": "build",
+        "planned_distance_meters": planned_distance_meters,
+        "phase": phase,
         "steps": [
             {
                 "type": "free_run",
@@ -171,3 +219,11 @@ def _workout_payload(*, scheduled_for: date, workout_type: str, week: int, offse
             }
         ],
     }
+
+
+def _tempo_step_durations(duration_minutes: int, week: int) -> tuple[int, int, int]:
+    total_seconds = duration_minutes * 60
+    warmup_seconds = min(600, total_seconds // 3)
+    cooldown_seconds = min(600, (total_seconds - warmup_seconds) // 2)
+    work_duration_seconds = min(1_500 + week * 120, total_seconds - warmup_seconds - cooldown_seconds)
+    return warmup_seconds, work_duration_seconds, cooldown_seconds

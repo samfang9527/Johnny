@@ -13,6 +13,9 @@ class AthleteProfileStore(Protocol):
     def get_profile_for_user(self, user_id: str) -> AthleteProfile | None:
         ...
 
+    def list_profiles_for_users(self, user_ids: list[str]) -> list[AthleteProfile]:
+        ...
+
 
 class RaceGoalStore(Protocol):
     def create_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal:
@@ -30,6 +33,15 @@ class RaceGoalStore(Protocol):
         ...
 
     def get_race_goal_for_user(self, user_id: str, race_goal_id: str | None) -> RaceGoal | None:
+        ...
+
+    def list_race_goals_for_users(
+        self,
+        user_ids: list[str],
+        *,
+        race_date_from: date | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[RaceGoal]:
         ...
 
     def update_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal | None:

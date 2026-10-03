@@ -21,13 +21,24 @@ class TrainingPlanStore(Protocol):
     def get_current_plan_for_user(self, user_id: str) -> TrainingPlan | None:
         ...
 
+    def list_active_plans_ending_on_or_before(self, ends_on: date) -> list[TrainingPlan]:
+        ...
+
+    def list_active_plans_ending_on_or_after(self, ends_on: date) -> list[TrainingPlan]:
+        ...
+
     def get_plan_for_user(self, user_id: str, plan_id: str | None) -> TrainingPlan | None:
         ...
 
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
         ...
 
-    def create_active_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
+    def create_active_plan(
+        self,
+        user_id: str,
+        plan: TrainingPlan,
+        replace_all_active: bool = False,
+    ) -> TrainingPlan:
         ...
 
     def create_draft_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:

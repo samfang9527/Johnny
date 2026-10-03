@@ -155,6 +155,7 @@ def test_openai_gateway_exposes_training_plan_generation_write_contract() -> Non
         "long_run",
         "tempo",
         "interval",
+        "hill",
         "recovery",
         "rest",
         "strength",
@@ -162,7 +163,15 @@ def test_openai_gateway_exposes_training_plan_generation_write_contract() -> Non
     ]
     assert workout_schema["properties"]["planned_duration_minutes"]["minimum"] == 1
     assert workout_schema["properties"]["planned_distance_meters"]["minimum"] == 1
-    assert workout_schema["properties"]["phase"]["type"] == ["string", "null"]
+    assert workout_schema["properties"]["phase"]["type"] == "string"
+    assert workout_schema["properties"]["phase"]["enum"] == [
+        "base",
+        "build",
+        "peak",
+        "taper",
+        "race",
+        "maintenance",
+    ]
     assert workout_schema["properties"]["steps"]["items"]["properties"]["type"]["enum"] == [
         "warmup",
         "work",
@@ -175,6 +184,14 @@ def test_openai_gateway_exposes_training_plan_generation_write_contract() -> Non
         "free_run",
     ]
     assert plan_schema["properties"]["metadata"]["type"] == "object"
+    assert plan_schema["properties"]["metadata"]["properties"]["phase_segments"]["items"]["properties"]["phase"]["enum"] == [
+        "base",
+        "build",
+        "peak",
+        "taper",
+        "race",
+        "maintenance",
+    ]
     for tool in created["tools"]:
         _assert_strict_schema(tool["parameters"])
 
@@ -189,7 +206,8 @@ def test_openai_gateway_rejects_non_positive_generated_plan_distance() -> None:
                     '{"name": "Generated Plan", "race_id": null, '
                     '"starts_on": "2027-01-01", "ends_on": "2027-01-28", '
                     '"metadata": {"plan_series_id": null, "previous_plan_id": null, "version": null, '
-                    '"generation_mode": null, "continuity_summary": null, "weekly_rationales": []}, '
+                        '"generation_mode": null, "continuity_summary": null, "phase_segments": [], '
+                        '"weekly_rationales": []}, '
                     '"workouts": [{"id": null, "scheduled_for": "2027-01-03", '
                     '"workout_type": "easy_run", "purpose": "Aerobic base", '
                     '"planned_duration_minutes": null, "planned_distance_meters": 0, '

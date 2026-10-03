@@ -19,6 +19,7 @@ from src.application.async_agent_runs import QueueAgentRunHandler
 from src.domain.agent_runtime import AgentRun, AgentRunStep
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
+from src.infrastructure.llm.settings import resolve_queued_training_plan_provider
 
 
 router = APIRouter(prefix="/agent-runs", tags=["agent-runs"])
@@ -52,20 +53,14 @@ def queue_training_plan_generation(
     session: SessionDependency,
 ) -> DataEnvelope[QueuedAgentRunResponse]:
     ensure_current_user(session, current_user)
-    idempotency_key = "training_plan_generation:{}:{}:{}:{}:{}:{}".format(
-        current_user.id,
-        payload.race_id or "",
-        payload.starts_on.isoformat() if payload.starts_on else "",
-        payload.ends_on.isoformat() if payload.ends_on else "",
-        payload.plan_horizon_weeks or "",
-        payload.plan_type,
-    )
-    result = _queue_handler(session).queue_run(
+    idempotency_key = f"training_plan_generation:{current_user.id}"
+    result = _queue_handler(session, training_plan=True).queue_run(
         user_id=current_user.id,
         workflow_name="training_plan_generation",
         trigger_type="manual",
         idempotency_key=idempotency_key,
         payload=payload.model_dump(mode="json"),
+        requeue_terminal=True,
     )
     return DataEnvelope(data=_queued_response(result))
 
@@ -113,13 +108,17 @@ def list_agent_run_steps(
     return list_envelope([_step_response(step) for step in steps[offset : offset + page_query_limit(limit)]], limit=limit, offset=offset)
 
 
-def _queue_handler(session) -> QueueAgentRunHandler:
+def _queue_handler(session, *, training_plan: bool = False) -> QueueAgentRunHandler:
+    provider, model = (
+        resolve_queued_training_plan_provider()
+        if training_plan else ("local", "deterministic-local-companion")
+    )
     return QueueAgentRunHandler(
         runs=SqlAlchemyAgentRunRepository(session),
         queue=SqlAlchemyAgentTaskQueue(session),
         prompt_version="running-companion-v1",
-        provider="local",
-        model="deterministic-local-companion",
+        provider=provider,
+        model=model,
     )
 
 

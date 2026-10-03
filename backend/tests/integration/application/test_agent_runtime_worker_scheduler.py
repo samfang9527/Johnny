@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+import logging
 import sys
 
 from fastapi.testclient import TestClient
@@ -11,13 +12,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import scripts.agent_runtime as agent_runtime
 from scripts.agent_runtime import main, schedule_once, work_drain
+from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.training_plan_regeneration import BackgroundProjectionCandidate, RegenerationStrategy
 from src.api.dependencies import get_session
 from src.application.interfaces.task_queue import TaskEnvelope
 from src.api.dependencies import CurrentUser, ensure_current_user
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
-from src.infrastructure.database.models import AgentTaskModel, Base, RecommendationModel, TrainingPlanModel
+from src.infrastructure.database.models import (
+    AgentRunModel,
+    AgentTaskModel,
+    Base,
+    RaceModel,
+    RecommendationModel,
+    TrainingPlanModel,
+    UserModel,
+)
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
 from src.main import create_app
 
@@ -49,6 +61,7 @@ def test_schedule_once_enqueues_today_daily_jobs_for_context_ready_active_users(
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
         _create_context_ready_user(uow.session, "eligible-user")
+        _create_context_ready_user(uow.session, "another-eligible-user")
         ensure_current_user(uow.session, CurrentUser(id="missing-profile"))
         uow.session.execute(
             TrainingPlanModel.__table__.insert().values(
@@ -66,20 +79,500 @@ def test_schedule_once_enqueues_today_daily_jobs_for_context_ready_active_users(
         tasks = uow.session.scalars(select(AgentTaskModel)).all()
         uow.commit()
 
-    assert queued == 1
+    assert queued == 3
     assert duplicate == 0
-    assert len(tasks) == 1
-    assert tasks[0].payload["input"]["anchor_date"] == "2027-01-28"
+    assert len(tasks) == 3
+    daily_tasks = [task for task in tasks if task.task_type == "agent.workflow"]
+    daily_check_tasks = [task for task in tasks if task.task_type == "training-plan.daily-check"]
+    assert len(daily_tasks) == 2
+    assert {task.payload["input"]["anchor_date"] for task in daily_tasks} == {"2027-01-28"}
+    assert len(daily_check_tasks) == 1
+    assert daily_check_tasks[0].payload == {"anchor_date": "2027-01-28"}
 
 
-def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_session_factory) -> None:
+def test_scheduler_training_plan_queue_uses_resolved_provider(sqlite_session_factory, monkeypatch) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        ensure_current_user(uow.session, CurrentUser(id="scheduled-provider-user"))
+        handler = agent_runtime._training_plan_queue_handler(uow.session)
+        result = handler.queue_run(
+            user_id="scheduled-provider-user",
+            workflow_name="training_plan_generation",
+            trigger_type="scheduled",
+            idempotency_key="scheduled-provider-test",
+            payload={"plan_type": "base", "starts_on": "2027-01-01"},
+        )
+        uow.commit()
+
+    assert (result.run.provider, result.run.model) == ("openai", "test-model")
+
+
+def test_work_drain_daily_check_queues_one_background_generation_for_repeated_checks(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    anchor = datetime.now(timezone.utc).date()
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        _create_context_ready_user(uow.session, "background-user")
+        uow.session.execute(
+            TrainingPlanModel.__table__.update()
+            .where(TrainingPlanModel.id == "plan-background-user")
+            .values(
+                starts_on=anchor - timedelta(days=34),
+                ends_on=anchor - timedelta(days=7),
+            )
+        )
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        for suffix in ("first", "repeat"):
+            queue.enqueue(
+                TaskEnvelope(
+                    task_type="training-plan.daily-check",
+                    payload={"anchor_date": anchor.isoformat()},
+                    correlation_id=f"daily-check:{suffix}",
+                    idempotency_key=f"daily-check:{anchor.isoformat()}:{suffix}",
+                )
+            )
+
+        processed = work_drain(uow.session)
+        generation_runs = list(
+            uow.session.scalars(
+                select(AgentRunModel).where(AgentRunModel.workflow_name == "training_plan_generation")
+            )
+        )
+        generation_tasks = list(
+            uow.session.scalars(
+                select(AgentTaskModel).where(
+                    AgentTaskModel.task_type == "agent.workflow",
+                    AgentTaskModel.payload["workflow_name"].as_string() == "training_plan_generation",
+                )
+            )
+        )
+        uow.commit()
+
+    assert processed == 3
+    assert len(generation_runs) == 1
+    assert len(generation_tasks) == 1
+    assert generation_runs[0].metadata_json["manual_regeneration"] is False
+    assert generation_runs[0].metadata_json["trigger_type"] == "scheduled"
+
+
+def test_work_drain_daily_check_continues_after_candidate_queue_failure(sqlite_session_factory, monkeypatch, caplog) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    strategy = RegenerationStrategy(
+        race_id=None,
+        plan_type="maintenance",
+        reason="no_future_race",
+        starts_on=date(2027, 2, 1),
+        plan_horizon_weeks=4,
+    )
+    failed_candidate = BackgroundProjectionCandidate(
+        user_id="failed-user",
+        previous_plan_id="failed-plan",
+        previous_ends_on=date(2027, 1, 24),
+        strategy=strategy,
+    )
+    succeeding_candidate = BackgroundProjectionCandidate(
+        user_id="succeeding-user",
+        previous_plan_id="succeeding-plan",
+        previous_ends_on=date(2027, 1, 24),
+        strategy=strategy,
+    )
+
+    class BackgroundService:
+        def find_users_needing_projection(self, today):
+            assert today == date(2027, 1, 31)
+            return [failed_candidate, succeeding_candidate]
+
+        def queue_background_generation(self, candidate):
+            if candidate.user_id == "failed-user":
+                raise ConnectionError("background queue unavailable")
+            queued_user_ids.append(candidate.user_id)
+
+    queued_user_ids: list[str] = []
+    monkeypatch.setattr(agent_runtime, "_training_plan_regeneration_service", lambda session: BackgroundService())
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        task = queue.enqueue(
+            TaskEnvelope(
+                task_type="training-plan.daily-check",
+                payload={"anchor_date": "2027-01-31"},
+                correlation_id="daily-check-candidate-failure",
+                idempotency_key="daily-check-candidate-failure",
+            )
+        )
+
+        processed = work_drain(uow.session)
+        persisted_task = uow.session.get(AgentTaskModel, task.id)
+        uow.commit()
+
+    assert processed == 1
+    assert queued_user_ids == ["succeeding-user"]
+    assert persisted_task.status == "completed"
+    assert "training plan background generation queue failed" in caplog.text
+
+
+def test_work_drain_daily_check_retries_discovery_failure(sqlite_session_factory, monkeypatch, caplog) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    class UnavailableBackgroundService:
+        def find_users_needing_projection(self, today):
+            raise ConnectionError("database unavailable")
+
+    monkeypatch.setattr(
+        agent_runtime,
+        "_training_plan_regeneration_service",
+        lambda session: UnavailableBackgroundService(),
+    )
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        queue = SqlAlchemyAgentTaskQueue(uow.session)
+        task = queue.enqueue(
+            TaskEnvelope(
+                task_type="training-plan.daily-check",
+                payload={"anchor_date": "2027-01-31"},
+                correlation_id="daily-check-discovery-failure",
+                idempotency_key="daily-check-discovery-failure",
+            )
+        )
+
+        processed = work_drain(uow.session)
+        persisted_task = uow.session.get(AgentTaskModel, task.id)
+        uow.commit()
+
+    assert processed == 1
+    assert persisted_task.status == "queued"
+    assert persisted_task.retry_count == 1
+    assert persisted_task.last_error_type == "ConnectionError"
+    assert "training plan daily check discovery failed" in caplog.text
+
+
+def test_work_drain_daily_check_isolates_database_discovery_failure(
+    sqlite_session_factory,
+    monkeypatch,
+) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        ensure_current_user(uow.session, CurrentUser(id="discovery-owner"))
+        uow.commit()
+
+    class DatabaseFailingBackgroundService:
+        def __init__(self, session) -> None:
+            self._session = session
+
+        def find_users_needing_projection(self, today):
+            self._session.add(
+                UserModel(
+                    id="duplicate-discovery-email",
+                    email="discovery-owner@local.johnny",
+                    display_name="Duplicate",
+                )
+            )
+            self._session.flush()
+
+    monkeypatch.setattr(
+        agent_runtime,
+        "_training_plan_regeneration_service",
+        lambda session: DatabaseFailingBackgroundService(session),
+    )
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        task = SqlAlchemyAgentTaskQueue(uow.session).enqueue(
+            TaskEnvelope(
+                task_type="training-plan.daily-check",
+                payload={"anchor_date": "2027-01-31"},
+                correlation_id="daily-check-database-discovery-failure",
+                idempotency_key="daily-check-database-discovery-failure",
+            )
+        )
+
+        processed = work_drain(uow.session)
+        persisted_task = uow.session.get(AgentTaskModel, task.id)
+        uow.commit()
+
+    assert processed == 1
+    assert persisted_task.status == "queued"
+    assert persisted_task.retry_count == 1
+    assert persisted_task.last_error_type == "IntegrityError"
+
+
+def test_work_drain_daily_check_isolates_database_queue_failure_per_candidate(
+    sqlite_session_factory,
+    monkeypatch,
+) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    strategy = RegenerationStrategy(
+        race_id=None,
+        plan_type="maintenance",
+        reason="no_future_race",
+        starts_on=date(2027, 2, 1),
+        plan_horizon_weeks=4,
+    )
+    candidates = [
+        BackgroundProjectionCandidate(
+            user_id="database-failure-user",
+            previous_plan_id="database-failure-plan",
+            previous_ends_on=date(2027, 1, 24),
+            strategy=strategy,
+        ),
+        BackgroundProjectionCandidate(
+            user_id="database-success-user",
+            previous_plan_id="database-success-plan",
+            previous_ends_on=date(2027, 1, 24),
+            strategy=strategy,
+        ),
+    ]
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        ensure_current_user(uow.session, CurrentUser(id="queue-owner"))
+        uow.commit()
+
+    queued_user_ids: list[str] = []
+
+    class DatabaseFailingBackgroundService:
+        def __init__(self, session) -> None:
+            self._session = session
+
+        def find_users_needing_projection(self, today):
+            return candidates
+
+        def queue_background_generation(self, candidate):
+            if candidate.user_id == "database-failure-user":
+                self._session.add(
+                    UserModel(
+                        id="duplicate-queue-email",
+                        email="queue-owner@local.johnny",
+                        display_name="Duplicate",
+                    )
+                )
+                self._session.flush()
+            self._session.scalar(select(UserModel.id).where(UserModel.id == "queue-owner"))
+            queued_user_ids.append(candidate.user_id)
+
+    monkeypatch.setattr(
+        agent_runtime,
+        "_training_plan_regeneration_service",
+        lambda session: DatabaseFailingBackgroundService(session),
+    )
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        task = SqlAlchemyAgentTaskQueue(uow.session).enqueue(
+            TaskEnvelope(
+                task_type="training-plan.daily-check",
+                payload={"anchor_date": "2027-01-31"},
+                correlation_id="daily-check-database-candidate-failure",
+                idempotency_key="daily-check-database-candidate-failure",
+            )
+        )
+
+        processed = work_drain(uow.session)
+        persisted_task = uow.session.get(AgentTaskModel, task.id)
+        uow.commit()
+
+    assert processed == 1
+    assert queued_user_ids == ["database-success-user"]
+    assert persisted_task.status == "completed"
+
+
+def test_scheduled_training_plan_refreshes_stale_dates_and_race_before_execution(
+    sqlite_session_factory,
+    monkeypatch,
+) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    execution_instant = datetime(2027, 1, 10, 12, tzinfo=timezone.utc)
+    previous_ends_on = date(2027, 1, 1)
+    stale_starts_on = date(2027, 1, 9)
+    refreshed_starts_on = date(2027, 1, 11)
+    monkeypatch.setattr(agent_runtime, "_utc_now", lambda: execution_instant)
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        _create_context_ready_user(uow.session, "refresh-user")
+        uow.session.execute(
+            TrainingPlanModel.__table__.update()
+            .where(TrainingPlanModel.id == "plan-refresh-user")
+            .values(
+                starts_on=previous_ends_on - timedelta(days=27),
+                ends_on=previous_ends_on,
+            )
+        )
+        uow.session.execute(
+            RaceModel.__table__.insert(),
+            [
+                {
+                    "id": "cancelled-primary",
+                    "user_id": "refresh-user",
+                    "name": "Cancelled Primary",
+                    "race_date": date(2027, 2, 1),
+                    "distance_meters": 21097,
+                    "status": "cancelled",
+                    "metadata_json": {"priority": "primary"},
+                },
+                {
+                    "id": "active-secondary",
+                    "user_id": "refresh-user",
+                    "name": "Active Secondary",
+                    "race_date": date(2027, 2, 15),
+                    "distance_meters": 21097,
+                    "status": "active",
+                    "metadata_json": {"priority": "secondary"},
+                },
+                {
+                    "id": "planned-primary",
+                    "user_id": "refresh-user",
+                    "name": "Planned Primary",
+                    "race_date": date(2027, 3, 1),
+                    "distance_meters": 21097,
+                    "status": "planned",
+                    "metadata_json": {"priority": "primary"},
+                },
+            ],
+        )
+        queued = QueueAgentRunHandler(
+            runs=SqlAlchemyAgentRunRepository(uow.session),
+            queue=SqlAlchemyAgentTaskQueue(uow.session),
+            prompt_version="running-companion-v1",
+            provider="local",
+            model="deterministic-local-companion",
+        ).queue_run(
+            user_id="refresh-user",
+            workflow_name="training_plan_generation",
+            trigger_type="scheduled",
+            idempotency_key="training_plan_generation:refresh-user",
+            payload={
+                "race_id": "cancelled-primary",
+                "plan_type": "race",
+                "starts_on": stale_starts_on.isoformat(),
+                "plan_horizon_weeks": 4,
+                "manual_regeneration": False,
+                "trigger_type": "scheduled",
+                "replace_active_projection": True,
+                "previous_ends_on": previous_ends_on.isoformat(),
+            },
+            requeue_terminal=True,
+        )
+
+        processed = work_drain(uow.session)
+        refreshed_run = uow.session.get(AgentRunModel, queued.run.id)
+        refreshed_task = uow.session.get(AgentTaskModel, queued.task.id)
+        generated_plan = uow.session.scalar(
+            select(TrainingPlanModel).where(
+                TrainingPlanModel.user_id == "refresh-user",
+                TrainingPlanModel.status == "active",
+            )
+        )
+        previous_plan = uow.session.get(TrainingPlanModel, "plan-refresh-user")
+        uow.commit()
+
+    assert processed == 1
+    assert refreshed_run.status == "completed"
+    assert refreshed_run.metadata_json["race_id"] == "planned-primary"
+    assert refreshed_run.metadata_json["starts_on"] == refreshed_starts_on.isoformat()
+    assert refreshed_run.metadata_json["plan_type"] == "race"
+    assert refreshed_run.metadata_json["replace_active_projection"] is True
+    assert refreshed_task.payload["input"]["race_id"] == "planned-primary"
+    assert refreshed_task.payload["input"]["starts_on"] == refreshed_starts_on.isoformat()
+    assert generated_plan is not None
+    assert generated_plan.race_id == "planned-primary"
+    assert generated_plan.starts_on == refreshed_starts_on
+    assert previous_plan.status == "superseded"
+
+
+def test_legacy_scheduled_training_plan_derives_previous_end_before_execution(
+    sqlite_session_factory,
+    monkeypatch,
+) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    execution_instant = datetime(2027, 1, 10, 12, tzinfo=timezone.utc)
+    previous_ends_on = date(2027, 1, 1)
+    refreshed_starts_on = date(2027, 1, 11)
+    monkeypatch.setattr(agent_runtime, "_utc_now", lambda: execution_instant)
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        _create_context_ready_user(uow.session, "legacy-refresh-user")
+        uow.session.execute(
+            TrainingPlanModel.__table__.update()
+            .where(TrainingPlanModel.id == "plan-legacy-refresh-user")
+            .values(
+                starts_on=previous_ends_on - timedelta(days=27),
+                ends_on=previous_ends_on,
+            )
+        )
+        uow.session.execute(
+            RaceModel.__table__.insert(),
+            [
+                {
+                    "id": "legacy-completed-race",
+                    "user_id": "legacy-refresh-user",
+                    "name": "Completed Race",
+                    "race_date": date(2027, 2, 1),
+                    "distance_meters": 21097,
+                    "status": "completed",
+                    "metadata_json": {"priority": "primary"},
+                },
+                {
+                    "id": "legacy-planned-race",
+                    "user_id": "legacy-refresh-user",
+                    "name": "Planned Race",
+                    "race_date": date(2027, 2, 15),
+                    "distance_meters": 21097,
+                    "status": "planned",
+                    "metadata_json": {"priority": "secondary"},
+                },
+            ],
+        )
+        queued = QueueAgentRunHandler(
+            runs=SqlAlchemyAgentRunRepository(uow.session),
+            queue=SqlAlchemyAgentTaskQueue(uow.session),
+            prompt_version="running-companion-v1",
+            provider="local",
+            model="deterministic-local-companion",
+        ).queue_run(
+            user_id="legacy-refresh-user",
+            workflow_name="training_plan_generation",
+            trigger_type="scheduled",
+            idempotency_key="training_plan_generation:legacy-refresh-user",
+            payload={
+                "race_id": "legacy-completed-race",
+                "plan_type": "race",
+                "starts_on": "2027-01-09",
+                "plan_horizon_weeks": 4,
+                "manual_regeneration": False,
+                "trigger_type": "scheduled",
+                "replace_active_projection": True,
+            },
+            requeue_terminal=True,
+        )
+
+        processed = work_drain(uow.session)
+        refreshed_run = uow.session.get(AgentRunModel, queued.run.id)
+        refreshed_task = uow.session.get(AgentTaskModel, queued.task.id)
+        generated_plan = uow.session.scalar(
+            select(TrainingPlanModel).where(
+                TrainingPlanModel.user_id == "legacy-refresh-user",
+                TrainingPlanModel.status == "active",
+            )
+        )
+        uow.commit()
+
+    assert processed == 1
+    assert refreshed_run.status == "completed"
+    assert refreshed_run.metadata_json["previous_ends_on"] == previous_ends_on.isoformat()
+    assert refreshed_run.metadata_json["starts_on"] == refreshed_starts_on.isoformat()
+    assert refreshed_run.metadata_json["race_id"] == "legacy-planned-race"
+    assert refreshed_task.payload["input"]["previous_ends_on"] == previous_ends_on.isoformat()
+    assert refreshed_task.payload["input"]["starts_on"] == refreshed_starts_on.isoformat()
+    assert generated_plan is not None
+    assert generated_plan.starts_on == refreshed_starts_on
+    assert generated_plan.race_id == "legacy-planned-race"
+
+
+def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_session_factory, caplog) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
         _create_context_ready_user(uow.session, "worker-user")
         handler_runs = SqlAlchemyAgentRunRepository(uow.session)
         queue = SqlAlchemyAgentTaskQueue(uow.session)
-        from src.application.async_agent_runs import QueueAgentRunHandler
-
         handler = QueueAgentRunHandler(
             runs=handler_runs,
             queue=queue,
@@ -99,16 +592,17 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
             workflow_name="training_plan_generation",
             trigger_type="manual",
             idempotency_key="training:worker-user:2027-01-28",
-            payload={"plan_type": "base", "starts_on": "2027-01-01"},
+            payload={"plan_type": "base", "starts_on": "2027-01-01", "goal_notes": "private-runner-note"},
         )
 
-        processed = work_drain(uow.session)
+        with caplog.at_level(logging.INFO, logger="scripts.agent_runtime"):
+            processed = work_drain(uow.session)
         daily_run = handler_runs.get_run_for_user("worker-user", daily.run.id)
         training_run = handler_runs.get_run_for_user("worker-user", training.run.id)
         generated_plan = uow.session.scalar(
             select(TrainingPlanModel).where(
                 TrainingPlanModel.user_id == "worker-user",
-                TrainingPlanModel.name == "Local Generated Four Week Plan",
+                TrainingPlanModel.name == "Johnny 訓練計畫",
             )
         )
         recommendation_count = len(uow.session.scalars(select(RecommendationModel)).all())
@@ -119,7 +613,17 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
     assert training_run.status == "completed"
     assert generated_plan is not None
     assert generated_plan.status == "active"
+    assert generated_plan.metadata_json["phase_segments"] == [
+        {"phase": "maintenance", "starts_on": "2027-01-01", "ends_on": "2027-01-28"}
+    ]
+    assert {workout.details["phase"] for workout in generated_plan.workouts} == {"maintenance"}
     assert recommendation_count == 1
+    assert "worker task claimed task_id=" in caplog.text
+    assert f"worker workflow started run_id={training.run.id} workflow=training_plan_generation provider=local" in caplog.text
+    assert f"worker workflow finished run_id={training.run.id} workflow=training_plan_generation status=completed" in caplog.text
+    assert "worker task finished task_id=" in caplog.text
+    assert "duration_ms=" in caplog.text
+    assert "private-runner-note" not in caplog.text
 
 
 def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_session_factory) -> None:
@@ -136,6 +640,14 @@ def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_sessi
         )
         queue.enqueue(
             task=TaskEnvelope(
+                task_type="training-plan.daily-check",
+                payload={},
+                correlation_id="daily-check-malformed",
+                idempotency_key="daily-check-malformed",
+            )
+        )
+        queue.enqueue(
+            task=TaskEnvelope(
                 task_type="agent.workflow",
                 payload={"workflow_name": "daily_recommendation"},
                 correlation_id="malformed",
@@ -144,18 +656,16 @@ def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_sessi
         )
 
         processed = work_drain(uow.session)
-        statuses = [
-            task.status for task in uow.session.scalars(select(AgentTaskModel).order_by(AgentTaskModel.created_at))
-        ]
-        errors = [
-            task.last_error_type
-            for task in uow.session.scalars(select(AgentTaskModel).order_by(AgentTaskModel.created_at))
-        ]
+        tasks = list(uow.session.scalars(select(AgentTaskModel).order_by(AgentTaskModel.created_at)))
+        statuses = [task.status for task in tasks]
+        errors = [task.last_error_type for task in tasks]
+        retry_counts = [task.retry_count for task in tasks]
         uow.commit()
 
-    assert processed == 2
-    assert statuses == ["failed", "failed"]
-    assert errors == ["UnknownTaskType", "MalformedTaskPayload"]
+    assert processed == 3
+    assert statuses == ["failed", "failed", "failed"]
+    assert errors == ["UnknownTaskType", "MalformedTaskPayload", "MalformedTaskPayload"]
+    assert retry_counts == [1, 1, 1]
 
 
 def test_agent_runtime_cli_work_drain_does_not_require_smoke_openai_flag(tmp_path, monkeypatch, capsys) -> None:
@@ -170,6 +680,84 @@ def test_agent_runtime_cli_work_drain_does_not_require_smoke_openai_flag(tmp_pat
 
     assert result == 0
     assert "processed=0" in capsys.readouterr().out
+
+
+def test_agent_runtime_cli_worker_preserves_provider_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setattr(
+        sys, "argv",
+        ["agent_runtime.py", "--database-url", f"sqlite:///{tmp_path / 'worker.db'}", "work-drain"],
+    )
+
+    assert main() == 0
+    import os
+    assert os.environ["LLM_PROVIDER"] == "openai"
+
+
+def test_worker_uses_queued_local_provider_with_openai_environment(sqlite_session_factory, monkeypatch) -> None:
+    from src.api.dependencies import build_request_companion_agent
+    from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
+
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "changed-model")
+    with sqlite_session_factory() as session:
+        agent = build_request_companion_agent(session, provider="local", model="deterministic-local-companion")
+    assert isinstance(agent._model_gateway, LocalCompanionModelGateway)
+
+
+def test_worker_uses_queued_openai_model_not_current_environment(sqlite_session_factory, monkeypatch) -> None:
+    from src.api import dependencies
+
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "changed-model")
+    seen = []
+    monkeypatch.setattr(dependencies, "build_running_companion_agent", lambda **kwargs: seen.append(kwargs["settings"]) or object())
+    with sqlite_session_factory() as session:
+        dependencies.build_request_companion_agent(session, provider="openai", model="queued-model")
+    assert len(seen) == 1
+    assert seen[0].model == "queued-model"
+
+
+def test_worker_fails_queued_openai_run_without_key(sqlite_session_factory, monkeypatch, caplog) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        ensure_current_user(uow.session, CurrentUser(id="missing-worker-key"))
+        queued = QueueAgentRunHandler(
+            runs=SqlAlchemyAgentRunRepository(uow.session),
+            queue=SqlAlchemyAgentTaskQueue(uow.session),
+            prompt_version="running-companion-v1", provider="openai", model="queued-model",
+        ).queue_run(
+            user_id="missing-worker-key", workflow_name="training_plan_generation",
+            trigger_type="manual", idempotency_key="missing-worker-key",
+            payload={"plan_type": "base", "starts_on": "2027-01-01"},
+        )
+        with caplog.at_level(logging.INFO, logger="scripts.agent_runtime"):
+            assert work_drain(uow.session) == 1
+        run = uow.session.get(AgentRunModel, queued.run.id)
+        task = uow.session.scalar(select(AgentTaskModel).where(AgentTaskModel.payload["run_id"].as_string() == run.id))
+        assert run.status == "failed"
+        assert task.status == "failed"
+        assert run.provider == "openai"
+        assert "required" in run.error_message
+        assert f"worker workflow started run_id={run.id} workflow=training_plan_generation provider=openai" in caplog.text
+        assert f"worker workflow raised run_id={run.id} workflow=training_plan_generation error_type=" in caplog.text
+        assert "status=failed" in caplog.text
+        assert "OPENAI_API_KEY" not in caplog.text
+
+
+def test_worker_rejects_unknown_persisted_provider(sqlite_session_factory) -> None:
+    from src.api.dependencies import build_request_companion_agent
+
+    with sqlite_session_factory() as session:
+        try:
+            build_request_companion_agent(session, provider="other", model="unknown")
+        except ValueError as exc:
+            assert "provider" in str(exc).lower()
+        else:
+            assert False, "unknown provider should fail"
 
 
 def test_smoke_flow_queues_with_http_drains_worker_and_polls_completion(monkeypatch) -> None:
@@ -229,4 +817,4 @@ def test_smoke_flow_queues_with_http_drains_worker_and_polls_completion(monkeypa
     assert daily_run["status"] == "completed"
     assert training_run["status"] == "completed"
     assert len(recommendations) == 1
-    assert any(plan["name"] == "Local Generated Four Week Plan" and plan["status"] == "active" for plan in plans)
+    assert any(plan["name"] == "Johnny 訓練計畫" and plan["status"] == "active" for plan in plans)

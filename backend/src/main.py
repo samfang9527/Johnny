@@ -19,6 +19,7 @@ from .api.routes.me import router as me_router
 from .api.routes.races import router as races_router
 from .api.routes.recommendations import router as recommendations_router
 from .api.routes.today import router as today_router
+from .api.routes.training_plan_regeneration import router as training_plan_regeneration_router
 from .api.routes.training_plans import router as training_plans_router
 from .infrastructure.logging.logger_config import setup_logging
 
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(races_router)
     api_v1_router.include_router(recommendations_router)
     api_v1_router.include_router(today_router)
+    api_v1_router.include_router(training_plan_regeneration_router)
     api_v1_router.include_router(training_plans_router)
     app.include_router(api_v1_router)
     return app

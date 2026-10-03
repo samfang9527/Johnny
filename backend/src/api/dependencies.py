@@ -34,7 +34,11 @@ from src.infrastructure.database.session import create_session_factory
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.llm.composition import build_running_companion_agent
 from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
-from src.infrastructure.llm.settings import load_llm_settings
+from src.infrastructure.llm.settings import (
+    LlmSettingsError,
+    load_llm_settings,
+    load_openai_settings_for_queued_model,
+)
 
 
 MVP_CAPABILITIES = [
@@ -173,14 +177,21 @@ def build_request_companion_agent(
             prompt_version="running-companion-v1",
             provider="local",
             model=model or "deterministic-local-companion",
+            transaction_factory=session.begin_nested,
         )
-    settings = load_llm_settings()
+    if provider == "openai":
+        settings = load_openai_settings_for_queued_model(model)
+    elif provider is None:
+        settings = load_llm_settings()
+    else:
+        raise LlmSettingsError(f"Unsupported queued provider: {provider}")
     if settings is not None:
         return build_running_companion_agent(
             run_store=SqlAlchemyAgentRunRepository(session),
             tools=tools,
             prompt_version="running-companion-v1",
             settings=settings,
+            transaction_factory=session.begin_nested,
         )
     return RunningCompanionAgent(
         run_store=SqlAlchemyAgentRunRepository(session),
@@ -189,4 +200,5 @@ def build_request_companion_agent(
         prompt_version="running-companion-v1",
         provider="local",
         model="deterministic-local-companion",
+        transaction_factory=session.begin_nested,
     )

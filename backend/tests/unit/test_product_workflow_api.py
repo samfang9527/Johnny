@@ -258,6 +258,11 @@ def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_pol
         headers=headers,
         json={"plan_type": "base", "starts_on": "2027-02-01", "plan_horizon_weeks": 4},
     )
+    competing_training = client.post(
+        "/api/v1/agent-runs/training-plan-generation",
+        headers=headers,
+        json={"plan_type": "race", "starts_on": "2027-03-01", "plan_horizon_weeks": 8},
+    )
     polled = client.get(daily.json()["data"]["poll_url"], headers=headers)
     steps = client.get(f"/api/v1/agent-runs/{daily.json()['data']['run_id']}/steps", headers=headers)
     listed = client.get("/api/v1/agent-runs?status=queued", headers=headers)
@@ -271,6 +276,7 @@ def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_pol
     assert forced.json()["data"]["run_id"] != daily.json()["data"]["run_id"]
     assert training.status_code == 200
     assert training.json()["data"]["workflow_name"] == "training_plan_generation"
+    assert competing_training.json()["data"]["run_id"] == training.json()["data"]["run_id"]
     assert polled.json()["data"]["id"] == daily.json()["data"]["run_id"]
     assert polled.json()["data"]["started_at"] is None
     assert steps.json()["data"] == []
@@ -624,6 +630,417 @@ def test_garmin_connect_endpoint_returns_reauth_state_when_initial_sync_is_crede
     assert "session-secret" not in response.text
     assert "secret-token" not in response.text
     assert "garmin-password" not in response.text
+
+
+def test_training_plan_regeneration_options_returns_quota_strategy_and_run_slots() -> None:
+    from datetime import date, timedelta
+
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "regeneration-options-user"}
+    race_date = date.today() + timedelta(days=80)
+    race = client.post(
+        "/api/v1/races",
+        headers=headers,
+        json={
+            "name": "Priority Half",
+            "race_date": race_date.isoformat(),
+            "distance_meters": 21097,
+            "priority": "primary",
+        },
+    ).json()["data"]
+
+    response = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["quota"] == {
+        "quota_day": date.today().isoformat(),
+        "limit": 1,
+        "used": 0,
+        "remaining": 1,
+        "available": True,
+        "next_available_at": None,
+    }
+    assert data["default_strategy"]["race_id"] == race["id"]
+    assert data["default_strategy"]["plan_type"] == "race"
+    assert data["default_strategy"]["plan_horizon_weeks"] == 12
+    assert data["in_flight_run"] is None
+    assert data["run"] is None
+
+
+def test_regeneration_without_race_id_uses_options_current_plan_race() -> None:
+    from datetime import date, timedelta
+
+    from sqlalchemy import select
+
+    from src.infrastructure.database.models import AgentRunModel, TrainingPlanModel
+
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "current-plan-race-user"}
+    race_date = (date.today() + timedelta(days=80)).isoformat()
+    primary = client.post(
+        "/api/v1/races", headers=headers,
+        json={"name": "Primary", "race_date": race_date, "distance_meters": 21097, "priority": "primary"},
+    ).json()["data"]
+    current_race = client.post(
+        "/api/v1/races", headers=headers,
+        json={"name": "Current", "race_date": race_date, "distance_meters": 10000, "priority": "secondary"},
+    ).json()["data"]
+    with session_factory() as session:
+        session.add(TrainingPlanModel(
+            user_id="current-plan-race-user", race_id=current_race["id"], name="Active Projection",
+            starts_on=date.today(), ends_on=date.today() + timedelta(days=28), status="active",
+            metadata_json={},
+        ))
+        session.commit()
+
+    options = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+    started = client.post(
+        "/api/v1/training-plans/regenerations", headers=headers,
+        json={"client_request_id": "default-current-race", "plan_type": "race"},
+    )
+
+    assert primary["id"] != current_race["id"]
+    assert options.status_code == 200
+    assert started.status_code == 200
+    assert options.json()["data"]["default_strategy"]["race_id"] == current_race["id"]
+    assert started.json()["data"]["default_strategy"] == options.json()["data"]["default_strategy"]
+    with session_factory() as session:
+        run = session.scalar(select(AgentRunModel).where(
+            AgentRunModel.id == started.json()["data"]["run"]["run_id"]
+        ))
+        assert run.metadata_json["race_id"] == current_race["id"]
+
+
+def test_regeneration_queue_pins_provider_and_reuses_run_after_environment_change(monkeypatch) -> None:
+    from sqlalchemy import select
+
+    from src.infrastructure.database.models import AgentRunModel
+
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "provider-regeneration-user"}
+    payload = {"client_request_id": "provider-request", "plan_type": "maintenance"}
+    first = client.post("/api/v1/training-plans/regenerations", headers=headers, json=payload)
+    monkeypatch.delenv("LLM_API_KEY")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    second = client.post("/api/v1/training-plans/regenerations", headers=headers, json=payload)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["data"]["run"]["run_id"] == second.json()["data"]["run"]["run_id"]
+    with session_factory() as session:
+        run = session.scalar(select(AgentRunModel).where(
+            AgentRunModel.id == first.json()["data"]["run"]["run_id"]
+        ))
+        assert (run.provider, run.model) == ("openai", "test-model")
+
+
+def test_raw_training_plan_queue_selects_openai_without_changing_daily_provider(monkeypatch) -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "provider-raw-user"}
+    training = client.post(
+        "/api/v1/agent-runs/training-plan-generation", headers=headers,
+        json={"plan_type": "base", "starts_on": "2027-02-01"},
+    )
+    daily = client.post(
+        "/api/v1/agent-runs/daily-recommendation", headers=headers,
+        json={"anchor_date": "2027-02-01"},
+    )
+
+    assert training.status_code == daily.status_code == 200
+    training_run = client.get(training.json()["data"]["poll_url"], headers=headers).json()["data"]
+    daily_run = client.get(daily.json()["data"]["poll_url"], headers=headers).json()["data"]
+    assert (training_run["provider"], training_run["model"]) == ("openai", "test-model")
+    assert (daily_run["provider"], daily_run["model"]) == ("local", "deterministic-local-companion")
+
+
+def test_training_plan_regeneration_options_returns_exhausted_quota_payload() -> None:
+    from datetime import date, datetime, timezone
+
+    from src.domain.agent_runtime import AgentRun
+    from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
+
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "quota-exhausted-user"}
+    assert client.get("/api/v1/training-plans/regeneration-options", headers=headers).status_code == 200
+    with session_factory() as session:
+        SqlAlchemyAgentRunRepository(session).create_run(
+            AgentRun(
+                user_id="quota-exhausted-user",
+                trigger_type="manual",
+                workflow_name="training_plan_generation",
+                prompt_version="v1",
+                status="completed",
+                finished_at=datetime.now(timezone.utc),
+                metadata={
+                    "manual_regeneration": True,
+                    "quota_day": date.today().isoformat(),
+                    "created_training_plan_id": "created-plan",
+                },
+            )
+        )
+        session.commit()
+
+    response = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+    blocked = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "blocked-by-quota", "plan_type": "maintenance"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["quota"]["available"] is False
+    assert response.json()["data"]["quota"]["next_available_at"] is not None
+    assert blocked.status_code == 200
+    assert blocked.json()["data"]["run"] is None
+
+
+def test_development_quota_override_is_visible_to_ui_and_production_ignores_it(monkeypatch) -> None:
+    from datetime import datetime, timezone
+
+    from src.domain.agent_runtime import AgentRun
+    from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
+
+    monkeypatch.setenv("JOHNNY_DEV_REGENERATION_DAILY_LIMIT", "10")
+    monkeypatch.setenv("JOHNNY_AUTH_ALLOW_HEADER_USER", "true")
+    monkeypatch.setenv("ENV", "development")
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "dev-quota-user"}
+    assert client.get("/api/v1/training-plans/regeneration-options", headers=headers).status_code == 200
+    with session_factory() as session:
+        SqlAlchemyAgentRunRepository(session).create_run(AgentRun(
+            user_id="dev-quota-user", trigger_type="manual", workflow_name="training_plan_generation",
+            prompt_version="v1", status="completed", finished_at=datetime.now(timezone.utc),
+            metadata={"manual_regeneration": True, "created_training_plan_id": "previous-plan"},
+        ))
+        session.commit()
+
+    development = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+    assert development.status_code == 200
+    assert development.json()["data"]["quota"]["limit"] == 10
+    assert development.json()["data"]["quota"]["used"] == 1
+    queued = client.post("/api/v1/training-plans/regenerations", headers=headers, json={
+        "client_request_id": "dev-second-request", "plan_type": "maintenance",
+    })
+    assert queued.status_code == 200
+    assert queued.json()["data"]["run"] is not None
+
+    monkeypatch.setenv("ENV", "production")
+    production = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+    assert production.status_code == 200
+    assert production.json()["data"]["quota"]["limit"] == 1
+
+
+def test_athlete_profile_threshold_pace_round_trips_and_validates() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "pace-profile-user"}
+    payload = {
+        "timezone": "Asia/Taipei", "current_weekly_mileage_km": 40,
+        "preferred_training_days": ["tuesday", "sunday"],
+        "preferred_long_run_day": "sunday", "max_runs_per_week": 5,
+        "training_preferences": {"surface": "trail"},
+        "threshold_pace_seconds_per_km": 300,
+    }
+
+    saved = client.put("/api/v1/athlete/profile", headers=headers, json=payload)
+    assert saved.status_code == 200
+    assert saved.json()["data"]["threshold_pace_seconds_per_km"] == 300
+    assert saved.json()["data"]["training_preferences"] == {"surface": "trail", "threshold_pace_seconds_per_km": 300}
+
+    loaded = client.get("/api/v1/athlete/profile", headers=headers)
+    assert loaded.json()["data"]["threshold_pace_seconds_per_km"] == 300
+    invalid = client.put("/api/v1/athlete/profile", headers=headers, json={**payload, "threshold_pace_seconds_per_km": -1})
+    assert invalid.status_code == 422
+
+    cleared = client.put("/api/v1/athlete/profile", headers=headers, json={**payload, "threshold_pace_seconds_per_km": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["threshold_pace_seconds_per_km"] is None
+    assert cleared.json()["data"]["training_preferences"] == {"surface": "trail"}
+
+
+def test_training_plan_regeneration_options_selects_maintenance_without_future_races() -> None:
+    from datetime import date, timedelta
+
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+
+    response = client.get(
+        "/api/v1/training-plans/regeneration-options",
+        headers={"X-Johnny-User-Id": "maintenance-options-user"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["default_strategy"] == {
+        "race_id": None,
+        "plan_type": "maintenance",
+        "reason": "no_future_race",
+        "starts_on": (date.today() + timedelta(days=1)).isoformat(),
+        "plan_horizon_weeks": 4,
+    }
+
+
+def test_training_plan_regeneration_start_reuses_in_flight_run() -> None:
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "in-flight-user"}
+
+    first = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "first-confirmation", "plan_type": "maintenance"},
+    )
+    second = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "different-confirmation", "plan_type": "maintenance"},
+    )
+    options = client.get("/api/v1/training-plans/regeneration-options", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["data"]["run"] == first.json()["data"]["run"]
+    assert second.json()["data"]["in_flight_run"] == first.json()["data"]["run"]
+    assert options.json()["data"]["in_flight_run"] == first.json()["data"]["run"]
+
+
+def test_training_plan_regeneration_route_maps_request_to_application_value(monkeypatch) -> None:
+    from src.api.dependencies import CurrentUser
+    from src.api.routes import training_plan_regeneration as route
+    from src.api.schemas.training_plan_regeneration import TrainingPlanRegenerationRequest
+    from src.application.training_plan_regeneration import RegenerationRequest
+
+    session = object()
+
+    class CommandHandler:
+        def handle(self, *, user_id, request, today):
+            assert user_id == "lock-user"
+            assert isinstance(request, RegenerationRequest)
+            assert request == RegenerationRequest("lock-check", "maintenance", None)
+            return object()
+
+    monkeypatch.setattr(route, "ensure_current_user", lambda session, current_user: object())
+    monkeypatch.setattr(route, "_response", lambda result: {})
+
+    response = route.start_regeneration(
+        TrainingPlanRegenerationRequest(client_request_id="lock-check", plan_type="maintenance"),
+        CurrentUser(id="lock-user"),
+        session,
+        CommandHandler(),
+    )
+
+    assert response.data == {}
+
+
+def test_training_plan_regeneration_post_validates_and_returns_queued_product_run() -> None:
+    from datetime import date, timedelta
+
+    from sqlalchemy import select
+
+    from src.infrastructure.database.models import AgentRunModel, AgentTaskModel
+
+    client, session_factory = _create_regeneration_api_client()
+    headers = {"X-Johnny-User-Id": "regeneration-post-user"}
+    race_date = date.today() + timedelta(days=30)
+    race_id = client.post(
+        "/api/v1/races",
+        headers=headers,
+        json={"name": "Ten K", "race_date": race_date.isoformat(), "distance_meters": 10000},
+    ).json()["data"]["id"]
+
+    empty_id = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "", "race_id": race_id},
+    )
+    invalid_type = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "bad-type", "plan_type": "base"},
+    )
+    queued = client.post(
+        "/api/v1/training-plans/regenerations",
+        headers=headers,
+        json={"client_request_id": "race-confirmation", "race_id": race_id},
+    )
+
+    assert empty_id.status_code == 422
+    assert invalid_type.status_code == 422
+    assert queued.status_code == 200
+    data = queued.json()["data"]
+    assert data["run"]["status"] == "queued"
+    assert data["run"]["workflow_name"] == "training_plan_generation"
+    assert data["run"]["poll_url"] == f"/api/v1/agent-runs/{data['run']['run_id']}"
+    with session_factory() as session:
+        run = session.scalar(select(AgentRunModel).where(AgentRunModel.id == data["run"]["run_id"]))
+        task = session.scalar(select(AgentTaskModel).where(AgentTaskModel.payload["run_id"].as_string() == run.id))
+        assert run.metadata_json == {
+            "async": True,
+            "race_id": race_id,
+            "plan_type": "race",
+            "starts_on": (date.today() + timedelta(days=1)).isoformat(),
+            "plan_horizon_weeks": 5,
+            "client_request_id": "race-confirmation",
+            "manual_regeneration": True,
+            "quota_day": date.today().isoformat(),
+        }
+        assert task.payload["input"] == {
+            "race_id": race_id,
+            "plan_type": "race",
+            "starts_on": (date.today() + timedelta(days=1)).isoformat(),
+            "plan_horizon_weeks": 5,
+            "client_request_id": "race-confirmation",
+            "manual_regeneration": True,
+            "quota_day": date.today().isoformat(),
+        }
+
+
+def _create_regeneration_api_client():
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from src.api.dependencies import get_session
+    from src.infrastructure.database.models import Base
+    from src.main import create_app
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, connection_record) -> None:  # noqa: ANN001
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_session():
+        session = session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_session
+    return TestClient(app), session_factory
 
 
 def test_garmin_connect_endpoint_reports_partial_failure_after_zero_item_successes() -> None:

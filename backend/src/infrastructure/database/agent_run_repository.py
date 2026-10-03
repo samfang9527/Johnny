@@ -14,6 +14,7 @@ class SqlAlchemyAgentRunRepository:
 
     def create_run(self, run: AgentRun) -> AgentRun:
         model = AgentRunModel(
+            id=run.id,
             user_id=run.user_id,
             recommendation_id=run.recommendation_id,
             status=run.status,

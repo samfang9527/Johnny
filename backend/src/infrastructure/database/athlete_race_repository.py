@@ -30,6 +30,16 @@ class SqlAlchemyAthleteRaceRepository:
             return None
         return _profile_from_model(model)
 
+    def list_profiles_for_users(self, user_ids: list[str]) -> list[AthleteProfile]:
+        if not user_ids:
+            return []
+        statement = (
+            select(AthleteProfileModel)
+            .where(AthleteProfileModel.user_id.in_(user_ids))
+            .order_by(AthleteProfileModel.user_id)
+        )
+        return [_profile_from_model(model) for model in self._session.scalars(statement)]
+
     def create_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal:
         _ensure_matching_user_id(user_id, race_goal.user_id)
         model = RaceModel(
@@ -80,6 +90,23 @@ class SqlAlchemyAthleteRaceRepository:
         if model is None:
             return None
         return _race_goal_from_model(model)
+
+    def list_race_goals_for_users(
+        self,
+        user_ids: list[str],
+        *,
+        race_date_from: date | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[RaceGoal]:
+        if not user_ids:
+            return []
+        statement = select(RaceModel).where(RaceModel.user_id.in_(user_ids))
+        if race_date_from is not None:
+            statement = statement.where(RaceModel.race_date >= race_date_from)
+        if statuses is not None:
+            statement = statement.where(RaceModel.status.in_(statuses))
+        statement = statement.order_by(RaceModel.user_id, RaceModel.race_date, RaceModel.id)
+        return [_race_goal_from_model(model) for model in self._session.scalars(statement)]
 
     def update_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal | None:
         _ensure_matching_user_id(user_id, race_goal.user_id)
@@ -134,6 +161,7 @@ def _profile_metadata(profile: AthleteProfile) -> dict:
         "preferred_training_days": list(profile.preferences.preferred_training_days),
         "preferred_long_run_day": profile.preferences.preferred_long_run_day,
         "max_runs_per_week": profile.preferences.max_runs_per_week,
+        "max_hard_sessions_per_week": profile.preferences.max_hard_sessions_per_week,
         "unit_preference": profile.preferences.unit_preference,
         "training_preferences": profile.preferences.training_preferences,
         "injury_status": profile.preferences.injury_status,
@@ -155,6 +183,7 @@ def _profile_from_model(model: AthleteProfileModel) -> AthleteProfile:
             preferred_training_days=tuple(metadata.get("preferred_training_days", ())),
             preferred_long_run_day=metadata.get("preferred_long_run_day", "sunday"),
             max_runs_per_week=int(metadata.get("max_runs_per_week", 1)),
+            max_hard_sessions_per_week=int(metadata.get("max_hard_sessions_per_week", 2)),
             unit_preference=metadata.get("unit_preference", "metric"),
             training_preferences=metadata.get("training_preferences", {}),
             injury_status=metadata.get("injury_status", "none"),

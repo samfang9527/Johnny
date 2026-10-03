@@ -30,7 +30,7 @@
 - `運動員` owns Athlete Baseline. It shows a baseline snapshot first: weekly mileage, experience, injury status, preferred training rhythm, and recent baseline metrics. Editable profile/settings remain below the snapshot.
 - Athlete Memory is Johnny's private working context and must not appear as a standalone navigation item, page, table, or browsable list. It may surface only as contextual explanation copy in recommendations or future conversation.
 - `資料` starts with Signal Coverage: activity, sleep, HRV, resting heart rate, training load, and athlete baseline. Provider connection cards and sync details appear below.
-- `運動員` saves through `PUT /api/v1/athlete/profile`, displays weekly mileage in the selected unit, sends canonical `current_weekly_mileage_km`, keeps generic `training_preferences` hidden, and validates structured injury fields before submit.
+- `運動員` saves through `PUT /api/v1/athlete/profile`, displays weekly mileage in the selected unit, sends canonical `current_weekly_mileage_km`, exposes only the typed threshold-pace setting from otherwise hidden `training_preferences`, and validates structured injury fields before submit.
 - `運動員` timezone uses the canonical native select pattern with a fixed common-timezone list; valid existing profile timezones outside the list are preserved as a temporary current option.
 - `計畫` keeps race-goal creation through `POST /api/v1/races`; the create UI accepts kilometers and converts to API `distance_meters`, requires a product priority (`主要目標`, `次要目標`, `暖身賽`), and never sends race status on create.
 - The calendar hydrates from `GET /api/v1/races` for the active six-month window. Workout lists remain supporting execution context.

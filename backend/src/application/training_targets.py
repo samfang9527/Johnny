@@ -143,6 +143,10 @@ def _enrich_step(step: WorkoutStep, *, pace_profile: PaceProfile | None) -> Work
 
 
 def _enrich_target(target: WorkoutTarget | None, *, pace_profile: PaceProfile | None) -> WorkoutTarget | None:
+    if target is not None and target.kind == "heart_rate":
+        if target.heart_rate_range_bpm is not None:
+            return target
+        return WorkoutTarget.rpe(target.rpe) if target.rpe is not None else target
     if target is None or target.kind != "pace" or target.zone is None:
         return target
     rpe = target.rpe or ZONE_RPE[target.zone]

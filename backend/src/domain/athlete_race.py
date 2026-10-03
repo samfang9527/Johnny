@@ -33,6 +33,7 @@ class AthletePreferences:
     preferred_training_days: tuple[str, ...]
     preferred_long_run_day: str
     max_runs_per_week: int
+    max_hard_sessions_per_week: int = 2
     unit_preference: str = "metric"
     training_preferences: dict[str, Any] = field(default_factory=dict)
     injury_status: str = "none"
@@ -46,6 +47,8 @@ class AthletePreferences:
         normalized_long_run_day = _normalize_day(self.preferred_long_run_day)
         if self.max_runs_per_week < 1 or self.max_runs_per_week > 7:
             raise DomainValidationError("maximum runs per week must be between 1 and 7")
+        if self.max_hard_sessions_per_week < 0 or self.max_hard_sessions_per_week > 2:
+            raise DomainValidationError("maximum hard sessions per week must be between 0 and 2")
         if normalized_days and normalized_long_run_day not in normalized_days:
             raise DomainValidationError("long run day must be one of the preferred training days")
         if self.unit_preference not in VALID_UNIT_PREFERENCES:
@@ -95,6 +98,7 @@ class AthleteProfile:
         preferred_training_days: tuple[str, ...],
         preferred_long_run_day: str,
         max_runs_per_week: int,
+        max_hard_sessions_per_week: int = 2,
         unit_preference: str = "metric",
         training_preferences: dict[str, Any] | None = None,
         injury_status: str = "none",
@@ -112,6 +116,7 @@ class AthleteProfile:
                 preferred_training_days=preferred_training_days,
                 preferred_long_run_day=preferred_long_run_day,
                 max_runs_per_week=max_runs_per_week,
+                max_hard_sessions_per_week=max_hard_sessions_per_week,
                 unit_preference=unit_preference,
                 training_preferences=training_preferences or {},
                 injury_status=injury_status,

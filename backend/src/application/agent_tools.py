@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 from typing import Iterable
+from uuid import uuid4
 
+from src.application.training_plan_generation import (
+    PlanSkeleton,
+    SkeletonWorkout,
+    repair_generated_plan,
+    validate_generated_plan,
+)
 from src.application.training_targets import PaceProfile, enrich_workout_steps
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
-from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep
+from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, validate_phase_segments, workout_coach_note_zh, workout_purpose_zh
 
 
 class AgentToolRegistry:
@@ -31,9 +39,20 @@ class AthleteContextTool:
         self._race_goals = race_goals
 
     def run(self, *, user_id: str, arguments: dict) -> dict:
-        limit = arguments.get("limit", 5)
         profile = self._profiles.get_profile_for_user(user_id)
-        goals = self._race_goals.list_race_goals_for_user(user_id, limit=limit, offset=arguments.get("offset", 0))
+        race_id = arguments.get("race_id")
+        if race_id is not None:
+            goal = self._race_goals.get_race_goal_for_user(user_id, str(race_id))
+            goals = [goal] if goal is not None else []
+        else:
+            race_date_from = _optional_date_arg(arguments, "race_date_from")
+            limit = arguments.get("limit", None if race_date_from is not None else 5)
+            goals = self._race_goals.list_race_goals_for_user(
+                user_id,
+                race_date_from=race_date_from,
+                limit=limit,
+                offset=arguments.get("offset", 0),
+            )
         return {
             "profile": _profile_payload(profile),
             "race_goals": [_race_goal_payload(goal) for goal in goals if goal.user_id == user_id],
@@ -184,21 +203,126 @@ class CreateTrainingPlanTool:
     def run(self, *, user_id: str, arguments: dict) -> dict:
         trusted_context = arguments.get("trusted_context") if isinstance(arguments.get("trusted_context"), dict) else {}
         pace_profile = trusted_context.get("pace_profile")
-        workouts = tuple(
-            _workout_from_payload({**payload, "_pace_profile": pace_profile}) for payload in arguments.get("workouts", ())
-        )
+        skeleton = _trusted_plan_skeleton(trusted_context)
+        workouts = []
+        parse_errors = []
+        name = arguments.get("name")
+        if skeleton is not None and (not isinstance(name, str) or not name.strip()):
+            parse_errors.append("plan name is invalid")
+            name = "Generated Training Plan"
+        if skeleton is not None:
+            starts_on, ends_on = skeleton.starts_on, skeleton.ends_on
+            for key, expected in (("starts_on", starts_on), ("ends_on", ends_on)):
+                try:
+                    if _date_arg(arguments, key) != expected:
+                        parse_errors.append(f"plan {key} does not match the skeleton")
+                except (ValueError, KeyError, TypeError):
+                    parse_errors.append(f"plan {key} is invalid")
+        else:
+            starts_on, ends_on = _date_arg(arguments, "starts_on"), _date_arg(arguments, "ends_on")
+        for payload in arguments.get("workouts", ()):
+            try:
+                workout = _workout_from_payload({**payload, "id": str(uuid4()), "_pace_profile": pace_profile})
+                if skeleton is not None and not skeleton.starts_on <= workout.scheduled_for <= skeleton.ends_on:
+                    raise ValueError("workout is outside skeleton date range")
+                workouts.append(workout)
+            except (ValueError, KeyError, TypeError) as error:
+                if skeleton is None:
+                    raise
+                parse_errors.append(str(error))
         plan = TrainingPlan.create(
             user_id=user_id,
-            race_id=arguments.get("race_id"),
-            name=arguments["name"],
+            race_id=trusted_context.get("race_id", arguments.get("race_id")),
+            name=name,
             status="active",
-            starts_on=_date_arg(arguments, "starts_on"),
-            ends_on=_date_arg(arguments, "ends_on"),
+            starts_on=starts_on,
+            ends_on=ends_on,
             metadata=_plan_metadata(arguments=arguments, trusted_context=trusted_context),
-            workouts=workouts,
+            workouts=tuple(workouts),
         )
-        saved = self._training_plans.create_active_plan(user_id, plan)
-        return {"training_plan": _plan_payload(saved), "applied": True}
+        completion_repair = None
+        if skeleton is not None:
+            validation_errors = parse_errors + validate_generated_plan(plan, skeleton)
+            if validation_errors:
+                if trusted_context.get("model_repair_pending") is True:
+                    raise IncompleteTrainingPlan(plan, "; ".join(validation_errors))
+                preserved = trusted_context.get("preserved_generation") or {}
+                preserved_workouts = tuple(
+                    _workout_from_payload({**workout, "_pace_profile": pace_profile})
+                    for workout in preserved.get("workouts", ())
+                )
+                repair_result = repair_generated_plan(
+                    plan, skeleton, "; ".join(validation_errors), preserved_workouts=preserved_workouts,
+                )
+                plan = repair_result.plan
+                completion_repair = {
+                    "repaired_week_indexes": repair_result.repaired_week_indexes,
+                    "repaired_workout_ids": repair_result.repaired_workout_ids,
+                    "reason": repair_result.reason,
+                }
+                repaired_errors = validate_generated_plan(plan, skeleton)
+                if repaired_errors:
+                    raise ValueError(f"completion repair did not produce a valid plan: {'; '.join(repaired_errors)}")
+        canonical_pace_profile = PaceProfile.from_payload(pace_profile)
+        plan = replace(plan, workouts=tuple(
+            replace(workout, steps=enrich_workout_steps(workout.steps, pace_profile=canonical_pace_profile))
+            for workout in plan.workouts
+        ))
+        if skeleton is not None:
+            plan = replace(
+                plan,
+                name=plan.name if _has_chinese(plan.name) else "Johnny 訓練計畫",
+                workouts=tuple(_localize_workout_copy(workout) for workout in plan.workouts),
+            )
+        if trusted_context.get("model_repair_reason"):
+            internal = dict(plan.metadata.get("internal") or {})
+            internal["model_repair"] = {"attempted": True, "reason": trusted_context["model_repair_reason"]}
+            plan = replace(plan, metadata={**plan.metadata, "internal": internal})
+        validate_phase_segments(plan)
+        saved = self._training_plans.create_active_plan(
+            user_id,
+            plan,
+            replace_all_active=(
+                trusted_context.get("manual_regeneration") is True
+                or trusted_context.get("plan_type") == "maintenance"
+                or trusted_context.get("replace_active_projection") is True
+            ),
+        )
+        payload = {"training_plan": _plan_payload(saved), "applied": True}
+        if completion_repair is not None:
+            payload["completion_repair"] = completion_repair
+        return payload
+
+
+class IncompleteTrainingPlan(ValueError):
+    def __init__(self, plan: TrainingPlan, reason: str) -> None:
+        super().__init__(f"model repair required: {reason}")
+        self.plan_payload = _plan_payload(plan)
+
+
+def _has_chinese(value: str | None) -> bool:
+    return bool(value and any("\u4e00" <= character <= "\u9fff" for character in value))
+
+
+def _localize_workout_copy(workout: Workout) -> Workout:
+    coach_note = workout.coach_note
+    if coach_note and not _has_chinese(coach_note):
+        coach_note = workout_coach_note_zh(workout.workout_type)
+    return replace(
+        workout,
+        purpose=workout.purpose if _has_chinese(workout.purpose) else workout_purpose_zh(workout.workout_type),
+        coach_note=coach_note,
+        steps=tuple(_localize_step_copy(step) for step in workout.steps),
+    )
+
+
+def _localize_step_copy(step: WorkoutStep) -> WorkoutStep:
+    return replace(
+        step,
+        notes=step.notes if _has_chinese(step.notes) else None,
+        grade_notes=step.grade_notes if _has_chinese(step.grade_notes) else None,
+        steps=tuple(_localize_step_copy(nested) for nested in step.steps),
+    )
 
 
 class MemoryCandidateTool:
@@ -227,6 +351,12 @@ def _date_arg(arguments: dict, name: str) -> date:
     raise ValueError(f"{name} is required")
 
 
+def _optional_date_arg(arguments: dict, name: str) -> date | None:
+    if arguments.get(name) is None:
+        return None
+    return _date_arg(arguments, name)
+
+
 def _evidence_items(payloads) -> tuple[EvidenceItem, ...]:
     return tuple(EvidenceItem.from_payload(payload) for payload in payloads)
 
@@ -253,7 +383,7 @@ def _workout_from_payload(payload: dict) -> Workout:
         for step in payload.get("steps", ())
     )
     pace_profile = PaceProfile.from_payload(payload.get("_pace_profile"))
-    workout_steps = enrich_workout_steps(steps, pace_profile=pace_profile) if pace_profile is not None else steps
+    workout_steps = enrich_workout_steps(steps, pace_profile=pace_profile)
     return Workout.create(
         id=payload.get("id"),
         scheduled_for=_date_arg(payload, "scheduled_for"),
@@ -271,13 +401,83 @@ def _workout_from_payload(payload: dict) -> Workout:
 
 
 def _plan_metadata(*, arguments: dict, trusted_context: dict) -> dict:
-    metadata = dict(arguments.get("metadata", {}))
+    model_metadata = arguments.get("metadata") if isinstance(arguments.get("metadata"), dict) else {}
+    skeleton = trusted_context.get("plan_skeleton")
+    if not isinstance(skeleton, dict) or not isinstance(skeleton.get("phase_segments"), list):
+        metadata = dict(model_metadata)
+        for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
+            if key in trusted_context:
+                metadata[key] = trusted_context[key]
+        metadata["generation_mode"] = trusted_context.get(
+            "generation_mode",
+            arguments.get("generation_mode", "generated"),
+        )
+        return metadata
+
+    metadata: dict = {}
+    weekly_rationales = model_metadata.get("weekly_rationales")
+    if _has_valid_weekly_rationales(weekly_rationales):
+        metadata["weekly_rationales"] = weekly_rationales
+    metadata["phase_segments"] = [dict(segment) for segment in skeleton["phase_segments"]]
     for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
-        value = trusted_context.get(key)
-        if value is not None:
-            metadata.setdefault(key, value)
-    metadata.setdefault("generation_mode", arguments.get("generation_mode", "generated"))
+        if key in trusted_context:
+            metadata[key] = trusted_context[key]
+    metadata["generation_mode"] = trusted_context.get("generation_mode", "generated")
     return metadata
+
+
+def _has_valid_weekly_rationales(value: object) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(rationale, dict)
+        and isinstance(rationale.get("week_index"), int)
+        and isinstance(rationale.get("phase"), str)
+        and isinstance(rationale.get("focus"), str)
+        and isinstance(rationale.get("load_progression"), str)
+        and isinstance(rationale.get("key_workouts"), list)
+        and all(isinstance(workout, str) for workout in rationale["key_workouts"])
+        for rationale in value
+    )
+
+
+def _trusted_plan_skeleton(trusted_context: dict) -> PlanSkeleton | None:
+    payload = trusted_context.get("plan_skeleton")
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError("trusted plan skeleton is invalid")
+    try:
+        workouts = [
+            SkeletonWorkout(
+                scheduled_for=_date_arg(workout, "scheduled_for"),
+                workout_type=str(workout["workout_type"]),
+                phase=str(workout["phase"]),
+                planned_duration_minutes=workout.get("planned_duration_minutes"),
+                planned_distance_meters=workout.get("planned_distance_meters"),
+            )
+            for workout in payload["workouts"]
+        ]
+        phase_segments = [dict(segment) for segment in payload["phase_segments"]]
+        skeleton = PlanSkeleton(
+            starts_on=_date_arg(payload, "starts_on"),
+            ends_on=_date_arg(payload, "ends_on"),
+            phase_segments=phase_segments,
+            workouts=workouts,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("trusted plan skeleton is invalid") from exc
+    _require_skeleton_workouts_for_every_week(skeleton)
+    return skeleton
+
+
+def _require_skeleton_workouts_for_every_week(skeleton: PlanSkeleton) -> None:
+    if skeleton.ends_on < skeleton.starts_on:
+        raise ValueError("trusted plan skeleton is invalid")
+    week_start = skeleton.starts_on
+    while week_start <= skeleton.ends_on:
+        week_ends_on = min(week_start + timedelta(days=6), skeleton.ends_on)
+        if not any(week_start <= workout.scheduled_for <= week_ends_on for workout in skeleton.workouts):
+            raise ValueError("trusted plan skeleton must include workouts for every week")
+        week_start += timedelta(weeks=1)
 
 
 def _profile_payload(profile) -> dict | None:
@@ -305,6 +505,7 @@ def _profile_payload(profile) -> dict | None:
         "preferred_training_days": list(profile.preferences.preferred_training_days),
         "preferred_long_run_day": profile.preferences.preferred_long_run_day,
         "max_runs_per_week": profile.preferences.max_runs_per_week,
+        "max_hard_sessions_per_week": profile.preferences.max_hard_sessions_per_week,
         "unit_preference": profile.preferences.unit_preference,
         "training_preferences": dict(profile.preferences.training_preferences),
         "injury_status": profile.preferences.injury_status,

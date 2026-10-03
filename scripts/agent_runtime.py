@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import os
+from dataclasses import replace
+import logging
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -17,16 +18,23 @@ from sqlalchemy.orm import Session
 
 from src.api.dependencies import build_request_companion_agent
 from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.interfaces.task_queue import TaskEnvelope
+from src.application.training_plan_regeneration import TrainingPlanRegenerationService
 from src.domain.agent_runtime import AgentRun
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
+from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, UserModel
 from src.infrastructure.database.session import create_database_engine, create_session_factory, get_database_url
-from src.infrastructure.llm.settings import load_llm_settings
+from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
+from src.infrastructure.llm.settings import load_llm_settings, resolve_queued_training_plan_provider
+from src.infrastructure.logging.logger_config import setup_logging
 
 
 DEFAULT_CLAIM_TIMEOUT = timedelta(minutes=5)
 DEFAULT_RETRY_DELAY = timedelta(seconds=30)
+TRAINING_PLAN_DAILY_CHECK_TASK_TYPE = "training-plan.daily-check"
+logger = logging.getLogger(__name__)
 
 
 def schedule_once(session: Session, *, anchor_date: date | None = None) -> int:
@@ -41,6 +49,14 @@ def schedule_once(session: Session, *, anchor_date: date | None = None) -> int:
             idempotency_key=f"daily_recommendation:{user.id}:{anchor.isoformat()}",
             payload={"anchor_date": anchor.isoformat(), "force": False},
         )
+    SqlAlchemyAgentTaskQueue(session).enqueue(
+        TaskEnvelope(
+            task_type=TRAINING_PLAN_DAILY_CHECK_TASK_TYPE,
+            payload={"anchor_date": anchor.isoformat()},
+            correlation_id=f"training-plan.daily-check:{anchor.isoformat()}",
+            idempotency_key=f"training-plan.daily-check:{anchor.isoformat()}",
+        )
+    )
     return _task_count(session) - before
 
 
@@ -63,7 +79,28 @@ def work_one(session: Session, *, now: datetime | None = None) -> bool:
     claimed = queue.claim_next(now=now or _utc_now(), claim_timeout=DEFAULT_CLAIM_TIMEOUT)
     if claimed is None:
         return False
-    _process_task(session, claimed.id)
+    started = time.monotonic()
+    run_id = claimed.payload.get("run_id") if isinstance(claimed.payload, dict) else None
+    logger.info(
+        "worker task claimed task_id=%s task_type=%s run_id=%s correlation_id=%s retry_count=%s",
+        claimed.id, claimed.task_type, run_id, claimed.correlation_id, claimed.retry_count,
+    )
+    try:
+        _process_task(session, claimed.id)
+    except Exception as exc:
+        logger.error(
+            "worker task raised task_id=%s task_type=%s run_id=%s error_type=%s duration_ms=%s",
+            claimed.id, claimed.task_type, run_id, type(exc).__name__,
+            round((time.monotonic() - started) * 1000),
+        )
+        raise
+    task = session.get(AgentTaskModel, claimed.id)
+    logger.info(
+        "worker task finished task_id=%s task_type=%s run_id=%s status=%s error_type=%s duration_ms=%s",
+        claimed.id, claimed.task_type, run_id, task.status if task else "missing",
+        task.last_error_type if task else None,
+        round((time.monotonic() - started) * 1000),
+    )
     return True
 
 
@@ -92,9 +129,12 @@ def work_loop(session_factory, *, idle_timeout_seconds: float | None = None, int
         time.sleep(interval_seconds)
 
 
-def smoke(session: Session, *, user_id: str, timeout_seconds: float = 30.0, workflow: str = "conversation") -> int:
+def smoke(
+    session: Session, *, user_id: str, timeout_seconds: float = 30.0,
+    workflow: str = "conversation", live_openai: bool = False,
+) -> int:
     if workflow == "conversation":
-        run = build_request_companion_agent(session).run_conversation(
+        run = build_request_companion_agent(session, provider=None if live_openai else "local").run_conversation(
             user_id=user_id,
             message="How should I adjust today's training?",
         )
@@ -110,7 +150,7 @@ def smoke(session: Session, *, user_id: str, timeout_seconds: float = 30.0, work
             payload={"anchor_date": date.today().isoformat(), "force": True},
         )
     if workflow in {"training_plan_generation", "all"}:
-        handler.queue_run(
+        (_training_plan_queue_handler(session) if live_openai else handler).queue_run(
             user_id=user_id,
             workflow_name="training_plan_generation",
             trigger_type="manual",
@@ -145,11 +185,11 @@ def main() -> int:
     smoke_parser.add_argument("--workflow", default="conversation")
     smoke_parser.add_argument("--live-openai", action="store_true")
     args = parser.parse_args()
+    setup_logging()
+    logger.info("agent runtime command started command=%s", args.command)
 
     live_openai = getattr(args, "live_openai", False)
-    if not live_openai:
-        os.environ.pop("LLM_PROVIDER", None)
-    elif load_llm_settings() is None:
+    if live_openai and load_llm_settings() is None:
         print("LLM_PROVIDER=openai, LLM_MODEL, and OPENAI_API_KEY or LLM_API_KEY are required.", file=sys.stderr)
         return 2
 
@@ -181,7 +221,10 @@ def main() -> int:
             session.commit()
             return 0
         if args.command == "smoke":
-            result = smoke(session, user_id=args.user_id, timeout_seconds=args.timeout_seconds, workflow=args.workflow)
+            result = smoke(
+                session, user_id=args.user_id, timeout_seconds=args.timeout_seconds,
+                workflow=args.workflow, live_openai=live_openai,
+            )
             session.commit()
             return result
     return 2
@@ -194,6 +237,32 @@ def _queue_handler(session: Session) -> QueueAgentRunHandler:
         prompt_version="running-companion-v1",
         provider="local",
         model="deterministic-local-companion",
+    )
+
+
+def _training_plan_queue_handler(session: Session) -> QueueAgentRunHandler:
+    provider, model = resolve_queued_training_plan_provider()
+    return QueueAgentRunHandler(
+        runs=SqlAlchemyAgentRunRepository(session),
+        queue=SqlAlchemyAgentTaskQueue(session),
+        prompt_version="running-companion-v1",
+        provider=provider,
+        model=model,
+    )
+
+
+def _training_plan_regeneration_service(session: Session) -> TrainingPlanRegenerationService:
+    athlete_races = SqlAlchemyAthleteRaceRepository(session)
+    runs = SqlAlchemyAgentRunRepository(session)
+    tasks = SqlAlchemyAgentTaskQueue(session)
+    return TrainingPlanRegenerationService(
+        profiles=athlete_races,
+        race_goals=athlete_races,
+        training_plans=SqlAlchemyTrainingPlanRepository(session),
+        runs=runs,
+        tasks=tasks,
+        queue_agent_runs=_training_plan_queue_handler(session),
+        current_instant=_utc_now,
     )
 
 
@@ -213,6 +282,9 @@ def _process_task(session: Session, task_id: str) -> None:
     queue = SqlAlchemyAgentTaskQueue(session)
     task = session.get(AgentTaskModel, task_id)
     if task is None:
+        return
+    if task.task_type == TRAINING_PLAN_DAILY_CHECK_TASK_TYPE:
+        _process_training_plan_daily_check(session, task)
         return
     if task.task_type != "agent.workflow":
         queue.fail(
@@ -262,9 +334,33 @@ def _process_task(session: Session, task_id: str) -> None:
         )
         return
 
+    workflow_input = dict(payload["input"])
+    started = time.monotonic()
+    logger.info(
+        "worker workflow started run_id=%s workflow=%s provider=%s model=%s task_id=%s",
+        run_id, workflow_name, run.provider, run.model, task_id,
+    )
     try:
-        result = _dispatch_workflow(session, run, workflow_name, payload["input"])
+        with session.begin_nested():
+            run, workflow_input = _refresh_scheduled_training_plan_context(
+                session,
+                runs=runs,
+                run=run,
+                workflow_name=workflow_name,
+                workflow_input=workflow_input,
+            )
+            if workflow_input != payload["input"]:
+                task.payload = {**payload, "input": dict(workflow_input)}
+                session.flush()
+            result = _dispatch_workflow(session, run, workflow_name, workflow_input)
+            if result.status == "completed":
+                queue.complete(task_id, now=_utc_now())
     except Exception as exc:
+        logger.error(
+            "worker workflow raised run_id=%s workflow=%s error_type=%s task_id=%s duration_ms=%s",
+            run_id, workflow_name, type(exc).__name__, task_id,
+            round((time.monotonic() - started) * 1000),
+        )
         queue.fail(
             task_id,
             error_type=exc.__class__.__name__,
@@ -275,9 +371,12 @@ def _process_task(session: Session, task_id: str) -> None:
         )
         runs.fail_run(run.fail(error_type=exc.__class__.__name__, error_message=str(exc)))
         return
-    if result.status == "completed":
-        queue.complete(task_id, now=_utc_now())
-    else:
+    logger.info(
+        "worker workflow finished run_id=%s workflow=%s status=%s error_type=%s task_id=%s duration_ms=%s",
+        run_id, workflow_name, result.status, result.error_type, task_id,
+        round((time.monotonic() - started) * 1000),
+    )
+    if result.status != "completed":
         queue.fail(
             task_id,
             error_type=result.error_type or "WorkflowFailed",
@@ -286,6 +385,104 @@ def _process_task(session: Session, task_id: str) -> None:
             now=_utc_now(),
             retry_delay=DEFAULT_RETRY_DELAY,
         )
+
+
+def _process_training_plan_daily_check(session: Session, task: AgentTaskModel) -> None:
+    queue = SqlAlchemyAgentTaskQueue(session)
+    task_id = task.id
+    anchor_date = _daily_check_anchor_date(task.payload or {})
+    if anchor_date is None:
+        queue.fail(
+            task_id,
+            error_type="MalformedTaskPayload",
+            error_message="training-plan.daily-check requires an ISO anchor_date",
+            retryable=False,
+            now=_utc_now(),
+            retry_delay=DEFAULT_RETRY_DELAY,
+        )
+        return
+
+    try:
+        with session.begin_nested():
+            service = _training_plan_regeneration_service(session)
+            candidates = service.find_users_needing_projection(anchor_date)
+    except Exception as exc:
+        logger.exception("training plan daily check discovery failed", extra={"task_id": task_id})
+        queue.fail(
+            task_id,
+            error_type=exc.__class__.__name__,
+            error_message=str(exc),
+            retryable=True,
+            now=_utc_now(),
+            retry_delay=DEFAULT_RETRY_DELAY,
+        )
+        return
+
+    for candidate in candidates:
+        try:
+            with session.begin_nested():
+                service.queue_background_generation(candidate)
+        except Exception:
+            logger.exception(
+                "training plan background generation queue failed",
+                extra={
+                    "task_id": task_id,
+                    "user_id": candidate.user_id,
+                    "starts_on": candidate.strategy.starts_on.isoformat(),
+                },
+            )
+    queue.complete(task_id, now=_utc_now())
+
+
+def _daily_check_anchor_date(payload: dict) -> date | None:
+    value = payload.get("anchor_date")
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _refresh_scheduled_training_plan_context(
+    session: Session,
+    *,
+    runs: SqlAlchemyAgentRunRepository,
+    run: AgentRun,
+    workflow_name: str,
+    workflow_input: dict,
+) -> tuple[AgentRun, dict]:
+    if workflow_name != "training_plan_generation" or run.metadata.get("manual_regeneration") is not False:
+        return run, workflow_input
+
+    previous_ends_on = (
+        _optional_date(run.metadata.get("previous_ends_on"))
+        or _optional_date(workflow_input.get("previous_ends_on"))
+    )
+    if previous_ends_on is None:
+        previous_plan = SqlAlchemyTrainingPlanRepository(session).get_current_plan_for_user(run.user_id)
+        if previous_plan is None:
+            raise ValueError("scheduled training plan generation requires a previous active plan")
+        previous_ends_on = previous_plan.ends_on
+
+    strategy = _training_plan_regeneration_service(session).refresh_background_strategy(
+        user_id=run.user_id,
+        previous_ends_on=previous_ends_on,
+    )
+    refreshed_values = {
+        "race_id": strategy.race_id,
+        "plan_type": strategy.plan_type,
+        "starts_on": strategy.starts_on.isoformat(),
+        "plan_horizon_weeks": strategy.plan_horizon_weeks,
+        "manual_regeneration": False,
+        "trigger_type": "scheduled",
+        "replace_active_projection": True,
+        "previous_ends_on": previous_ends_on.isoformat(),
+    }
+    refreshed_run = runs.complete_run(
+        replace(run, metadata={**run.metadata, **refreshed_values})
+    )
+    return refreshed_run, {**workflow_input, **refreshed_values}
 
 
 def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, workflow_input: dict) -> AgentRun:

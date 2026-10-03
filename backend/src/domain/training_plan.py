@@ -40,12 +40,53 @@ SUPPORTED_WORKOUT_TYPES = frozenset(
         "long_run",
         "tempo",
         "interval",
+        "hill",
         "recovery",
         "rest",
         "strength",
         "cross_training",
     }
 )
+WORKOUT_TYPE_LABELS = {
+    "easy_run": "輕鬆跑", "long_run": "長跑", "tempo": "節奏跑", "interval": "間歇跑",
+    "hill": "坡跑", "recovery": "恢復跑", "rest": "休息", "strength": "肌力訓練",
+    "cross_training": "交叉訓練",
+}
+WORKOUT_PURPOSES = {
+    "easy_run": "維持有氧基礎", "long_run": "建立長距離耐力", "tempo": "提升持續配速能力",
+    "interval": "提升速度與有氧能力", "hill": "建立爬坡力量與跑姿穩定性",
+    "recovery": "促進恢復", "rest": "充分休息", "strength": "建立肌力與身體穩定性",
+    "cross_training": "以低衝擊活動維持心肺能力",
+}
+WORKOUT_COACH_NOTES = {
+    "easy_run": "以能交談的強度完成，不必追求速度。",
+    "long_run": "前段保持保守，留意補水與後段的穩定度。",
+    "tempo": "保持可持續的節奏，不要一開始就加速。",
+    "interval": "每趟保持穩定，組間以輕鬆慢跑恢復。",
+    "hill": "上坡保持穩定出力，留意跑姿不要僵硬。",
+    "recovery": "放慢速度，以身體恢復為優先。",
+}
+STEP_TYPE_LABELS = {
+    "warmup": "暖身", "work": "主課表", "recovery": "組間恢復", "cooldown": "緩和",
+    "repeat": "重複組", "drill": "跑姿練習", "stride": "加速跑", "hill": "坡跑",
+    "free_run": "自由跑",
+}
+PACE_ZONE_LABELS = {
+    "easy": "輕鬆配速", "steady": "穩定配速", "marathon": "馬拉松配速",
+    "threshold": "乳酸閾值配速", "interval": "間歇配速", "repetition": "短間歇配速",
+    "rpe_only": "體感強度",
+}
+
+
+def workout_purpose_zh(workout_type: str) -> str:
+    return WORKOUT_PURPOSES.get(workout_type, "完成本次訓練")
+
+
+def workout_coach_note_zh(workout_type: str) -> str:
+    return WORKOUT_COACH_NOTES.get(workout_type, "依照身體狀態調整，必要時降低強度。")
+
+SUPPORTED_PLAN_PHASES = frozenset({"base", "build", "peak", "taper", "race", "maintenance"})
+HARD_SESSION_WORKOUT_TYPES = frozenset({"interval", "tempo", "hill", "long_run"})
 VALID_PLAN_STATUSES = frozenset({"active", "completed", "archived", "draft", "superseded"})
 VALID_WORKOUT_STATUSES = frozenset({"planned", "adjusted", "completed", "skipped"})
 WORKOUT_STATUS_TRANSITIONS = {
@@ -290,6 +331,8 @@ class Workout:
             object.__setattr__(self, "planned_distance_meters", planned_distance_meters)
         if self.workout_type not in SUPPORTED_WORKOUT_TYPES:
             raise DomainValidationError("workout type is not supported")
+        if self.phase is not None and self.phase not in SUPPORTED_PLAN_PHASES:
+            raise DomainValidationError("workout phase is not supported")
         if not self.purpose:
             raise DomainValidationError("workout purpose is required")
         if self.status not in VALID_WORKOUT_STATUSES:
@@ -355,6 +398,7 @@ class Workout:
             "id": self.id,
             "scheduled_for": self.scheduled_for.isoformat(),
             "workout_type": self.workout_type,
+            "display_name": self.display_name,
             "purpose": self.purpose,
             "planned_duration_minutes": self.planned_duration_minutes,
             "planned_distance_meters": self.planned_distance_meters,
@@ -368,6 +412,24 @@ class Workout:
             "compact_summary": self.compact_summary,
             "status": self.status,
         }
+
+    @property
+    def display_name(self) -> str:
+        label = WORKOUT_TYPE_LABELS.get(self.workout_type, "訓練")
+        for step in self.steps:
+            if step.step_type == "repeat":
+                work = next((item for item in step.steps if item.step_type in {"work", "hill", "stride"}), None)
+                if work is not None:
+                    workload = _format_step_load(work)
+                    return f"{label} · {step.repeat_count} 組 × {workload}"
+        main = next((step for step in self.steps if step.step_type == "work"), None)
+        if main is not None:
+            return f"{label} · {_format_step_load(main)}"
+        if self.planned_distance_meters is not None:
+            return f"{label} · {_format_distance(self.planned_distance_meters)}"
+        if self.planned_duration_minutes is not None:
+            return f"{label} · {self.planned_duration_minutes} 分鐘"
+        return label
 
     @property
     def compact_summary(self) -> str | None:
@@ -431,6 +493,66 @@ class TrainingPlan:
         )
 
 
+def is_hard_session(workout: Workout) -> bool:
+    return workout.workout_type in HARD_SESSION_WORKOUT_TYPES
+
+
+def validate_phase_segments(plan: TrainingPlan) -> None:
+    raw_segments = plan.metadata.get("phase_segments")
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise DomainValidationError("phase segments are required")
+
+    segments = tuple(_phase_segment_from_payload(segment) for segment in raw_segments)
+    ordered_segments = tuple(sorted(segments, key=lambda segment: segment[1]))
+    expected_start = plan.starts_on
+    for phase, starts_on, ends_on in ordered_segments:
+        if starts_on < expected_start:
+            raise DomainValidationError("phase segments overlap")
+        if starts_on != expected_start:
+            raise DomainValidationError("phase segments do not fully cover plan date range")
+        expected_start = date.fromordinal(ends_on.toordinal() + 1)
+    if expected_start != date.fromordinal(plan.ends_on.toordinal() + 1):
+        raise DomainValidationError("phase segments do not fully cover plan date range")
+
+    for workout in plan.workouts:
+        if workout.phase is None:
+            raise DomainValidationError("workout phase is required")
+        segment_phase = next(
+            (
+                phase
+                for phase, starts_on, ends_on in ordered_segments
+                if starts_on <= workout.scheduled_for <= ends_on
+            ),
+            None,
+        )
+        if segment_phase != workout.phase:
+            raise DomainValidationError("workout phase does not match phase segment")
+
+
+def _phase_segment_from_payload(payload: Any) -> tuple[str, date, date]:
+    if not isinstance(payload, dict):
+        raise DomainValidationError("phase segment is invalid")
+    phase = payload.get("phase")
+    if phase not in SUPPORTED_PLAN_PHASES:
+        raise DomainValidationError("plan phase is not supported")
+    starts_on = _phase_segment_date(payload.get("starts_on"))
+    ends_on = _phase_segment_date(payload.get("ends_on"))
+    if ends_on < starts_on:
+        raise DomainValidationError("phase segment end date cannot be before start date")
+    return phase, starts_on, ends_on
+
+
+def _phase_segment_date(value: Any) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise DomainValidationError("phase segment date is invalid") from exc
+    raise DomainValidationError("phase segment date is invalid")
+
+
 @dataclass(frozen=True)
 class PlanAdjustmentProposal:
     user_id: str
@@ -487,16 +609,16 @@ class PlanAdjustmentProposal:
 
 
 def format_workout_steps_compact(steps: tuple[WorkoutStep, ...]) -> str:
-    return " + ".join(_format_step_compact(step) for step in steps)
+    return " ＋ ".join(_format_step_compact(step) for step in steps)
 
 
 def _format_step_compact(step: WorkoutStep) -> str:
     if step.step_type == "repeat":
-        nested = " / ".join(_format_step_compact(nested_step) for nested_step in step.steps)
-        return f"{step.repeat_count} x ({nested})"
+        nested = "／".join(_format_step_compact(nested_step) for nested_step in step.steps)
+        return f"{step.repeat_count} 組（{nested}）"
     load = _format_step_load(step)
     label = _format_step_label(step)
-    return f"{load} {label}".strip()
+    return f"{label} {load}".strip()
 
 
 def _format_step_load(step: WorkoutStep) -> str:
@@ -508,23 +630,24 @@ def _format_step_load(step: WorkoutStep) -> str:
 
 
 def _format_step_label(step: WorkoutStep) -> str:
+    step_label = STEP_TYPE_LABELS.get(step.step_type, "訓練")
     if step.target is not None and step.target.kind == "pace" and step.target.zone:
-        return step.target.zone
+        return f"{step_label}・{PACE_ZONE_LABELS.get(step.target.zone, '指定配速')}"
     if step.target is not None and step.target.kind == "heart_rate" and step.target.heart_rate_zone:
-        return step.target.heart_rate_zone
-    return step.step_type
+        return f"{step_label}・心率區間 {step.target.heart_rate_zone}"
+    return step_label
 
 
 def _format_distance(distance_meters: int) -> str:
     if distance_meters >= 1000 and distance_meters % 1000 == 0:
-        return f"{distance_meters // 1000}km"
-    return f"{distance_meters}m"
+        return f"{distance_meters // 1000} 公里"
+    return f"{distance_meters} 公尺"
 
 
 def _format_duration(duration_seconds: int) -> str:
     if duration_seconds % 60 == 0:
-        return f"{duration_seconds // 60} min"
-    return f"{duration_seconds} sec"
+        return f"{duration_seconds // 60} 分鐘"
+    return f"{duration_seconds} 秒"
 
 
 def _normalize_target(target: WorkoutTarget | dict[str, Any] | None) -> WorkoutTarget | None:

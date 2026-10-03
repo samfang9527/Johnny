@@ -18,6 +18,7 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
             "preferred_training_days": ["tuesday", "thursday", "sunday"],
             "preferred_long_run_day": "sunday",
             "max_runs_per_week": 2,
+            "max_hard_sessions_per_week": 1,
             "unit_preference": "metric",
             "training_preferences": {"surface": "road"},
             "injury_status": "recent",
@@ -36,7 +37,9 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
         "preferred_training_days": ["tuesday", "thursday", "sunday"],
         "preferred_long_run_day": "sunday",
         "max_runs_per_week": 2,
+        "max_hard_sessions_per_week": 1,
         "unit_preference": "metric",
+        "threshold_pace_seconds_per_km": None,
         "training_preferences": {"surface": "road"},
         "injury_status": "recent",
         "injury_areas": ["calf", "quad"],
@@ -48,6 +51,7 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
     assert loaded.status_code == 200
     assert loaded.json()["data"]["timezone"] == "Asia/Taipei"
     assert loaded.json()["data"]["current_weekly_mileage_km"] == 42.5
+    assert loaded.json()["data"]["max_hard_sessions_per_week"] == 1
 
 
 def test_athlete_profile_route_preserves_hidden_training_preferences_on_save() -> None:

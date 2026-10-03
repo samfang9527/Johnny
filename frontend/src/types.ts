@@ -14,7 +14,9 @@ export interface AthleteProfileResponse {
   preferred_training_days?: string[] | null
   preferred_long_run_day?: string | null
   max_runs_per_week?: number | null
+  max_hard_sessions_per_week?: number | null
   unit_preference?: 'metric' | 'imperial' | null
+  threshold_pace_seconds_per_km?: number | null
   training_preferences?: Record<string, unknown>
   injury_status?: 'none' | 'current' | 'recent' | 'recurring' | null
   injury_areas?: string[] | null
@@ -28,7 +30,9 @@ export interface AthleteProfileSavePayload {
   preferred_training_days: string[]
   preferred_long_run_day: string
   max_runs_per_week: number
+  max_hard_sessions_per_week: number
   unit_preference: 'metric' | 'imperial'
+  threshold_pace_seconds_per_km: number | null
   injury_status: 'none' | 'current' | 'recent' | 'recurring'
   injury_areas: string[]
   injury_notes: string | null
@@ -52,8 +56,10 @@ export interface EmailPasswordLoginPayload {
 }
 
 export interface RaceSummary {
+  id: string
   name: string
   date: string
+  raceDate: string
   distance: string
   goal: string
   daysRemaining: number
@@ -79,6 +85,81 @@ export interface RaceGoalCreatePayload {
   target_finish_seconds?: number
   priority: string
 }
+
+export type TrainingPlanType = 'race' | 'maintenance'
+
+export type TrainingPlanPhase = 'base' | 'build' | 'peak' | 'taper' | 'race' | 'maintenance'
+
+export interface TrainingPlanPhaseSegment {
+  phase: TrainingPlanPhase
+  starts_on: string
+  ends_on: string
+  focus?: string
+}
+
+export interface TrainingPlanMetadata {
+  phase_segments?: TrainingPlanPhaseSegment[]
+  [key: string]: unknown
+}
+
+export interface TrainingPlanResponse {
+  id: string | null
+  user_id: string
+  race_id: string | null
+  name: string
+  status: string
+  starts_on: string
+  ends_on: string
+  metadata: TrainingPlanMetadata
+  workouts: unknown[]
+}
+
+export interface TrainingPlanRegenerationRequest {
+  client_request_id: string
+  race_id: string | null
+  plan_type: TrainingPlanType
+}
+
+export interface TrainingPlanRegenerationQuota {
+  quota_day: string
+  limit: number
+  used: number
+  remaining: number
+  available: boolean
+  next_available_at: string | null
+}
+
+export interface TrainingPlanRegenerationStrategy {
+  race_id: string | null
+  plan_type: TrainingPlanType
+  reason: string
+  starts_on: string
+  plan_horizon_weeks: number
+}
+
+export interface TrainingPlanRegenerationRun {
+  run_id: string
+  status: string
+  workflow_name: string
+  poll_url: string
+}
+
+export interface AgentRunResponse {
+  id: string | null
+  status: string
+  workflow_name: string
+  finished_at: string | null
+  error_message: string | null
+}
+
+export interface TrainingPlanRegenerationOptions {
+  quota: TrainingPlanRegenerationQuota
+  default_strategy: TrainingPlanRegenerationStrategy
+  in_flight_run: TrainingPlanRegenerationRun | null
+  run: TrainingPlanRegenerationRun | null
+}
+
+export type TrainingPlanRegenerationStartResponse = TrainingPlanRegenerationOptions
 
 export interface EvidenceItem {
   source: string
@@ -132,6 +213,7 @@ export interface WorkoutSummary {
   id: string
   weekday: string
   dateLabel: string
+  scheduledFor?: string
   type: string
   purpose: string
   distance?: string

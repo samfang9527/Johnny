@@ -281,6 +281,7 @@ def _ensure_default_athlete_profile(session, *, user_id: str, timezone_name: str
             preferred_training_days=("tuesday", "thursday", "sunday"),
             preferred_long_run_day="sunday",
             max_runs_per_week=3,
+            max_hard_sessions_per_week=2,
         ),
     )
 

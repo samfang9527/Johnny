@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,16 +35,53 @@ class SqlAlchemyAgentTaskQueue:
             created_at=now,
             updated_at=now,
         )
-        self._session.add(model)
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(model)
+                self._session.flush()
         except IntegrityError:
-            self._session.rollback()
             existing = self._get_model_by_idempotency_key(idempotency_key)
             if existing is None:
                 raise
             return _task_from_model(existing)
         return _task_from_model(model)
+
+    def enqueue_or_requeue_terminal(self, task: TaskEnvelope) -> AgentTask:
+        idempotency_key = task.idempotency_key or _default_idempotency_key(task)
+        correlation_id = task.correlation_id or idempotency_key
+        now = utc_now()
+        result = self._session.execute(
+            update(AgentTaskModel)
+            .where(
+                AgentTaskModel.idempotency_key == idempotency_key,
+                AgentTaskModel.status.in_(("completed", "failed", "dead_lettered")),
+            )
+            .values(
+                task_type=task.task_type,
+                status="queued",
+                correlation_id=correlation_id,
+                payload=dict(task.payload),
+                available_at=task.available_at or now,
+                claimed_at=None,
+                completed_at=None,
+                failed_at=None,
+                retry_count=0,
+                max_attempts=task.max_attempts,
+                last_error_type=None,
+                last_error_message=None,
+                updated_at=now,
+            )
+        )
+        if result.rowcount:
+            self._session.flush()
+            requeued = self._get_model_by_idempotency_key(idempotency_key)
+            assert requeued is not None
+            return _task_from_model(requeued)
+
+        existing = self._get_model_by_idempotency_key(idempotency_key)
+        if existing is not None:
+            return _task_from_model(existing)
+        return self.enqueue(task)
 
     def get_by_idempotency_key(self, idempotency_key: str) -> AgentTask | None:
         model = self._get_model_by_idempotency_key(idempotency_key)
@@ -52,27 +89,43 @@ class SqlAlchemyAgentTaskQueue:
             return None
         return _task_from_model(model)
 
-    def claim_next(self, *, now: datetime, claim_timeout: timedelta) -> AgentTask | None:
-        stale_before = now - claim_timeout
-        statement = (
-            select(AgentTaskModel)
-            .where(
-                or_(
-                    (AgentTaskModel.status == "queued") & (AgentTaskModel.available_at <= now),
-                    (AgentTaskModel.status == "processing") & (AgentTaskModel.claimed_at <= stale_before),
-                )
-            )
-            .order_by(AgentTaskModel.available_at, AgentTaskModel.created_at, AgentTaskModel.id)
-            .limit(1)
+    def get_by_correlation_id(self, correlation_id: str) -> AgentTask | None:
+        model = self._session.scalar(
+            select(AgentTaskModel).where(AgentTaskModel.correlation_id == correlation_id)
         )
-        model = self._session.scalar(statement)
         if model is None:
             return None
-        model.status = "processing"
-        model.claimed_at = now
-        model.updated_at = now
-        self._session.flush()
         return _task_from_model(model)
+
+    def claim_next(self, *, now: datetime, claim_timeout: timedelta) -> AgentTask | None:
+        stale_before = now - claim_timeout
+        claimable = or_(
+            (AgentTaskModel.status == "queued") & (AgentTaskModel.available_at <= now),
+            (AgentTaskModel.status == "processing") & (AgentTaskModel.claimed_at <= stale_before),
+        )
+        while True:
+            candidate_id = self._session.scalar(
+                select(AgentTaskModel.id)
+                .where(claimable)
+                .order_by(AgentTaskModel.available_at, AgentTaskModel.created_at, AgentTaskModel.id)
+                .limit(1)
+            )
+            if candidate_id is None:
+                return None
+
+            result = self._session.execute(
+                update(AgentTaskModel)
+                .where(AgentTaskModel.id == candidate_id, claimable)
+                .values(status="processing", claimed_at=now, updated_at=now)
+                .execution_options(synchronize_session=False)
+            )
+            if result.rowcount != 1:
+                continue
+
+            self._session.flush()
+            model = self._session.get(AgentTaskModel, candidate_id, populate_existing=True)
+            assert model is not None
+            return _task_from_model(model)
 
     def complete(self, task_id: str | None, *, now: datetime) -> AgentTask | None:
         model = self._get(task_id)
