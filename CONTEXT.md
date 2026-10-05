@@ -24,6 +24,10 @@ _Avoid_: LLM pace estimate, pace guess
 The athlete's stated constraints, training preferences, injury context, weekly mileage, experience level, and recent baseline metrics that Johnny uses to personalize plans and recommendations.
 _Avoid_: Profile settings, health stats, user config
 
+**Capacity Snapshot**:
+Johnny's dated estimate of current running volume and longest recent run, drawn from sufficient athlete-local activity history or marked as a low-confidence stated-mileage fallback.
+_Avoid_: Experience score, proven inactivity, race readiness
+
 **Coach Note**:
 Optional LLM-authored guidance attached to a workout that is not canonical workout structure.
 _Avoid_: Workout summary, instruction
@@ -65,8 +69,16 @@ A dated span in a plan version that assigns one plan phase to a range of trainin
 _Avoid_: Timeline item, phase card, weekly rationale
 
 **Plan Skeleton**:
-Johnny's deterministic week-by-week structure for a plan version before workout details are enriched.
+Johnny's deterministic dates, phases, workout types, and prescribed durations for a plan version before workout details are enriched.
 _Avoid_: LLM outline, rough plan, empty template
+
+**Workload Prescription**:
+The versioned weekly running-minute, long-run, and terrain-session targets Johnny computes from a Capacity Snapshot, Race Strategy, and Athlete Baseline constraints before building a Plan Skeleton.
+_Avoid_: LLM workload, race-distance multiplier
+
+**Preparation Assessment**:
+Johnny's comparison of a feasible Plan Version against a calibrated race-planning reference, with `on_track`, `gap`, or `unknown` status and named factors. It does not predict completion or grant medical clearance.
+_Avoid_: Readiness guarantee, safety clearance
 
 **Hard Session**:
 A workout that meaningfully stresses the athlete, such as interval, tempo, hill, race-pace, or long run.

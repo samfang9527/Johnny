@@ -23,12 +23,14 @@ def test_capacity_uses_complete_local_weeks_and_deduplicates_running_activities(
         activity("2027-01-11", minutes=80), activity("2027-01-13", minutes=100),
         activity("2027-01-18", minutes=100), activity("2027-01-20", minutes=120),
     ]
+    runs[7]["elevation_gain_meters"] = 420
     runs += [runs[0], activity("2027-01-19", minutes=500, sport="ride")]
     snapshot = derive_capacity_snapshot(profile={"timezone": "Asia/Taipei", "current_weekly_mileage_km": 80}, activities=runs, anchor=date(2027, 1, 28))
     assert snapshot.source == "activities"
     assert snapshot.confidence == "high"
     assert snapshot.weekly_minutes == 160  # median of 100, 140, 180, 220
     assert snapshot.recent_long_run_minutes == 120
+    assert snapshot.recent_ascent_meters == 420
     assert snapshot.activity_count == 8
     assert snapshot.observation_start == date(2026, 12, 28)
     assert snapshot.observation_end == date(2027, 1, 24)
@@ -112,3 +114,10 @@ def test_assessment_known_gap_precedes_unknown_and_uncalibrated_is_never_on_trac
     assert low.status == "unknown"
     ultra = assess_preparation(capacity=known_capacity(), race=race(60_000), starts_on=date(2027, 1, 4), ends_on=date(2027, 4, 25), weekly_minutes=[350], long_run_minutes=[160], terrain_session_count=0, policy_version="race-workload-v1")
     assert ultra.status == "unknown"
+
+
+def test_known_ascent_stays_unknown_without_a_calibrated_ascent_reference():
+    ascent_race = RaceDemand(40_000, date(2027, 4, 26), None, 1500, None, "technical", None, "complete")
+    assessment = assess_preparation(capacity=known_capacity(350, 160), race=ascent_race, starts_on=date(2027, 1, 4), ends_on=date(2027, 4, 25), weekly_minutes=[350], long_run_minutes=[160], terrain_session_count=2, policy_version="race-workload-v1")
+    assert assessment.status == "unknown"
+    assert "uncalibrated_ascent" in assessment.factors

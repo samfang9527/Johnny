@@ -6,6 +6,14 @@ Define the Chinese-first Johnny visual frontend behavior for the Today cockpit, 
 
 ## Requirements
 
+### Requirement: Race preparation assessment in Plan
+
+The Plan view SHALL show a generated race Plan Version's public preparation assessment beside its selected Race Goal, using Traditional Chinese status and explanation text. An older plan without an assessment SHALL remain readable without an invented status.
+
+#### Scenario: Generated plan has a preparation gap
+- **WHEN** the athlete views a race plan with a `gap` assessment
+- **THEN** the Plan view names the gap and displays its explanation without promising race completion
+
 ### Requirement: Chinese-first Johnny app shell
 
 The system SHALL replace the frontend scaffold with a Chinese-first Johnny product shell that follows `DESIGN.md` visual tokens and navigation language.

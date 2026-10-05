@@ -21,7 +21,7 @@ The system SHALL represent a runner's baseline training context for training dec
 - **THEN** the system persists the updated preferences without requiring a race goal change
 
 ### Requirement: Race Goal
-The system SHALL represent a target race with date, distance, optional target finish time, priority, and status.
+The system SHALL represent a target race with date, distance, optional target finish time, optional ascent, descent, terrain difficulty, cutoff, goal intent, priority, and status. Omitted course fields remain unknown.
 
 Race priority SHALL be one of `primary`, `secondary`, or `tune_up`.
 

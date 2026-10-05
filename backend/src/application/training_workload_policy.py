@@ -24,6 +24,7 @@ class CapacitySnapshot:
     observation_end: date
     activity_count: int
     missing_dimensions: tuple[str, ...]
+    recent_ascent_meters: float | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ def derive_capacity_snapshot(*, profile: dict, activities: Sequence[dict], ancho
         athlete_zone = ZoneInfo("UTC")
     seen: set[tuple[str, str]] = set()
     valid: list[tuple[date, float, float]] = []
+    ascent_observations: list[tuple[date, float]] = []
     for item in activities:
         if str(item.get("sport_type") or "").lower() not in RUNNING_SPORTS:
             continue
@@ -89,11 +91,19 @@ def derive_capacity_snapshot(*, profile: dict, activities: Sequence[dict], ancho
         if seconds <= 0 or meters < 0 or local_day >= anchor or local_day < anchor - timedelta(days=56):
             continue
         valid.append((local_day, seconds / 60, meters / 1000))
+        if item.get("elevation_gain_meters") is not None:
+            try:
+                ascent = float(item["elevation_gain_meters"])
+            except (TypeError, ValueError):
+                ascent = -1
+            if ascent >= 0:
+                ascent_observations.append((local_day, ascent))
 
     weeks = [[entry for entry in valid if completed_start + timedelta(days=7 * index) <= entry[0] < completed_start + timedelta(days=7 * (index + 1))] for index in range(4)]
     complete_runs = [entry for week in weeks for entry in week]
     sufficient = (len(complete_runs) >= 8 and sum(len(week) >= 2 for week in weeks) >= 3 and any(day >= anchor - timedelta(days=14) for day, _, _ in valid))
     recent_long = max((minutes for day, minutes, _ in valid if day >= anchor - timedelta(days=28)), default=None)
+    recent_ascent = sum(ascent for day, ascent in ascent_observations if day >= anchor - timedelta(days=28)) if ascent_observations else None
     if sufficient:
         return CapacitySnapshot(
             source="activities", confidence="high",
@@ -102,6 +112,7 @@ def derive_capacity_snapshot(*, profile: dict, activities: Sequence[dict], ancho
             recent_long_run_minutes=round(recent_long) if recent_long is not None else None,
             observation_start=completed_start, observation_end=completed_end,
             activity_count=len(complete_runs), missing_dimensions=(),
+            recent_ascent_meters=recent_ascent,
         )
     try:
         stated_km = float(profile.get("current_weekly_mileage_km") or 0)
@@ -115,6 +126,7 @@ def derive_capacity_snapshot(*, profile: dict, activities: Sequence[dict], ancho
         observation_start=completed_start, observation_end=completed_end,
         activity_count=len(complete_runs),
         missing_dimensions=("activity_history",) if stated_km > 0 else ("activity_history", "weekly_mileage"),
+        recent_ascent_meters=recent_ascent,
     )
 
 
@@ -206,8 +218,12 @@ def assess_preparation(
             factors.append("long_run_endurance")
         if race.terrain_difficulty in {"mixed", "technical"} and terrain_session_count < 2:
             factors.append("terrain_exposure")
-        if race.ascent_meters is not None and terrain_session_count == 0:
-            factors.append("ascent_preparation")
+        if race.ascent_meters is not None:
+            if terrain_session_count == 0:
+                factors.append("ascent_preparation")
+            # V1 has no calibrated ascent target or downhill evidence. A hill
+            # session alone must not turn known climbing demands into on_track.
+            unknown.append("uncalibrated_ascent")
         if (ends_on - starts_on).days < 55:
             factors.append("short_horizon")
     status = "gap" if factors else "unknown" if unknown else "on_track"
@@ -219,6 +235,7 @@ def assess_preparation(
         "short_horizon": "準備時間較短",
         "missing_baseline": "近期跑步紀錄不足",
         "uncalibrated_race": "此賽事距離尚無完整評估參考值",
+        "uncalibrated_ascent": "爬升需求尚無完整評估參考值",
     }
     explanation = "；".join(labels[factor] for factor in (*factors, *unknown)) if factors or unknown else "規劃訓練達到目前政策參考值；不代表保證完賽。"
     return PreparationAssessment(status, tuple((*factors, *unknown)), explanation, policy_version)

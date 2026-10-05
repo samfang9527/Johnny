@@ -62,6 +62,8 @@ The API SHALL expose training plans and workouts with structured details while p
 #### Scenario: Returning plan metadata
 - **WHEN** a client lists or fetches training plans
 - **THEN** each training plan response includes plan version metadata when available
+- **AND** generated plans expose their public preparation assessment without private internal evidence
+- **AND** legacy or manual plans without an assessment remain readable
 
 #### Scenario: Backward-compatible simple workouts
 - **WHEN** a stored workout has no structured steps

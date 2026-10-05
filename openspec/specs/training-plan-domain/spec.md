@@ -16,6 +16,7 @@ The system SHALL represent a user's training plan as dated planned workouts tied
 - **WHEN** the generated plan is stored
 - **THEN** the system stores the plan with status `active`
 - **AND** overlapping active plans for the same race are marked `superseded`
+- **AND** a versioned deterministic workload prescription owns workout dates, types, phases, and durations before model enrichment
 
 #### Scenario: Rejecting invalid plan date range
 - **WHEN** a training plan is created with an end date before the start date

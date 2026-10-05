@@ -24,6 +24,7 @@ from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueu
 from src.infrastructure.database.models import (
     AgentRunModel,
     AgentTaskModel,
+    ActivityModel,
     Base,
     RaceModel,
     RecommendationModel,
@@ -818,3 +819,98 @@ def test_smoke_flow_queues_with_http_drains_worker_and_polls_completion(monkeypa
     assert training_run["status"] == "completed"
     assert len(recommendations) == 1
     assert any(plan["name"] == "Johnny 訓練計畫" and plan["status"] == "active" for plan in plans)
+
+
+def test_manual_regeneration_produces_race_aware_40km_projection(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_session():
+        session = session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_session
+    client = TestClient(app)
+    today = date.today()
+    race_day = today + timedelta(days=98)
+    headers = {"X-Johnny-User-Id": "race-aware-runner"}
+    with session_factory() as session:
+        ensure_current_user(session, CurrentUser(id="race-aware-runner"))
+        session.add(TrainingPlanModel(id="previous-race-plan", user_id="race-aware-runner", name="Old Plan", status="active", starts_on=today - timedelta(days=28), ends_on=today + timedelta(days=14), metadata_json={}))
+        session.execute(Base.metadata.tables["athlete_profiles"].insert().values(id="race-aware-profile", user_id="race-aware-runner", timezone="UTC", experience_level="intermediate", metadata_json={"current_weekly_mileage_km": 25, "preferred_training_days": ["tuesday", "thursday", "sunday"], "preferred_long_run_day": "sunday", "max_runs_per_week": 3, "max_hard_sessions_per_week": 2}))
+        session.add(RaceModel(id="race-40km", user_id="race-aware-runner", name="山徑 40K", race_date=race_day, distance_meters=40_000, status="planned", metadata_json={"priority": "primary", "terrain_difficulty": "technical", "ascent_meters": 1400, "goal_intent": "complete"}))
+        completed_end = today - timedelta(days=today.weekday() + 1)
+        for week in range(4):
+            for run in range(2):
+                day = completed_end - timedelta(days=27 - week * 7 - run * 2)
+                session.add(ActivityModel(id=f"race-run-{week}-{run}", user_id="race-aware-runner", started_at=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=7), activity_type="run", distance_meters=12_500, duration_seconds=4500, provider_summary={}))
+        session.commit()
+
+    queued = client.post("/api/v1/training-plans/regenerations", headers=headers, json={"client_request_id": "race-aware-40km", "race_id": "race-40km", "plan_type": "race"})
+    assert queued.status_code == 200, queued.text
+    with session_factory() as session:
+        assert work_drain(session) == 1
+        session.commit()
+    plans_response = client.get("/api/v1/training-plans", headers=headers)
+    assert plans_response.status_code == 200
+    plans = plans_response.json()["data"]
+    active = next(plan for plan in plans if plan["status"] == "active")
+    previous = next(plan for plan in plans if plan["id"] == "previous-race-plan")
+    assert previous["status"] == "superseded"
+    assert active["metadata"]["workload_policy_version"] == "race-workload-v1"
+    assert active["preparation_assessment"]["status"] == "gap"
+    assert max(workout["planned_duration_minutes"] for workout in active["workouts"] if workout["workout_type"] == "long_run") > 70
+    assert all(workout["steps"] for workout in active["workouts"])
+    assert "internal" not in active["metadata"]
+
+
+def test_invalid_profile_at_worker_time_keeps_previous_projection_active(monkeypatch) -> None:
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    def override_session():
+        session = session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    app = create_app()
+    app.dependency_overrides[get_session] = override_session
+    client = TestClient(app)
+    today = date.today()
+    headers = {"X-Johnny-User-Id": "invalid-profile-runner"}
+    with session_factory() as session:
+        ensure_current_user(session, CurrentUser(id="invalid-profile-runner"))
+        session.add(TrainingPlanModel(id="safe-prior-plan", user_id="invalid-profile-runner", name="Current Plan", status="active", starts_on=today - timedelta(days=14), ends_on=today + timedelta(days=14), metadata_json={}))
+        session.execute(Base.metadata.tables["athlete_profiles"].insert().values(id="valid-then-invalid", user_id="invalid-profile-runner", timezone="UTC", experience_level="intermediate", metadata_json={"current_weekly_mileage_km": 25, "max_runs_per_week": 3, "max_hard_sessions_per_week": 2}))
+        session.add(RaceModel(id="later-race", user_id="invalid-profile-runner", name="40K", race_date=today + timedelta(days=84), distance_meters=40_000, status="planned", metadata_json={"priority": "primary"}))
+        session.commit()
+
+    queued = client.post("/api/v1/training-plans/regenerations", headers=headers, json={"client_request_id": "invalid-after-queue", "race_id": "later-race", "plan_type": "race"})
+    assert queued.status_code == 200, queued.text
+    with session_factory() as session:
+        session.execute(Base.metadata.tables["athlete_profiles"].update().where(Base.metadata.tables["athlete_profiles"].c.id == "valid-then-invalid").values(metadata_json={"current_weekly_mileage_km": 25, "max_runs_per_week": 0}))
+        session.commit()
+    with session_factory() as session:
+        assert work_drain(session) == 1
+        session.commit()
+    with session_factory() as session:
+        active_ids = list(session.scalars(select(TrainingPlanModel.id).where(TrainingPlanModel.user_id == "invalid-profile-runner", TrainingPlanModel.status == "active")))
+    assert active_ids == ["safe-prior-plan"]

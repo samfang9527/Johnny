@@ -75,12 +75,12 @@ The system SHALL provide a `training_plan_generation` workflow that creates a va
 
 #### Scenario: Generation request preloads planning context
 - **WHEN** the training-plan generation workflow builds the model request
-- **THEN** it preloads athlete profile, athlete baseline, races, recent activity summary, limited key activity records, current or last active plan context, and deterministic pace profile
+- **THEN** it preloads athlete profile, athlete baseline, races, a complete user-scoped activity window for capacity calculation, a limited activity slice for model context, current or last active plan context, deterministic pace profile, and a versioned workload prescription
 - **AND** read tools remain available for the model to request extra context
 
 #### Scenario: LLM generates structured workout intent
 - **WHEN** the model creates a training plan
-- **THEN** it selects phases, weekly logic, workout types, workout steps, target zones, and optional coach notes
+- **THEN** it enriches workout steps, purposes, target zones, and optional coach notes within Johnny's fixed phases, workout types, dates, and durations
 - **AND** it persists the plan through `createTrainingPlan`
 - **AND** it does not treat exact pace math as authoritative
 
