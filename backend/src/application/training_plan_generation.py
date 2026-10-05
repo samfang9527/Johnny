@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from math import ceil
 from typing import Any, Mapping, Sequence
@@ -149,7 +149,7 @@ def build_plan_skeleton(
         scheduled_for
         for _, scheduled_days in weeks
         for scheduled_for in scheduled_days
-        if hard_session_limit > 0 and scheduled_for.weekday() == DAY_INDEX[preferred_long_run_day]
+        if len(scheduled_days) > 1 and hard_session_limit > 0 and scheduled_for.weekday() == DAY_INDEX[preferred_long_run_day]
     ]
 
     workouts: list[SkeletonWorkout] = []
@@ -168,8 +168,10 @@ def build_plan_skeleton(
             if not _is_safely_spaced(scheduled_for, hard_dates):
                 continue
 
-            quality_types = ("hill",) if prescription.weeks[week_index].terrain_focus else QUALITY_WORKOUT_TYPES
-            if plan_type == "race" and race_distance_meters is not None:
+            quality_types = QUALITY_WORKOUT_TYPES
+            if prescription.weeks[week_index].terrain_focus:
+                quality_types = ("hill",)
+            elif plan_type == "race" and race_distance_meters is not None:
                 quality_types = ("interval", "hill") if race_distance_meters <= 10_000 else ("tempo", "hill")
             workout_type_by_date[scheduled_for] = quality_types[quality_index % len(quality_types)]
             quality_index += 1
@@ -199,7 +201,8 @@ def build_plan_skeleton(
             weekly_totals.append(0)
             weekly_longs.append(0)
             continue
-        budget = prescription.weeks[week_index].target_minutes
+        # One available run cannot safely carry a full week's training volume.
+        budget = min(prescription.weeks[week_index].target_minutes, 90) if len(week_workouts) == 1 else prescription.weeks[week_index].target_minutes
         long_workout = next((workout for workout in week_workouts if workout.workout_type == "long_run"), None)
         long_minutes = min(prescription.weeks[week_index].long_run_minutes, max(1, budget - len(week_workouts) + 1)) if long_workout else 0
         ordinary_count = len(week_workouts) - int(long_workout is not None)
@@ -213,16 +216,26 @@ def build_plan_skeleton(
                 duration = each + int(ordinary_index < extra)
                 ordinary_index += 1
             allocated.append(SkeletonWorkout(workout.scheduled_for, workout.workout_type, workout.phase, duration, None))
-        weekly_totals.append(budget)
+        weekly_totals.append(sum(workout.planned_duration_minutes or 0 for workout in allocated if workout.scheduled_for in scheduled_days))
         weekly_longs.append(long_minutes)
+    development_indexes = [week.week_index for week in prescription.weeks if week.phase not in {"taper", "race"}]
+    final_development_indexes = set(development_indexes[-8:])
     actual_assessment = assess_preparation(
         capacity=capacity, race=demand, starts_on=starts_on, ends_on=ends_on,
         weekly_minutes=[total for total, week in zip(weekly_totals, prescription.weeks) if week.phase not in {"taper", "race"}],
         long_run_minutes=[minutes for minutes, week in zip(weekly_longs, prescription.weeks) if week.phase not in {"taper", "race"}],
-        terrain_session_count=sum(workout.workout_type == "hill" for workout in allocated),
+        terrain_session_count=sum(
+            workout.workout_type == "hill"
+            and (workout.scheduled_for - starts_on).days // 7 in final_development_indexes
+            for workout in allocated
+        ),
         policy_version=prescription.policy_version,
     )
-    prescription = WorkloadPrescription(prescription.weeks, actual_assessment, prescription.policy_version)
+    actual_weeks = tuple(
+        replace(week, target_minutes=weekly_totals[index], long_run_minutes=weekly_longs[index])
+        for index, week in enumerate(prescription.weeks)
+    )
+    prescription = WorkloadPrescription(actual_weeks, actual_assessment, prescription.policy_version)
     return PlanSkeleton(
         starts_on=starts_on,
         ends_on=ends_on,

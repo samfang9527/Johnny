@@ -63,6 +63,11 @@ export interface RaceSummary {
   distance: string
   goal: string
   daysRemaining: number
+  ascentMeters?: number | null
+  descentMeters?: number | null
+  terrainDifficulty?: 'runnable' | 'mixed' | 'technical' | null
+  cutoffSeconds?: number | null
+  goalIntent?: 'complete' | 'perform' | null
 }
 
 export interface WeeklyActivityPoint {

@@ -80,7 +80,6 @@ def derive_capacity_snapshot(*, profile: dict, activities: Sequence[dict], ancho
         identity = (("id", str(item["id"])) if item.get("id") else (str(item.get("source") or ""), str(item.get("source_activity_id") or "")))
         if not identity[1] or identity in seen:
             continue
-        seen.add(identity)
         try:
             started = datetime.fromisoformat(str(item["started_at"]).replace("Z", "+00:00"))
             local_day = (started.astimezone(athlete_zone) if started.tzinfo else started).date()
@@ -90,6 +89,7 @@ def derive_capacity_snapshot(*, profile: dict, activities: Sequence[dict], ancho
             continue
         if seconds <= 0 or meters < 0 or local_day >= anchor or local_day < anchor - timedelta(days=56):
             continue
+        seen.add(identity)
         valid.append((local_day, seconds / 60, meters / 1000))
         if item.get("elevation_gain_meters") is not None:
             try:
@@ -147,7 +147,19 @@ def build_workload_prescription(
     if missing_baseline:
         baseline = max_runs_per_week * 20 + 10  # 20-minute ordinary runs and a 30-minute long run
     baseline = round(baseline * .8) if injured else baseline
-    long_anchor = capacity.recent_long_run_minutes or (30 if missing_baseline else min(90, round(.4 * baseline)))
+    prior_longs: list[int] = []
+    if isinstance(prior_plan, Mapping):
+        for workout in prior_plan.get("workouts", ()):
+            if not isinstance(workout, Mapping) or workout.get("workout_type") != "long_run" or workout.get("status") == "skipped":
+                continue
+            try:
+                scheduled_for = date.fromisoformat(str(workout["scheduled_for"]))
+                minutes = int(workout["planned_duration_minutes"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if starts_on - timedelta(days=28) <= scheduled_for < starts_on and minutes > 0:
+                prior_longs.append(minutes)
+    long_anchor = max(capacity.recent_long_run_minutes or 0, max(prior_longs, default=0)) or (30 if missing_baseline else min(90, round(.4 * baseline)))
     long_cap = 180 if race is not None and 30_000 <= race.distance_meters <= 50_000 else 90 if race is not None and race.distance_meters <= 10_000 else 120
     week_starts = []
     current = starts_on

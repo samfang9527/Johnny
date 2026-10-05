@@ -2094,6 +2094,13 @@ button:disabled {
   flex: 1;
 }
 
+.plan-race-goal__course {
+  margin: 0;
+  width: 100%;
+  color: var(--color-muted-green);
+  font-size: 0.9rem;
+}
+
 .auth-mode-switch,
 .choice-fieldset,
 .target-time-fieldset,

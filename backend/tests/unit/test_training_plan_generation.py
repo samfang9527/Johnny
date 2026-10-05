@@ -241,6 +241,30 @@ def test_high_capacity_40km_plan_can_exceed_old_120_minute_ceiling() -> None:
     assert max(workout.planned_duration_minutes for workout in skeleton.workouts if workout.workout_type == "long_run") > 120
 
 
+def test_one_run_schedule_assesses_actual_minutes_not_unallocated_budget() -> None:
+    from src.application.training_workload_policy import RaceDemand, CapacitySnapshot
+
+    capacity = CapacitySnapshot("activities", "high", 360, 60, 170, date(2026, 12, 1), date(2026, 12, 28), 12, ())
+    skeleton = _skeleton(plan_type="race", race_date=date(2027, 4, 25), ends_on=date(2027, 4, 25), preferred_training_days=("sunday",), max_runs_per_week=1, race_distance_meters=40_000, capacity_snapshot=capacity, race_demand=RaceDemand(40_000, date(2027, 4, 25), None, None, None, None, None, "complete"))
+    assert all(sum(workout.planned_duration_minutes for workout in skeleton.workouts if (workout.scheduled_for - skeleton.starts_on).days // 7 == week) <= 180 for week in range(16))
+    assert skeleton.workload_prescription.assessment.status == "gap"
+    assert "weekly_volume" in skeleton.workload_prescription.assessment.factors
+    assert all(week.long_run_minutes == 0 for week in skeleton.workload_prescription.weeks)
+    assert all(week.target_minutes <= 90 for week in skeleton.workload_prescription.weeks)
+    assert all(week.target_minutes == sum(workout.planned_duration_minutes for workout in skeleton.workouts if (workout.scheduled_for - skeleton.starts_on).days // 7 == week.week_index) for week in skeleton.workload_prescription.weeks)
+
+
+def test_technical_race_hill_exposure_occurs_in_final_eight_development_weeks() -> None:
+    from src.application.training_workload_policy import RaceDemand, CapacitySnapshot
+
+    capacity = CapacitySnapshot("activities", "high", 340, 56, 155, date(2026, 12, 1), date(2026, 12, 28), 12, ())
+    skeleton = _skeleton(plan_type="race", race_date=date(2027, 4, 25), ends_on=date(2027, 4, 25), race_distance_meters=40_000, capacity_snapshot=capacity, race_demand=RaceDemand(40_000, date(2027, 4, 25), None, None, None, "technical", None, "complete"))
+    focus_weeks = [week.week_index for week in skeleton.workload_prescription.weeks if week.terrain_focus]
+    assert len(focus_weeks) == 2
+    assert all(any(workout.workout_type == "hill" for workout in skeleton.workouts if (workout.scheduled_for - skeleton.starts_on).days // 7 == index) for index in focus_weeks)
+    assert "terrain_exposure" not in skeleton.workload_prescription.assessment.factors
+
+
 def test_race_distance_changes_key_sessions_and_long_run_progression() -> None:
     args = dict(plan_type="race", race_date=date(2027, 2, 28), ends_on=date(2027, 2, 28), current_weekly_mileage_km=40, experience_level="advanced")
     short = _skeleton(**args, race_distance_meters=5000)

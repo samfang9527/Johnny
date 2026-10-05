@@ -121,3 +121,17 @@ def test_known_ascent_stays_unknown_without_a_calibrated_ascent_reference():
     assessment = assess_preparation(capacity=known_capacity(350, 160), race=ascent_race, starts_on=date(2027, 1, 4), ends_on=date(2027, 4, 25), weekly_minutes=[350], long_run_minutes=[160], terrain_session_count=2, policy_version="race-workload-v1")
     assert assessment.status == "unknown"
     assert "uncalibrated_ascent" in assessment.factors
+
+
+def test_recent_prior_plan_long_run_anchors_new_prescription_when_activity_long_run_missing():
+    args = dict(capacity=known_capacity(240, None), race=race(), starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), phase_segments=[{"phase": "build", "starts_on": "2027-01-04", "ends_on": "2027-01-31"}], max_runs_per_week=3, max_hard_sessions_per_week=2, injury_status="none")
+    without = build_workload_prescription(**args)
+    with_prior = build_workload_prescription(**args, prior_plan={"workouts": [{"scheduled_for": "2026-12-27", "workout_type": "long_run", "planned_duration_minutes": 110, "status": "planned"}]})
+    assert with_prior.weeks[0].long_run_minutes > without.weeks[0].long_run_minutes
+
+
+def test_malformed_duplicate_does_not_hide_valid_activity():
+    runs = [activity("2026-12-28"), activity("2026-12-30"), activity("2027-01-04"), activity("2027-01-06"), activity("2027-01-11"), activity("2027-01-13"), activity("2027-01-18"), activity("2027-01-20")]
+    malformed = {**runs[0], "started_at": "invalid"}
+    snapshot = derive_capacity_snapshot(profile={"timezone": "Asia/Taipei"}, activities=[malformed, *runs], anchor=date(2027, 1, 28))
+    assert snapshot.confidence == "high"

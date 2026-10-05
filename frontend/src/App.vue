@@ -2012,7 +2012,23 @@ function mapRaceGoal(raw: unknown): RaceSummary | null {
     distance: formatDistance(distanceMeters),
     goal: formatTargetFinish(race.target_finish_seconds) || formatRacePriority(race.priority) || String(race.status || 'planned'),
     daysRemaining: daysUntil(raceDateValue),
+    ascentMeters: typeof race.ascent_meters === 'number' ? race.ascent_meters : null,
+    descentMeters: typeof race.descent_meters === 'number' ? race.descent_meters : null,
+    terrainDifficulty: race.terrain_difficulty === 'runnable' || race.terrain_difficulty === 'mixed' || race.terrain_difficulty === 'technical' ? race.terrain_difficulty : null,
+    cutoffSeconds: typeof race.cutoff_seconds === 'number' ? race.cutoff_seconds : null,
+    goalIntent: race.goal_intent === 'complete' || race.goal_intent === 'perform' ? race.goal_intent : null,
   }
+}
+
+function raceCourseDetails(race: RaceSummary): string {
+  const details = [
+    race.ascentMeters != null ? `爬升 ${race.ascentMeters} 公尺` : null,
+    race.descentMeters != null ? `下降 ${race.descentMeters} 公尺` : null,
+    race.terrainDifficulty ? ({ runnable: '可跑性高', mixed: '混合地形', technical: '技術地形' } as const)[race.terrainDifficulty] : null,
+    race.cutoffSeconds != null ? `關門 ${Number((race.cutoffSeconds / 3600).toFixed(2))} 小時` : null,
+    race.goalIntent ? (race.goalIntent === 'complete' ? '目標：完成賽事' : '目標：挑戰表現') : null,
+  ].filter(Boolean)
+  return details.length ? details.join(' · ') : '賽道資料未提供'
 }
 
 function preparationStatusLabel(status: string): string {
@@ -2797,6 +2813,7 @@ function shouldRequireAuth(): boolean {
           <template v-if="upcomingRaceEntries.length">
             <article v-for="race in upcomingRaceEntries" :key="`${race.name}-${race.date}`" class="plan-race-goal">
               <div class="plan-race-goal__identity"><strong>{{ race.name }}</strong><span>{{ race.distance }} · {{ race.goal }}</span></div>
+              <p class="plan-race-goal__course">{{ raceCourseDetails(race) }}</p>
               <div v-if="activePlan?.race_id === race.id && activePlan.preparation_assessment" class="plan-race-goal__assessment" role="status" data-testid="preparation-assessment">
                 <StatusBadge :tone="activePlan.preparation_assessment.status === 'gap' ? 'warning' : activePlan.preparation_assessment.status === 'on_track' ? 'success' : 'info'">{{ preparationStatusLabel(activePlan.preparation_assessment.status) }}</StatusBadge>
                 <p>{{ activePlan.preparation_assessment.explanation_zh }}</p>

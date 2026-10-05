@@ -1610,7 +1610,7 @@ describe('Johnny product shell', () => {
       const url = String(input)
       if (url.endsWith('/api/v1/me')) return Promise.resolve(okJson({ id: 'runner', capabilities: ['today', 'races', 'training-plans'] }))
       if (url.endsWith('/api/v1/training-plans')) return Promise.resolve(okJson([{ id: 'plan-1', user_id: 'runner', race_id: 'race-1', name: '山徑計畫', status: 'active', starts_on: '2026-09-01', ends_on: '2026-11-15', metadata: {}, workouts: [], preparation_assessment: { status, factors: ['weekly_volume'], explanation_zh: '每週跑量尚需提升', policy_version: 'race-workload-v1' } }]))
-      if (url.includes('/api/v1/races')) return Promise.resolve(okJson([{ id: 'race-1', name: '山徑 40K', race_date: '2026-11-15', distance_meters: 40000, priority: 'primary', status: 'planned' }]))
+      if (url.includes('/api/v1/races')) return Promise.resolve(okJson([{ id: 'race-1', name: '山徑 40K', race_date: '2026-11-15', distance_meters: 40000, priority: 'primary', status: 'planned', ascent_meters: 1400, descent_meters: 1300, terrain_difficulty: 'technical', cutoff_seconds: 32400, goal_intent: 'complete' }]))
       return Promise.resolve(okJson([]))
     })
     const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
@@ -1619,6 +1619,20 @@ describe('Johnny product shell', () => {
     expect(assessment.attributes('role')).toBe('status')
     expect(assessment.text()).toContain(label)
     expect(assessment.text()).toContain('每週跑量尚需提升')
+    expect(wrapper.get('.plan-race-goal__course').text()).toContain('爬升 1400 公尺')
+    expect(wrapper.get('.plan-race-goal__course').text()).toContain('技術地形')
+  })
+
+  it('shows saved course demands before a plan exists', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) return Promise.resolve(okJson({ id: 'runner', capabilities: ['today', 'races', 'training-plans'] }))
+      if (url.includes('/api/v1/races')) return Promise.resolve(okJson([{ id: 'race-1', name: '山徑 40K', race_date: '2026-11-15', distance_meters: 40000, priority: 'primary', status: 'planned', ascent_meters: 1400, terrain_difficulty: 'technical' }]))
+      return Promise.resolve(okJson([]))
+    })
+    const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
+    await flushPromises()
+    expect(wrapper.get('.plan-race-goal__course').text()).toContain('爬升 1400 公尺')
   })
 
   it('requires race priority and confirms before discarding dirty modal changes', async () => {
