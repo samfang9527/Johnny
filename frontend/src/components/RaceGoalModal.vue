@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import type { RaceGoalCreatePayload } from '../types'
+import type { RaceGoalCreatePayload, RaceGoalUpdatePayload } from '../types'
 import { kilometersToMeters, optionalCourseMeters, optionalCutoffSeconds, racePriorityOptions, targetFinishSeconds, type RacePriority } from '../raceGoalForm'
+import { useModalFocus } from './useModalFocus'
 import AppButton from './AppButton.vue'
 import DatePicker from './DatePicker.vue'
 
@@ -9,6 +10,7 @@ const props = defineProps<{
   error?: string
   busy?: boolean
   minDate: string
+  initialValue?: RaceGoalUpdatePayload
 }>()
 
 const emit = defineEmits<{
@@ -16,39 +18,39 @@ const emit = defineEmits<{
   submit: [payload: RaceGoalCreatePayload]
 }>()
 
-const raceName = ref('')
-const raceDate = ref('')
-const racePriority = ref<RacePriority | ''>('')
-const raceDistanceKilometers = ref('')
-const targetFinishHours = ref('')
-const targetFinishMinutes = ref('')
-const targetFinishSecondsValue = ref('')
-const ascentMeters = ref('')
-const descentMeters = ref('')
-const terrainDifficulty = ref<'' | 'runnable' | 'mixed' | 'technical'>('')
-const cutoffHours = ref('')
-const goalIntent = ref<'' | 'complete' | 'perform'>('')
+const initial = props.initialValue
+const initialFinish = initial?.target_finish_seconds
+const raceName = ref(initial?.name ?? '')
+const raceDate = ref(initial?.race_date ?? '')
+const racePriority = ref<RacePriority | ''>((initial?.priority as RacePriority) ?? '')
+const raceDistanceKilometers = ref(initial ? String(initial.distance_meters / 1000) : '')
+const targetFinishHours = ref(initialFinish == null ? '' : String(Math.floor(initialFinish / 3600)))
+const targetFinishMinutes = ref(initialFinish == null ? '' : String(Math.floor(initialFinish % 3600 / 60)))
+const targetFinishSecondsValue = ref(initialFinish == null ? '' : String(initialFinish % 60))
+const ascentMeters = ref(initial?.ascent_meters == null ? '' : String(initial.ascent_meters))
+const descentMeters = ref(initial?.descent_meters == null ? '' : String(initial.descent_meters))
+const terrainDifficulty = ref<'' | 'runnable' | 'mixed' | 'technical'>(initial?.terrain_difficulty ?? '')
+const initialCutoffHours = initial?.cutoff_seconds == null ? '' : String(Number((initial.cutoff_seconds / 3600).toFixed(2)))
+const cutoffHours = ref(initialCutoffHours)
+const goalIntent = ref<'' | 'complete' | 'perform'>(initial?.goal_intent ?? '')
 const fieldError = ref('')
 const dateTouched = ref(false)
 const priorityRef = ref<HTMLSelectElement | null>(null)
 
-const isDirty = computed(() =>
-  Boolean(
-    raceName.value.trim() ||
-      raceDate.value.trim() ||
-      racePriority.value ||
-      raceDistanceKilometers.value.trim() ||
-      targetFinishHours.value.trim() ||
-      targetFinishMinutes.value.trim() ||
-      targetFinishSecondsValue.value.trim() ||
-      ascentMeters.value.trim() || descentMeters.value.trim() || terrainDifficulty.value || cutoffHours.value.trim() || goalIntent.value,
-  ),
-)
+function formSnapshot() {
+  return JSON.stringify([raceName.value, raceDate.value, racePriority.value, raceDistanceKilometers.value,
+    targetFinishHours.value, targetFinishMinutes.value, targetFinishSecondsValue.value,
+    ascentMeters.value, descentMeters.value, terrainDifficulty.value, cutoffHours.value, goalIntent.value])
+}
+const initialSnapshot = formSnapshot()
+const isDirty = computed(() => formSnapshot() !== initialSnapshot)
 
 defineExpose({ isDirty })
+const dialogRef = ref<HTMLElement | null>(null)
+useModalFocus(dialogRef, requestClose, '[name="raceName"]')
 
 function requestClose() {
-  emit('close')
+  if (!props.busy) emit('close')
 }
 
 function handleDateBlur() {
@@ -70,6 +72,7 @@ function handleDateBlur() {
 }
 
 async function submitForm() {
+  if (props.busy) return
   fieldError.value = ''
   dateTouched.value = true
   if (!raceName.value.trim()) {
@@ -98,7 +101,9 @@ async function submitForm() {
   const parsedTargetSeconds = targetFinishSeconds(targetFinishHours.value, targetFinishMinutes.value, targetFinishSecondsValue.value)
   const ascent = optionalCourseMeters(ascentMeters.value)
   const descent = optionalCourseMeters(descentMeters.value)
-  const cutoff = optionalCutoffSeconds(cutoffHours.value)
+  const cutoff = initial && cutoffHours.value === initialCutoffHours
+    ? initial.cutoff_seconds ?? undefined
+    : optionalCutoffSeconds(cutoffHours.value)
   if (ascent === null || descent === null) {
     fieldError.value = '爬升與下降請輸入 0 到 20,000 公尺之間的數字'
     return
@@ -131,14 +136,14 @@ function isValidDate(value: string): boolean {
 </script>
 
 <template>
-  <div class="app-dialog" role="dialog" aria-modal="true" aria-labelledby="race-goal-modal-title" data-testid="race-goal-modal" @keydown.esc="requestClose">
+  <div ref="dialogRef" tabindex="-1" class="app-dialog" role="dialog" :aria-busy="busy" aria-modal="true" aria-labelledby="race-goal-modal-title" data-testid="race-goal-modal">
     <section class="app-dialog__panel race-goal-modal">
       <div class="section-heading">
         <div>
-          <p class="section-label">新增目標</p>
-          <h3 id="race-goal-modal-title">設定訓練計畫</h3>
+          <p class="section-label">{{ initialValue ? '編輯目標' : '新增目標' }}</p>
+          <h3 id="race-goal-modal-title">{{ initialValue ? '編輯目標賽事' : '設定訓練計畫' }}</h3>
         </div>
-        <button class="icon-button" type="button" aria-label="關閉新增目標" data-testid="race-modal-close" @click="requestClose">×</button>
+        <button class="icon-button" type="button" :aria-label="initialValue ? '關閉編輯目標' : '關閉新增目標'" :disabled="busy" data-testid="race-modal-close" @click="requestClose">×</button>
       </div>
 
       <form class="race-form" data-testid="race-form" novalidate @submit.prevent="submitForm">
@@ -202,7 +207,7 @@ function isValidDate(value: string): boolean {
         <p v-if="fieldError || error" class="field-error" role="alert">{{ fieldError || error }}</p>
         <div class="form-footer">
           <div></div>
-          <AppButton tone="primary" type="submit" :busy="busy">加入安排</AppButton>
+          <AppButton tone="primary" type="submit" :busy="busy">{{ initialValue ? '儲存變更' : '加入安排' }}</AppButton>
         </div>
       </form>
     </section>

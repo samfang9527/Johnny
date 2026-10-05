@@ -73,6 +73,17 @@ def update_race_goal(
     return DataEnvelope(data=_race_response(saved))
 
 
+@router.delete("/{race_id}")
+def delete_race_goal(
+    race_id: str,
+    current_user: CurrentUserDependency,
+    session: SessionDependency,
+) -> DataEnvelope[dict[str, str]]:
+    if not SqlAlchemyAthleteRaceRepository(session).delete_race_goal(current_user.id, race_id):
+        raise ApiNotFoundError("race goal not found")
+    return DataEnvelope(data={"id": race_id})
+
+
 def _race_response(race: RaceGoal) -> RaceGoalResponse:
     return RaceGoalResponse(
         id=race.id,

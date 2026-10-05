@@ -46,3 +46,6 @@ class RaceGoalStore(Protocol):
 
     def update_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal | None:
         ...
+
+    def delete_race_goal(self, user_id: str, race_goal_id: str) -> bool:
+        ...

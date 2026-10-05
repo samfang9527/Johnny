@@ -96,6 +96,10 @@ export interface RaceGoalCreatePayload {
   goal_intent?: 'complete' | 'perform'
 }
 
+export interface RaceGoalUpdatePayload extends RaceGoalCreatePayload {
+  status: string
+}
+
 export interface PreparationAssessment {
   status: 'gap' | 'unknown' | 'on_track'
   factors: string[]

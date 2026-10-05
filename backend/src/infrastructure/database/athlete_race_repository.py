@@ -128,6 +128,19 @@ class SqlAlchemyAthleteRaceRepository:
         self._session.flush()
         return _race_goal_from_model(model)
 
+    def delete_race_goal(self, user_id: str, race_goal_id: str) -> bool:
+        model = self._session.scalar(
+            select(RaceModel).where(RaceModel.id == race_goal_id, RaceModel.user_id == user_id)
+        )
+        if model is None:
+            return False
+        # Detach the target, retaining every plan version and its workouts.
+        for plan in list(model.training_plans):
+            plan.race = None
+        self._session.delete(model)
+        self._session.flush()
+        return True
+
     def _get_profile_model(self, user_id: str, profile: AthleteProfile) -> AthleteProfileModel:
         if profile.id is not None:
             existing = self._session.scalar(

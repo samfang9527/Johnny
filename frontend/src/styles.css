@@ -809,6 +809,7 @@ button:disabled {
 
 .plan-race-goal {
   display: flex;
+  flex-wrap: wrap;
   grid-column: 1 / -1;
   align-items: center;
   justify-content: space-between;
@@ -2073,7 +2074,7 @@ button:disabled {
 
 .plan-race-goal__identity {
   display: flex;
-  flex: 1 1 100%;
+  flex: 1 1 12rem;
   align-items: baseline;
   justify-content: space-between;
   gap: 0.75rem;
@@ -2771,4 +2772,14 @@ button:disabled {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+.plan-race-goal__actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.plan-race-goal__identity {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

@@ -7,7 +7,7 @@
 | Date | Authored `DatePicker` component in `frontend/src/components/DatePicker.vue` with strict `YYYY-MM-DD` typed input | `premium-ui.json` ownership and `DESIGN.md` layout/form guidance | authored + typed | component test, build, premium audit |
 | Select/Listbox | Native select in `frontend/src/App.vue` Garmin region and athlete settings forms | `premium-ui.json` ownership and `DESIGN.md` layout/form guidance | native | component test, build, premium audit |
 | Form | App-owned Vue form markup with `novalidate` and inline validation | `frontend/src/App.vue`, `DESIGN.md` Forms and overlays | provider binding, race entry, athlete settings, hidden conversation composer | component test, premium audit |
-| Confirmation Dialog | Reusable `ConfirmDialog` component in `frontend/src/components/ConfirmDialog.vue` | `DESIGN.md` Forms and overlays | discard confirmation, provider disconnect | component test, premium audit |
+| Confirmation Dialog | Reusable `ConfirmDialog` component in `frontend/src/components/ConfirmDialog.vue` | `DESIGN.md` Forms and overlays | discard confirmation, provider disconnect, race deletion | component test, premium audit |
 | Scrollbar | Global application stylesheet in `frontend/src/styles.css` | `DESIGN.md` token mapping and CSS custom properties | global baseline | token verifier, premium audit |
 | Button | Reusable `AppButton` component in `frontend/src/components/AppButton.vue` | `DESIGN.md` Components | primary, neutral, warning, danger | component test, build |
 
@@ -48,3 +48,10 @@
 - Empty, loading, and error states keep the same page footprint where possible.
 - Important values wrap instead of clipping on narrow viewports.
 - No product flow calls browser-native `alert()`, `confirm()`, or `prompt()`.
+
+## Target race management
+
+- Race editing reuses `RaceGoalModal` and loads the current values from the race detail API; unchanged optional values retain their saved precision. Unsaved edits require a discard confirmation.
+- Race deletion uses `ConfirmDialog`, names the target, and explains that plans and workouts are retained. The owner-scoped race API detaches linked plan versions before removing the race.
+- Saves and deletes disable duplicate submission, retain user input or the confirmation on failure, and refresh race and training displays on success. Changing the active projection's target shows a manual regeneration reminder.
+- `useModalFocus` owns focus, Escape, background isolation, and scroll restoration for the race form and shared confirmation dialog, including nested discard confirmations.

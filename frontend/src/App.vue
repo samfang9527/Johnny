@@ -5,6 +5,9 @@ import {
   ApiRequestError,
   connectGarminIntegration,
   createRaceGoal,
+  getRaceGoal,
+  updateRaceGoal,
+  deleteRaceGoal,
   disconnectIntegrationConnection,
   discussRecommendation,
   getAgentRun,
@@ -65,6 +68,7 @@ import type {
   IntegrationConnectionResponse,
   SyncResourceSummary,
   RaceGoalCreatePayload,
+  RaceGoalUpdatePayload,
   AthleteProfileResponse,
   AthleteProfileSavePayload,
   TrainingPlanRegenerationOptions,
@@ -197,6 +201,13 @@ const inboxBusyAction = ref('')
 const recommendationDecisions = ref<Record<string, RecommendationStatus>>({})
 const raceEntries = ref<RaceSummary[]>(shouldRequireAuth() ? [] : fixtureFutureRaces)
 const planRegenerationRaceOptions = ref<RaceSummary[]>(shouldRequireAuth() ? [] : fixtureFutureRaces)
+const editingRace = ref<{ id: string; values: RaceGoalUpdatePayload } | null>(null)
+const deletingRace = ref<RaceSummary | null>(null)
+const raceActionError = ref('')
+const racePlanReminder = ref('')
+const raceDeleteError = ref('')
+const raceEditLoading = ref(false)
+let raceReturnFocus: HTMLElement | null = null
 const raceFormError = ref('')
 const raceFormMessage = ref('')
 const isRaceGoalModalOpen = ref(false)
@@ -1280,9 +1291,78 @@ function handleActionPlaceholder() {
   providerMessage.value = '這個決策會在下一階段同步到訓練計畫。'
 }
 
-function openRaceGoalModal() {
+watch(() => activePlan.value?.id, (id, previousId) => {
+  if (id !== previousId) racePlanReminder.value = ''
+})
+
+function openRaceGoalModal(event?: MouseEvent) {
+  if (raceGoalBusy.value || raceEditLoading.value) return
+  raceReturnFocus = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  editingRace.value = null
   raceFormError.value = ''
   isRaceGoalModalOpen.value = true
+}
+
+async function editRaceEntry(race: RaceSummary, event?: MouseEvent) {
+  if (raceGoalBusy.value || raceEditLoading.value) return
+  raceReturnFocus = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  raceActionError.value = ''
+  raceFormError.value = ''
+  raceEditLoading.value = true
+  const session = sessionGeneration
+  try {
+    const response = await getRaceGoal(race.id)
+    if (isUnmounted || session !== sessionGeneration) return
+    editingRace.value = { id: race.id, values: response.data }
+    isRaceGoalModalOpen.value = true
+  } catch (error) {
+    if (!isUnmounted && session === sessionGeneration && !handleSessionExpiry(error)) {
+      raceActionError.value = '載入賽事失敗，請再試一次。'
+    }
+  } finally {
+    if (session === sessionGeneration) raceEditLoading.value = false
+  }
+}
+
+function requestDeleteRace(race: RaceSummary) {
+  if (raceGoalBusy.value || raceEditLoading.value) return
+  raceDeleteError.value = ''
+  deletingRace.value = race
+}
+
+async function confirmDeleteRace() {
+  const race = deletingRace.value
+  if (!race || raceGoalBusy.value) return
+  raceGoalBusy.value = true
+  raceDeleteError.value = ''
+  const session = sessionGeneration
+  const affectsPlan = activePlan.value?.race_id === race.id
+  try {
+    await deleteRaceGoal(race.id)
+    if (isUnmounted || session !== sessionGeneration) return
+    trainingReadVersion += 1
+    raceEntries.value = raceEntries.value.filter((entry) => entry.id !== race.id)
+    planRegenerationRaceOptions.value = planRegenerationRaceOptions.value.filter((entry) => entry.id !== race.id)
+    if (apiRaceSummary.value?.id === race.id) apiRaceSummary.value = null
+    deletingRace.value = null
+    showRaceSuccess('賽事已刪除，既有課表與訓練紀錄已保留。')
+    if (affectsPlan) racePlanReminder.value = '目標賽事已變更，目前課表仍保留原安排。請重新產生計畫以套用新的訓練策略。'
+    await refreshCalendarPayloads(todayIsoDate.value)
+    await nextTick()
+    document.querySelector<HTMLButtonElement>('[data-testid="open-race-goal-modal"]')?.focus()
+  } catch (error) {
+    if (!isUnmounted && session === sessionGeneration && !handleSessionExpiry(error)) {
+      raceDeleteError.value = '刪除賽事失敗，請再試一次。'
+    }
+  } finally {
+    if (session === sessionGeneration) raceGoalBusy.value = false
+  }
+}
+
+function showRaceSuccess(message: string) {
+  raceFormMessage.value = message
+  if (raceSuccessTimer) clearTimeout(raceSuccessTimer)
+  raceSuccessTimer = setTimeout(() => { raceFormMessage.value = '' }, 3500)
 }
 
 async function openPlanRegenerationSheet(event?: MouseEvent) {
@@ -1431,6 +1511,18 @@ function clearPlanRegenerationPollTimer() {
 }
 
 function stopPlanRegenerationObservation() {
+  editingRace.value = null
+  deletingRace.value = null
+  isRaceGoalModalOpen.value = false
+  isRaceGoalConfirmOpen.value = false
+  raceGoalBusy.value = false
+  raceEditLoading.value = false
+  raceFormError.value = ''
+  raceDeleteError.value = ''
+  raceActionError.value = ''
+  raceFormMessage.value = ''
+  racePlanReminder.value = ''
+  if (raceSuccessTimer) clearTimeout(raceSuccessTimer)
   sessionGeneration += 1
   trainingReadVersion += 1
   trainingReadPending = false
@@ -1466,12 +1558,22 @@ function handlePlanRegenerationLoadingKeydown(event: KeyboardEvent) {
   }
 }
 
+function restoreRaceFocus() {
+  void nextTick(() => {
+    if (isUnmounted || activeView.value !== 'plan') return
+    const target = raceReturnFocus?.isConnected ? raceReturnFocus : document.querySelector<HTMLButtonElement>('[data-testid="open-race-goal-modal"]')
+    target?.focus()
+  })
+}
+
 function requestCloseRaceGoalModal() {
+  if (raceGoalBusy.value) return
   if (raceGoalModalRef.value?.isDirty) {
     isRaceGoalConfirmOpen.value = true
     return
   }
   isRaceGoalModalOpen.value = false
+  restoreRaceFocus()
 }
 
 function cancelRaceGoalDiscard() {
@@ -1481,31 +1583,42 @@ function cancelRaceGoalDiscard() {
 function confirmRaceGoalDiscard() {
   isRaceGoalConfirmOpen.value = false
   isRaceGoalModalOpen.value = false
+  restoreRaceFocus()
 }
 
 async function submitRaceEntry(payload: RaceGoalCreatePayload) {
+  if (raceGoalBusy.value) return
   raceFormError.value = ''
   raceGoalBusy.value = true
+  const session = sessionGeneration
+  const editing = editingRace.value
+  const affectsPlan = editing && activePlan.value?.race_id === editing.id
   try {
-    const response = await createRaceGoal(payload)
-    const created = mapRaceGoal(response.data)
-    if (created) {
-      raceEntries.value = [...raceEntries.value.filter((race) => `${race.name}-${race.date}` !== `${created.name}-${created.date}`), created]
+    const response = editing
+      ? await updateRaceGoal(editing.id, { ...payload, status: editing.values.status })
+      : await createRaceGoal(payload)
+    if (isUnmounted || session !== sessionGeneration) return
+    trainingReadVersion += 1
+    const saved = mapRaceGoal(response.data)
+    if (saved) {
+      raceEntries.value = [...raceEntries.value.filter((race) => race.id !== saved.id), saved]
+        .sort((a, b) => a.date.localeCompare(b.date))
+      planRegenerationRaceOptions.value = [...planRegenerationRaceOptions.value.filter((race) => race.id !== saved.id), saved]
+      if (apiRaceSummary.value?.id === saved.id) apiRaceSummary.value = saved
     }
     isRaceGoalModalOpen.value = false
-    raceFormMessage.value = '賽事已加入訓練計畫'
-    if (raceSuccessTimer) {
-      clearTimeout(raceSuccessTimer)
-    }
-    raceSuccessTimer = setTimeout(() => {
-      raceFormMessage.value = ''
-    }, 3500)
+    showRaceSuccess(editing ? '賽事已更新' : '賽事已加入訓練計畫')
+    if (affectsPlan) racePlanReminder.value = '目標賽事已變更，目前課表仍保留原安排。請重新產生計畫以套用新的訓練策略。'
+    await refreshCalendarPayloads(todayIsoDate.value)
   } catch (error) {
-    if (!handleSessionExpiry(error)) {
-      raceFormError.value = '訓練計畫儲存失敗，請稍後再試。'
+    if (!isUnmounted && session === sessionGeneration && !handleSessionExpiry(error)) {
+      raceFormError.value = '賽事儲存失敗，請稍後再試。'
     }
   } finally {
-    raceGoalBusy.value = false
+    if (session === sessionGeneration) {
+      raceGoalBusy.value = false
+      if (!isRaceGoalModalOpen.value) restoreRaceFocus()
+    }
   }
 }
 
@@ -1544,6 +1657,7 @@ onUnmounted(() => {
   isUnmounted = true
   stopPlanRegenerationObservation()
   clearInterval(calendarTimer)
+  if (raceSuccessTimer) clearTimeout(raceSuccessTimer)
   window.removeEventListener('focus', refreshCalendarDate)
 })
 
@@ -1876,6 +1990,8 @@ function applyTodayPayload(payload: Record<string, unknown>) {
       daysRemaining: daysUntil(String(nextRace.race_date)),
     }
   }
+
+  if (!nextRace?.name || !nextRace.race_date) apiRaceSummary.value = null
 
   const workouts = Array.isArray(payload.scheduled_workouts) ? payload.scheduled_workouts : []
   apiTodayWorkoutPayload.value = workouts.map(asRecord).find((workout) => workout !== undefined) ?? null
@@ -2811,8 +2927,12 @@ function shouldRequireAuth(): boolean {
             </article>
           </div>
           <template v-if="upcomingRaceEntries.length">
-            <article v-for="race in upcomingRaceEntries" :key="`${race.name}-${race.date}`" class="plan-race-goal">
+            <article v-for="race in upcomingRaceEntries" :key="race.id" class="plan-race-goal">
               <div class="plan-race-goal__identity"><strong>{{ race.name }}</strong><span>{{ race.distance }} · {{ race.goal }}</span></div>
+              <div class="app-dialog__actions plan-race-goal__actions">
+                <AppButton data-testid="edit-race" :aria-label="`編輯 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="editRaceEntry(race, $event)">編輯</AppButton>
+                <AppButton data-testid="delete-race" :aria-label="`刪除 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="requestDeleteRace(race)">刪除</AppButton>
+              </div>
               <p class="plan-race-goal__course">{{ raceCourseDetails(race) }}</p>
               <div v-if="activePlan?.race_id === race.id && activePlan.preparation_assessment" class="plan-race-goal__assessment" role="status" data-testid="preparation-assessment">
                 <StatusBadge :tone="activePlan.preparation_assessment.status === 'gap' ? 'warning' : activePlan.preparation_assessment.status === 'on_track' ? 'success' : 'info'">{{ preparationStatusLabel(activePlan.preparation_assessment.status) }}</StatusBadge>
@@ -2823,21 +2943,38 @@ function shouldRequireAuth(): boolean {
           <p v-else>尚未設定目標</p>
         </section>
 
+        <p v-if="raceEditLoading" role="status">正在載入賽事…</p>
+        <p v-if="raceActionError" class="field-error" role="alert">{{ raceActionError }}</p>
+        <p v-if="racePlanReminder" class="inline-note" role="status" data-testid="race-plan-reminder">{{ racePlanReminder }}</p>
+
+        <ConfirmDialog
+          v-if="deletingRace"
+          title="刪除目標賽事"
+          :description="`確定刪除「${deletingRace.name}」？此操作無法復原。既有課表與訓練紀錄會保留，計畫不會自動重新產生。`"
+          confirm-label="刪除賽事"
+          cancel-label="取消"
+          :busy="raceGoalBusy"
+          :error="raceDeleteError"
+          @cancel="deletingRace = null"
+          @confirm="confirmDeleteRace"
+        />
+
         <RaceGoalModal
           v-if="isRaceGoalModalOpen"
           ref="raceGoalModalRef"
           :error="raceFormError"
           :busy="raceGoalBusy"
           :min-date="todayIsoDate"
+          :initial-value="editingRace?.values"
           @close="requestCloseRaceGoalModal"
           @submit="submitRaceEntry"
         />
 
         <ConfirmDialog
           v-if="isRaceGoalConfirmOpen"
-          title="放棄新增目標"
+          :title="editingRace ? '放棄編輯目標' : '放棄新增目標'"
           description="目前輸入的比賽名稱、日期、距離或目標時間會被清除。"
-          confirm-label="放棄新增"
+          :confirm-label="editingRace ? '放棄編輯' : '放棄新增'"
           @cancel="cancelRaceGoalDiscard"
           @confirm="confirmRaceGoalDiscard"
         />

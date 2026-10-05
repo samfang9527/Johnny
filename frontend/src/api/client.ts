@@ -12,6 +12,7 @@ import type {
   IntegrationConnectionPayload,
   IntegrationConnectionResponse,
   RaceGoalCreatePayload,
+  RaceGoalUpdatePayload,
   TrainingPlanRegenerationOptions,
   TrainingPlanRegenerationRequest,
   TrainingPlanRegenerationStartResponse,
@@ -165,6 +166,18 @@ export function listRaceGoals(raceDateFrom: string, raceDateTo?: string): Promis
     params.set('race_date_to', raceDateTo)
   }
   return getJson(`/races?${params.toString()}`)
+}
+
+export function getRaceGoal(id: string): Promise<{ data: RaceGoalUpdatePayload }> {
+  return getJson(`/races/${encodeURIComponent(id)}`)
+}
+
+export function updateRaceGoal(id: string, payload: RaceGoalUpdatePayload): Promise<{ data: Record<string, unknown> }> {
+  return putJson(`/races/${encodeURIComponent(id)}`, payload)
+}
+
+export function deleteRaceGoal(id: string): Promise<{ data: { id: string } }> {
+  return deleteJson(`/races/${encodeURIComponent(id)}`)
 }
 
 export function createRaceGoal(payload: RaceGoalCreatePayload): Promise<{ data: Record<string, unknown> }> {

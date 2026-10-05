@@ -302,3 +302,43 @@ def test_race_update_accepts_status_but_rejects_unexpected_fields() -> None:
 
 def _client() -> TestClient:
     return create_sqlite_test_client()
+
+
+def test_delete_race_is_tenant_scoped_and_preserves_plans_and_workouts() -> None:
+    from src.api.dependencies import get_session
+    from src.infrastructure.database.models import TrainingPlanModel, WorkoutModel
+
+    client = _client()
+    headers = {"X-Johnny-User-Id": "user-1"}
+    race = client.post("/api/v1/races", headers=headers, json={
+        "name": "Target", "race_date": "2027-05-01", "distance_meters": 10000,
+    }).json()["data"]
+    session_generator = client.app.dependency_overrides[get_session]()
+    session = next(session_generator)
+    plan = TrainingPlanModel(id="linked-plan", user_id="user-1", race_id=race["id"],
+                             name="Training history", status="active",
+                             starts_on=date(2027, 1, 1), ends_on=date(2027, 5, 1))
+    plan.workouts = [WorkoutModel(id="kept-workout", scheduled_for=date(2027, 1, 2),
+                                 workout_type="easy", status="completed", details={})]
+    session.add(plan)
+    session.add(TrainingPlanModel(id="older-plan", user_id="user-1", race_id=race["id"],
+                                 name="Previous version", status="superseded",
+                                 starts_on=date(2027, 1, 1), ends_on=date(2027, 5, 1)))
+    session.commit()
+    session.close()
+    session_generator.close()
+    path = f"/api/v1/races/{race['id']}"
+    assert client.delete(path, headers={"X-Johnny-User-Id": "user-2"}).status_code == 404
+    assert client.get(path, headers=headers).status_code == 200
+    assert client.delete(path, headers=headers).status_code == 200
+    assert client.get(path, headers=headers).status_code == 404
+    assert client.get("/api/v1/races", headers=headers).json()["data"] == []
+    assert client.delete(path, headers=headers).status_code == 404
+    session_generator = client.app.dependency_overrides[get_session]()
+    session = next(session_generator)
+    kept = session.get(TrainingPlanModel, "linked-plan")
+    assert kept is not None and kept.race_id is None and kept.status == "active"
+    assert session.get(TrainingPlanModel, "older-plan").race_id is None
+    assert session.get(WorkoutModel, "kept-workout").status == "completed"
+    session.close()
+    session_generator.close()
