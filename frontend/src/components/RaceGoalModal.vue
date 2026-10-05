@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import type { RaceGoalCreatePayload } from '../types'
-import { kilometersToMeters, racePriorityOptions, targetFinishSeconds, type RacePriority } from '../raceGoalForm'
+import { kilometersToMeters, optionalCourseMeters, optionalCutoffSeconds, racePriorityOptions, targetFinishSeconds, type RacePriority } from '../raceGoalForm'
 import AppButton from './AppButton.vue'
 import DatePicker from './DatePicker.vue'
 
@@ -23,6 +23,11 @@ const raceDistanceKilometers = ref('')
 const targetFinishHours = ref('')
 const targetFinishMinutes = ref('')
 const targetFinishSecondsValue = ref('')
+const ascentMeters = ref('')
+const descentMeters = ref('')
+const terrainDifficulty = ref<'' | 'runnable' | 'mixed' | 'technical'>('')
+const cutoffHours = ref('')
+const goalIntent = ref<'' | 'complete' | 'perform'>('')
 const fieldError = ref('')
 const dateTouched = ref(false)
 const priorityRef = ref<HTMLSelectElement | null>(null)
@@ -35,7 +40,8 @@ const isDirty = computed(() =>
       raceDistanceKilometers.value.trim() ||
       targetFinishHours.value.trim() ||
       targetFinishMinutes.value.trim() ||
-      targetFinishSecondsValue.value.trim(),
+      targetFinishSecondsValue.value.trim() ||
+      ascentMeters.value.trim() || descentMeters.value.trim() || terrainDifficulty.value || cutoffHours.value.trim() || goalIntent.value,
   ),
 )
 
@@ -90,12 +96,28 @@ async function submitForm() {
     return
   }
   const parsedTargetSeconds = targetFinishSeconds(targetFinishHours.value, targetFinishMinutes.value, targetFinishSecondsValue.value)
+  const ascent = optionalCourseMeters(ascentMeters.value)
+  const descent = optionalCourseMeters(descentMeters.value)
+  const cutoff = optionalCutoffSeconds(cutoffHours.value)
+  if (ascent === null || descent === null) {
+    fieldError.value = '爬升與下降請輸入 0 到 20,000 公尺之間的數字'
+    return
+  }
+  if (cutoff === null) {
+    fieldError.value = '關門時間請輸入大於 0 的小時數'
+    return
+  }
   emit('submit', {
     name: raceName.value.trim(),
     race_date: raceDate.value,
     distance_meters: distanceMeters,
     target_finish_seconds: parsedTargetSeconds,
     priority: racePriority.value,
+    ...(ascent !== undefined ? { ascent_meters: ascent } : {}),
+    ...(descent !== undefined ? { descent_meters: descent } : {}),
+    ...(terrainDifficulty.value ? { terrain_difficulty: terrainDifficulty.value } : {}),
+    ...(cutoff !== undefined ? { cutoff_seconds: cutoff } : {}),
+    ...(goalIntent.value ? { goal_intent: goalIntent.value } : {}),
   })
 }
 
@@ -156,6 +178,23 @@ function isValidDate(value: string): boolean {
             <label>
               秒
               <input v-model="targetFinishSecondsValue" name="targetFinishSeconds" inputmode="numeric" autocomplete="off" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="target-time-fieldset">
+          <legend>賽道與目標（選填）</legend>
+          <div class="form-grid race-goal-modal__grid">
+            <label>累積爬升（公尺）<input v-model="ascentMeters" name="ascentMeters" inputmode="decimal" autocomplete="off" placeholder="未知可留白" /></label>
+            <label>累積下降（公尺）<input v-model="descentMeters" name="descentMeters" inputmode="decimal" autocomplete="off" placeholder="未知可留白" /></label>
+            <label>賽道地形
+              <select v-model="terrainDifficulty" name="terrainDifficulty">
+                <option value="">未知</option><option value="runnable">可跑性高</option><option value="mixed">混合地形</option><option value="technical">技術地形</option>
+              </select>
+            </label>
+            <label>關門時間（小時）<input v-model="cutoffHours" name="cutoffHours" inputmode="decimal" autocomplete="off" placeholder="未知可留白" /></label>
+            <label>參賽目標
+              <select v-model="goalIntent" name="goalIntent"><option value="">尚未決定</option><option value="complete">完成賽事</option><option value="perform">挑戰表現</option></select>
             </label>
           </div>
         </fieldset>

@@ -2015,6 +2015,10 @@ function mapRaceGoal(raw: unknown): RaceSummary | null {
   }
 }
 
+function preparationStatusLabel(status: string): string {
+  return ({ gap: '尚有準備落差', unknown: '資料不足', on_track: '達到規劃參考' } as Record<string, string>)[status] ?? '資料不足'
+}
+
 function mapWorkout(raw: unknown): WorkoutSummary | null {
   if (!raw || typeof raw !== 'object') {
     return null
@@ -2792,8 +2796,11 @@ function shouldRequireAuth(): boolean {
           </div>
           <template v-if="upcomingRaceEntries.length">
             <article v-for="race in upcomingRaceEntries" :key="`${race.name}-${race.date}`" class="plan-race-goal">
-              <strong>{{ race.name }}</strong>
-              <span>{{ race.distance }} · {{ race.goal }}</span>
+              <div class="plan-race-goal__identity"><strong>{{ race.name }}</strong><span>{{ race.distance }} · {{ race.goal }}</span></div>
+              <div v-if="activePlan?.race_id === race.id && activePlan.preparation_assessment" class="plan-race-goal__assessment" role="status" data-testid="preparation-assessment">
+                <StatusBadge :tone="activePlan.preparation_assessment.status === 'gap' ? 'warning' : activePlan.preparation_assessment.status === 'on_track' ? 'success' : 'info'">{{ preparationStatusLabel(activePlan.preparation_assessment.status) }}</StatusBadge>
+                <p>{{ activePlan.preparation_assessment.explanation_zh }}</p>
+              </div>
             </article>
           </template>
           <p v-else>尚未設定目標</p>

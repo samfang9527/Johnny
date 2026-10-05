@@ -1585,6 +1585,42 @@ describe('Johnny product shell', () => {
     )
   })
 
+  it('submits optional trail demands in canonical units', async () => {
+    const wrapper = mount(App, { props: { initialView: 'plan' } })
+    await wrapper.get('button[data-testid="open-race-goal-modal"]').trigger('click')
+    await wrapper.get('input[name="raceName"]').setValue('山徑 40K')
+    await wrapper.get('select[name="racePriority"]').setValue('primary')
+    await wrapper.get('input[name="raceDistanceKilometers"]').setValue('40')
+    await wrapper.get('input[name="raceDate"]').setValue('2026-11-15')
+    await wrapper.get('input[name="ascentMeters"]').setValue('1800')
+    await wrapper.get('input[name="descentMeters"]').setValue('1750')
+    await wrapper.get('select[name="terrainDifficulty"]').setValue('technical')
+    await wrapper.get('input[name="cutoffHours"]').setValue('9')
+    await wrapper.get('select[name="goalIntent"]').setValue('complete')
+    await wrapper.get('form[data-testid="race-form"]').trigger('submit')
+    await flushPromises()
+    const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith('/api/v1/races') && init?.method === 'POST')
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ distance_meters: 40000, ascent_meters: 1800, descent_meters: 1750, terrain_difficulty: 'technical', cutoff_seconds: 32400, goal_intent: 'complete' })
+  })
+
+  it.each([
+    ['gap', '尚有準備落差'], ['unknown', '資料不足'], ['on_track', '達到規劃參考'],
+  ])('shows %s preparation assessment beside its race', async (status, label) => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) return Promise.resolve(okJson({ id: 'runner', capabilities: ['today', 'races', 'training-plans'] }))
+      if (url.endsWith('/api/v1/training-plans')) return Promise.resolve(okJson([{ id: 'plan-1', user_id: 'runner', race_id: 'race-1', name: '山徑計畫', status: 'active', starts_on: '2026-09-01', ends_on: '2026-11-15', metadata: {}, workouts: [], preparation_assessment: { status, factors: ['weekly_volume'], explanation_zh: '每週跑量尚需提升', policy_version: 'race-workload-v1' } }]))
+      if (url.includes('/api/v1/races')) return Promise.resolve(okJson([{ id: 'race-1', name: '山徑 40K', race_date: '2026-11-15', distance_meters: 40000, priority: 'primary', status: 'planned' }]))
+      return Promise.resolve(okJson([]))
+    })
+    const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
+    await flushPromises()
+    const assessment = wrapper.get('[data-testid="preparation-assessment"]')
+    expect(assessment.attributes('role')).toBe('status')
+    expect(assessment.text()).toContain(label)
+    expect(assessment.text()).toContain('每週跑量尚需提升')
+  })
+
   it('requires race priority and confirms before discarding dirty modal changes', async () => {
     const wrapper = mount(App, { attachTo: document.body, props: { initialView: 'plan' } })
 

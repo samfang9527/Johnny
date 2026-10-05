@@ -40,3 +40,19 @@ export function targetFinishSeconds(hours: string, minutes: string, seconds: str
   const total = parsedHours * 3600 + parsedMinutes * 60 + parsedSeconds
   return total > 0 ? total : undefined
 }
+
+export function optionalCourseMeters(value: string): number | undefined | null {
+  const normalized = value.trim()
+  if (!normalized) return undefined
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null
+  const meters = Number(normalized)
+  return Number.isFinite(meters) && meters <= 20_000 ? meters : null
+}
+
+export function optionalCutoffSeconds(value: string): number | undefined | null {
+  const normalized = value.trim()
+  if (!normalized) return undefined
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null
+  const hours = Number(normalized)
+  return Number.isFinite(hours) && hours > 0 && hours <= 240 ? Math.round(hours * 3600) : null
+}

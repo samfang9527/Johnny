@@ -84,6 +84,18 @@ export interface RaceGoalCreatePayload {
   distance_meters: number
   target_finish_seconds?: number
   priority: string
+  ascent_meters?: number
+  descent_meters?: number
+  terrain_difficulty?: 'runnable' | 'mixed' | 'technical'
+  cutoff_seconds?: number
+  goal_intent?: 'complete' | 'perform'
+}
+
+export interface PreparationAssessment {
+  status: 'gap' | 'unknown' | 'on_track'
+  factors: string[]
+  explanation_zh: string
+  policy_version: string
 }
 
 export type TrainingPlanType = 'race' | 'maintenance'
@@ -111,6 +123,7 @@ export interface TrainingPlanResponse {
   starts_on: string
   ends_on: string
   metadata: TrainingPlanMetadata
+  preparation_assessment?: PreparationAssessment | null
   workouts: unknown[]
 }
 
