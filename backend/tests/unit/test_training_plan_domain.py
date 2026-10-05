@@ -101,6 +101,36 @@ def test_workout_accepts_supported_details() -> None:
     assert workout.status == "planned"
 
 
+def test_race_workout_keeps_event_identity_without_inventing_duration() -> None:
+    workout = Workout.create(
+        scheduled_for=date(2027, 2, 7),
+        workout_type="race",
+        purpose="Controlled tune-up",
+        planned_distance_meters=10_000,
+        race_goal_id="tune-up-1",
+        race_name="Taipei 10K",
+        race_priority="tune_up",
+        steps=(WorkoutStep.create(step_type="free_run", distance_meters=10_000, target=WorkoutTarget.rpe(6)),),
+    )
+
+    assert workout.planned_duration_minutes is None
+    assert workout.display_name == "Taipei 10K · 10 公里"
+    assert workout.to_payload()["race_goal_id"] == "tune-up-1"
+
+
+def test_rpe_target_can_include_sourced_estimated_pace() -> None:
+    target = WorkoutTarget(
+        kind="rpe",
+        zone="easy",
+        rpe=4,
+        pace_range_seconds_per_km=(355, 420),
+        pace_source="paired_easy_activities",
+        confidence="low",
+    )
+
+    assert WorkoutTarget.from_payload(target.to_payload()) == target
+
+
 def test_interval_workout_accepts_repeat_steps_and_derives_compact_summary() -> None:
     workout = Workout.create(
         scheduled_for=date(2027, 1, 5),

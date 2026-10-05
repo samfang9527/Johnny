@@ -365,6 +365,9 @@ def _workout_details(workout: Workout) -> dict:
         "phase": workout.phase,
         "coach_note": workout.coach_note,
         "steps": [step.to_payload() for step in workout.steps],
+        "race_goal_id": workout.race_goal_id,
+        "race_name": workout.race_name,
+        "race_priority": workout.race_priority,
     }
 
 
@@ -414,6 +417,9 @@ def _workout_from_model(model: WorkoutModel) -> Workout:
         coach_note=details.get("coach_note"),
         steps=steps,
         status=model.status,
+        race_goal_id=details.get("race_goal_id"),
+        race_name=details.get("race_name"),
+        race_priority=details.get("race_priority"),
     )
 
 

@@ -14,6 +14,7 @@ class WorkoutTargetPayload(BaseModel):
     pace_range_seconds_per_km: list[int] | None = None
     heart_rate_range_bpm: list[int] | None = None
     confidence: Literal["high", "medium", "low"] | None = None
+    pace_source: Literal["threshold_pace", "completed_race", "paired_easy_activities", "goal_time"] | None = None
 
 
 class WorkoutStepPayload(BaseModel):
@@ -51,6 +52,7 @@ class WorkoutRequest(BaseModel):
         "rest",
         "strength",
         "cross_training",
+        "race",
     ]
     purpose: str
     planned_duration_minutes: int | None = Field(default=None, gt=0)
@@ -61,6 +63,9 @@ class WorkoutRequest(BaseModel):
     coach_note: str | None = Field(default=None, max_length=500)
     steps: list[WorkoutStepPayload] = Field(default_factory=list)
     status: str = "planned"
+    race_goal_id: str | None = None
+    race_name: str | None = None
+    race_priority: Literal["primary", "secondary", "tune_up"] | None = None
 
 
 class WorkoutStatusRequest(BaseModel):
@@ -82,6 +87,9 @@ class WorkoutResponse(BaseModel):
     steps: list[dict[str, Any]] = Field(default_factory=list)
     compact_summary: str | None = None
     status: str
+    race_goal_id: str | None = None
+    race_name: str | None = None
+    race_priority: Literal["primary", "secondary", "tune_up"] | None = None
 
 
 class TrainingPlanRequest(BaseModel):

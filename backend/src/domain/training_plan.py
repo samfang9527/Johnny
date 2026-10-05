@@ -31,6 +31,7 @@ SUPPORTED_PACE_ZONES = frozenset(
     }
 )
 SUPPORTED_TARGET_CONFIDENCE = frozenset({"high", "medium", "low"})
+SUPPORTED_PACE_SOURCES = frozenset({"threshold_pace", "completed_race", "paired_easy_activities", "goal_time"})
 COACH_NOTE_MAX_LENGTH = 500
 STEP_DURATION_TOLERANCE_SECONDS = 300
 STEP_DISTANCE_TOLERANCE_METERS = 500
@@ -45,18 +46,21 @@ SUPPORTED_WORKOUT_TYPES = frozenset(
         "rest",
         "strength",
         "cross_training",
+        "race",
     }
 )
 WORKOUT_TYPE_LABELS = {
     "easy_run": "輕鬆跑", "long_run": "長跑", "tempo": "節奏跑", "interval": "間歇跑",
     "hill": "坡跑", "recovery": "恢復跑", "rest": "休息", "strength": "肌力訓練",
     "cross_training": "交叉訓練",
+    "race": "賽事",
 }
 WORKOUT_PURPOSES = {
     "easy_run": "維持有氧基礎", "long_run": "建立長距離耐力", "tempo": "提升持續配速能力",
     "interval": "提升速度與有氧能力", "hill": "建立爬坡力量與跑姿穩定性",
     "recovery": "促進恢復", "rest": "充分休息", "strength": "建立肌力與身體穩定性",
     "cross_training": "以低衝擊活動維持心肺能力",
+    "race": "完成當日賽事",
 }
 WORKOUT_COACH_NOTES = {
     "easy_run": "以能交談的強度完成，不必追求速度。",
@@ -117,6 +121,7 @@ class WorkoutTarget:
     pace_range_seconds_per_km: tuple[int, int] | None = None
     heart_rate_range_bpm: tuple[int, int] | None = None
     confidence: str | None = None
+    pace_source: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in SUPPORTED_TARGET_KINDS:
@@ -131,6 +136,14 @@ class WorkoutTarget:
             _validate_positive_range(self.heart_rate_range_bpm, "heart rate range")
         if self.kind == "rpe" and self.rpe is None:
             raise DomainValidationError("rpe target requires rpe")
+        if self.zone is not None and self.zone not in SUPPORTED_PACE_ZONES:
+            raise DomainValidationError("target zone is not supported")
+        if self.pace_range_seconds_per_km is not None:
+            _validate_positive_range(self.pace_range_seconds_per_km, "pace range")
+        if self.pace_source is not None and self.pace_source not in SUPPORTED_PACE_SOURCES:
+            raise DomainValidationError("pace source is not supported")
+        if self.pace_source is not None and self.pace_range_seconds_per_km is None:
+            raise DomainValidationError("pace source requires pace range")
         if self.rpe is not None and (self.rpe < 1 or self.rpe > 10):
             raise DomainValidationError("rpe must be between 1 and 10")
         if self.confidence is not None and self.confidence not in SUPPORTED_TARGET_CONFIDENCE:
@@ -186,6 +199,7 @@ class WorkoutTarget:
             pace_range_seconds_per_km=tuple(pace_range) if pace_range is not None else None,
             heart_rate_range_bpm=tuple(heart_rate_range) if heart_rate_range is not None else None,
             confidence=payload.get("confidence"),
+            pace_source=payload.get("pace_source"),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -201,6 +215,7 @@ class WorkoutTarget:
             if self.heart_rate_range_bpm is not None
             else None,
             "confidence": self.confidence,
+            "pace_source": self.pace_source,
         }
 
 
@@ -315,6 +330,9 @@ class Workout:
     steps: tuple[WorkoutStep, ...] = field(default_factory=tuple)
     status: str = "planned"
     id: str | None = None
+    race_goal_id: str | None = None
+    race_name: str | None = None
+    race_priority: str | None = None
 
     def __post_init__(self) -> None:
         normalized_steps = _normalize_steps(self.steps)
@@ -331,6 +349,13 @@ class Workout:
             object.__setattr__(self, "planned_distance_meters", planned_distance_meters)
         if self.workout_type not in SUPPORTED_WORKOUT_TYPES:
             raise DomainValidationError("workout type is not supported")
+        if self.workout_type == "race":
+            if not self.race_goal_id or not self.race_name or self.race_priority not in {"primary", "secondary", "tune_up"}:
+                raise DomainValidationError("race workout requires goal identity")
+            if planned_distance_meters is None or planned_duration_minutes is not None:
+                raise DomainValidationError("race workout requires distance without planned duration")
+        elif any((self.race_goal_id, self.race_name, self.race_priority)):
+            raise DomainValidationError("race identity is only valid for race workouts")
         if self.phase is not None and self.phase not in SUPPORTED_PLAN_PHASES:
             raise DomainValidationError("workout phase is not supported")
         if not self.purpose:
@@ -372,6 +397,9 @@ class Workout:
         steps: tuple[WorkoutStep | dict[str, Any], ...] = (),
         status: str = "planned",
         id: str | None = None,
+        race_goal_id: str | None = None,
+        race_name: str | None = None,
+        race_priority: str | None = None,
     ) -> Workout:
         return cls(
             id=id,
@@ -386,6 +414,9 @@ class Workout:
             coach_note=coach_note,
             steps=_normalize_steps(steps),
             status=status,
+            race_goal_id=race_goal_id,
+            race_name=race_name,
+            race_priority=race_priority,
         )
 
     def transition_to(self, status: str) -> Workout:
@@ -411,10 +442,15 @@ class Workout:
             "steps": [step.to_payload() for step in self.steps],
             "compact_summary": self.compact_summary,
             "status": self.status,
+            "race_goal_id": self.race_goal_id,
+            "race_name": self.race_name,
+            "race_priority": self.race_priority,
         }
 
     @property
     def display_name(self) -> str:
+        if self.workout_type == "race" and self.race_name and self.planned_distance_meters:
+            return f"{self.race_name} · {_format_distance(self.planned_distance_meters)}"
         label = WORKOUT_TYPE_LABELS.get(self.workout_type, "訓練")
         for step in self.steps:
             if step.step_type == "repeat":

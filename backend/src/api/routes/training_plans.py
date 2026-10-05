@@ -109,6 +109,9 @@ def _plan_from_request(user_id: str, payload: TrainingPlanRequest) -> TrainingPl
                 coach_note=workout.coach_note,
                 steps=tuple(step.model_dump() for step in workout.steps),
                 status=workout.status,
+                race_goal_id=workout.race_goal_id,
+                race_name=workout.race_name,
+                race_priority=workout.race_priority,
             )
             for workout in payload.workouts
         ),
@@ -144,6 +147,9 @@ def _plan_response(plan: TrainingPlan) -> TrainingPlanResponse:
                 steps=[step.to_payload() for step in workout.steps],
                 compact_summary=workout.compact_summary,
                 status=workout.status,
+                race_goal_id=workout.race_goal_id,
+                race_name=workout.race_name,
+                race_priority=workout.race_priority,
             )
             for workout in plan.workouts
         ],
