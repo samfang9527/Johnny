@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from statistics import median
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 RUNNING_SPORTS = frozenset({"run", "running", "trail_run", "trail_running", "virtual_run", "treadmill_run"})
+POLICY_VERSION = "race-workload-v1"
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,42 @@ class CapacitySnapshot:
     observation_end: date
     activity_count: int
     missing_dimensions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RaceDemand:
+    distance_meters: float
+    race_date: date
+    target_finish_seconds: int | None
+    ascent_meters: float | None
+    descent_meters: float | None
+    terrain_difficulty: str | None
+    cutoff_seconds: int | None
+    goal_intent: str | None
+
+
+@dataclass(frozen=True)
+class WorkloadWeek:
+    week_index: int
+    target_minutes: int
+    long_run_minutes: int
+    phase: str
+    terrain_focus: bool
+
+
+@dataclass(frozen=True)
+class PreparationAssessment:
+    status: str
+    factors: tuple[str, ...]
+    explanation_zh: str
+    policy_version: str
+
+
+@dataclass(frozen=True)
+class WorkloadPrescription:
+    weeks: tuple[WorkloadWeek, ...]
+    assessment: PreparationAssessment
+    policy_version: str
 
 
 def derive_capacity_snapshot(*, profile: dict, activities: Sequence[dict], anchor: date) -> CapacitySnapshot:
@@ -79,3 +116,108 @@ def derive_capacity_snapshot(*, profile: dict, activities: Sequence[dict], ancho
         activity_count=len(complete_runs),
         missing_dimensions=("activity_history",) if stated_km > 0 else ("activity_history", "weekly_mileage"),
     )
+
+
+def _phase_for(day: date, segments: Sequence[dict]) -> str:
+    return next((str(segment["phase"]) for segment in segments if date.fromisoformat(segment["starts_on"]) <= day <= date.fromisoformat(segment["ends_on"])), "base")
+
+
+def build_workload_prescription(
+    *, capacity: CapacitySnapshot, race: RaceDemand | None, starts_on: date, ends_on: date,
+    phase_segments: Sequence[dict], max_runs_per_week: int, max_hard_sessions_per_week: int,
+    injury_status: str, prior_plan: Mapping[str, Any] | None = None,
+) -> WorkloadPrescription:
+    if ends_on < starts_on or max_runs_per_week < 1:
+        raise ValueError("invalid training window or run limit")
+    injured = injury_status in {"current", "recent"}
+    baseline = capacity.weekly_minutes
+    if baseline is None:
+        baseline = max_runs_per_week * 20 + 10  # 20-minute ordinary runs and a 30-minute long run
+    baseline = round(baseline * .8) if injured else baseline
+    long_anchor = capacity.recent_long_run_minutes or min(90, round(.4 * baseline))
+    long_cap = 180 if race is not None and 30_000 <= race.distance_meters <= 50_000 else 120
+    week_starts = []
+    current = starts_on
+    while current <= ends_on:
+        week_starts.append(current)
+        current += timedelta(days=7)
+    development_indexes = [index for index, day in enumerate(week_starts) if _phase_for(day, phase_segments) not in {"taper", "race"}]
+    terrain_indexes: set[int] = set()
+    if race is not None and race.terrain_difficulty in {"mixed", "technical"} and max_hard_sessions_per_week >= 2 and not injured:
+        candidates = development_indexes[-8:]
+        terrain_indexes = set(candidates[-2:])
+    weeks: list[WorkloadWeek] = []
+    development_high = baseline
+    previous_target = baseline
+    development_number = 0
+    for index, day in enumerate(week_starts):
+        phase = _phase_for(day, phase_segments)
+        if phase == "taper":
+            target = round(previous_target * .65)
+        elif phase == "race":
+            target = min(previous_target, baseline)
+        else:
+            development_number += 1
+            if injured:
+                target = baseline
+            elif development_number == 1:
+                target = baseline
+            elif development_number % 4 == 0:
+                target = round(previous_target * .85)
+            else:
+                development_high = round(development_high * 1.05)
+                target = development_high
+        # The final partial week cannot carry the volume of a full calendar week.
+        available_days = min(7, (ends_on - day).days + 1)
+        if available_days < 7:
+            target = round(target * available_days / 7)
+        long_minutes = min(round(long_anchor * 1.1), round(target * .5), long_cap)
+        if phase == "race":
+            long_minutes = min(long_minutes, 30)
+        weeks.append(WorkloadWeek(index, target, long_minutes, phase, index in terrain_indexes))
+        previous_target = target
+        long_anchor = long_minutes
+    assessment = assess_preparation(
+        capacity=capacity, race=race, starts_on=starts_on, ends_on=ends_on,
+        weekly_minutes=[week.target_minutes for week in weeks if week.phase not in {"taper", "race"}],
+        long_run_minutes=[week.long_run_minutes for week in weeks if week.phase not in {"taper", "race"}],
+        terrain_session_count=len(terrain_indexes), policy_version=POLICY_VERSION,
+    )
+    return WorkloadPrescription(tuple(weeks), assessment, POLICY_VERSION)
+
+
+def assess_preparation(
+    *, capacity: CapacitySnapshot, race: RaceDemand | None, starts_on: date, ends_on: date,
+    weekly_minutes: Sequence[int], long_run_minutes: Sequence[int], terrain_session_count: int,
+    policy_version: str,
+) -> PreparationAssessment:
+    factors: list[str] = []
+    unknown: list[str] = []
+    calibrated = race is not None and 30_000 <= race.distance_meters <= 50_000 and race.race_date <= ends_on + timedelta(days=1)
+    if capacity.confidence != "high":
+        unknown.append("missing_baseline")
+    if race is None or not calibrated:
+        unknown.append("uncalibrated_race")
+    if calibrated:
+        if max(weekly_minutes, default=0) < 300:
+            factors.append("weekly_volume")
+        if max(long_run_minutes, default=0) < 150:
+            factors.append("long_run_endurance")
+        if race.terrain_difficulty in {"mixed", "technical"} and terrain_session_count < 2:
+            factors.append("terrain_exposure")
+        if race.ascent_meters is not None and terrain_session_count == 0:
+            factors.append("ascent_preparation")
+        if (ends_on - starts_on).days < 55:
+            factors.append("short_horizon")
+    status = "gap" if factors else "unknown" if unknown else "on_track"
+    labels = {
+        "weekly_volume": "每週跑量低於此距離的規劃參考值",
+        "long_run_endurance": "最長跑步時間低於此距離的規劃參考值",
+        "terrain_exposure": "缺少足夠的地形專項訓練",
+        "ascent_preparation": "缺少爬升專項訓練",
+        "short_horizon": "準備時間較短",
+        "missing_baseline": "近期跑步紀錄不足",
+        "uncalibrated_race": "此賽事距離尚無完整評估參考值",
+    }
+    explanation = "；".join(labels[factor] for factor in (*factors, *unknown)) if factors or unknown else "規劃訓練達到目前政策參考值；不代表保證完賽。"
+    return PreparationAssessment(status, tuple((*factors, *unknown)), explanation, policy_version)
