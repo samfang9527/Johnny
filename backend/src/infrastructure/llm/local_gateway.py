@@ -145,6 +145,13 @@ def _workout_payload(
 ) -> dict:
     duration_minutes = planned_duration_minutes or 45
     if workout_type == "interval":
+        total_seconds = duration_minutes * 60
+        warmup_seconds = min(600, total_seconds // 4)
+        cooldown_seconds = min(600, total_seconds // 4)
+        repetitions = 4 + min(week, 2)
+        per_repeat = (total_seconds - warmup_seconds - cooldown_seconds) // repetitions
+        cooldown_seconds += total_seconds - warmup_seconds - cooldown_seconds - per_repeat * repetitions
+        work_seconds = max(1, round(per_repeat * .6))
         return {
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": workout_type,
@@ -154,16 +161,16 @@ def _workout_payload(
             "phase": phase,
             "coach_note": "每趟保持穩定，組間以輕鬆慢跑恢復。",
             "steps": [
-                {"type": "warmup", "duration_seconds": 900, "target": {"kind": "rpe", "rpe": 3}},
+                {"type": "warmup", "duration_seconds": warmup_seconds, "target": {"kind": "rpe", "rpe": 3}},
                 {
                     "type": "repeat",
-                    "repeat_count": 4 + min(week, 2),
+                    "repeat_count": repetitions,
                     "steps": [
-                        {"type": "work", "distance_meters": 800, "target": {"kind": "pace", "zone": "interval", "rpe": 8}},
-                        {"type": "recovery", "distance_meters": 400, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
+                        {"type": "work", "duration_seconds": work_seconds, "target": {"kind": "pace", "zone": "interval", "rpe": 8}},
+                        {"type": "recovery", "duration_seconds": per_repeat - work_seconds, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
                     ],
                 },
-                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+                {"type": "cooldown", "duration_seconds": cooldown_seconds, "target": {"kind": "rpe", "rpe": 2}},
             ],
         }
     if workout_type == "tempo":
@@ -183,6 +190,12 @@ def _workout_payload(
             ],
         }
     if workout_type == "hill":
+        total_seconds = duration_minutes * 60
+        warmup_seconds = min(600, total_seconds // 4)
+        cooldown_seconds = min(600, total_seconds // 4)
+        per_repeat = (total_seconds - warmup_seconds - cooldown_seconds) // 4
+        cooldown_seconds += total_seconds - warmup_seconds - cooldown_seconds - per_repeat * 4
+        hill_seconds = max(1, round(per_repeat * .4))
         return {
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": workout_type,
@@ -192,16 +205,16 @@ def _workout_payload(
             "phase": phase,
             "coach_note": "上坡保持穩定出力，留意跑姿不要僵硬。",
             "steps": [
-                {"type": "warmup", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 3}},
+                {"type": "warmup", "duration_seconds": warmup_seconds, "target": {"kind": "rpe", "rpe": 3}},
                 {
                     "type": "repeat",
                     "repeat_count": 4,
                     "steps": [
-                        {"type": "hill", "duration_seconds": 120, "target": {"kind": "rpe", "rpe": 8}},
-                        {"type": "recovery", "duration_seconds": 300, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
+                        {"type": "hill", "duration_seconds": hill_seconds, "target": {"kind": "rpe", "rpe": 8}},
+                        {"type": "recovery", "duration_seconds": per_repeat - hill_seconds, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
                     ],
                 },
-                {"type": "cooldown", "duration_seconds": 600, "target": {"kind": "rpe", "rpe": 2}},
+                {"type": "cooldown", "duration_seconds": cooldown_seconds, "target": {"kind": "rpe", "rpe": 2}},
             ],
         }
     return {
@@ -225,5 +238,5 @@ def _tempo_step_durations(duration_minutes: int, week: int) -> tuple[int, int, i
     total_seconds = duration_minutes * 60
     warmup_seconds = min(600, total_seconds // 3)
     cooldown_seconds = min(600, (total_seconds - warmup_seconds) // 2)
-    work_duration_seconds = min(1_500 + week * 120, total_seconds - warmup_seconds - cooldown_seconds)
+    work_duration_seconds = total_seconds - warmup_seconds - cooldown_seconds
     return warmup_seconds, work_duration_seconds, cooldown_seconds

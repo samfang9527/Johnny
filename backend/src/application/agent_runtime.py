@@ -8,7 +8,7 @@ from typing import Callable, Iterable
 
 from src.application.training_plan_generation import _template_steps, build_plan_skeleton, projection_window, select_race_strategy
 from src.application.training_targets import build_pace_profile_from_payloads
-from src.application.training_workload_policy import derive_capacity_snapshot
+from src.application.training_workload_policy import RaceDemand, derive_capacity_snapshot
 from src.domain.agent_runtime import (
     AgentContextSource,
     AgentRun,
@@ -214,6 +214,9 @@ class RunningCompanionAgent:
                         "Do not create recommendations in this workflow. plan_skeleton owns the plan dates, "
                         "weekly structure, phase segments, and workouts. You must not move workout dates or "
                         "change the weekly structure; call createTrainingPlan using the plan_skeleton dates. "
+                        "Keep every workout type and planned duration exactly as prescribed. Fill Workout Steps "
+                        "so their executable time matches each planned duration. Explain preparation_assessment "
+                        "gap factors in coach notes without promising race completion. "
                         "Write all athlete-facing text in Traditional Chinese (zh-TW), including plan name, "
                         "workout purpose, coach notes, step notes, and weekly rationales. Keep canonical "
                         "workout types, phases, step types, and target zones as their schema enum values."
@@ -529,6 +532,8 @@ class RunningCompanionAgent:
             user_id=user_id,
             arguments=athlete_arguments,
         )
+        if "getAthleteContext" in self._tools.names() and athlete_context is None:
+            raise ValueError("athlete context unavailable for plan generation")
         anchor = starts_on or date.today()
         recent_activities = _safe_tool_payload(
             self._tools,
@@ -547,6 +552,8 @@ class RunningCompanionAgent:
         )
         race_goals = list((athlete_context or {}).get("race_goals", ()))
         selected_race = next((goal for goal in race_goals if goal.get("id") == selected_race_id), None)
+        if selected_race_id is not None and (selected_race is None or selected_race.get("status") == "cancelled"):
+            raise ValueError("selected race is unavailable for plan generation")
         effective_selected_race_id = str(selected_race["id"]) if selected_race is not None else None
         all_activities = tuple((recent_activities or {}).get("activities", ()))
         profile = (athlete_context or {}).get("profile")
@@ -570,6 +577,15 @@ class RunningCompanionAgent:
         )
         canonical_plan_type = "race" if plan_type == "race" and selected_race is not None else "maintenance"
         race_date = _goal_date(selected_race) if selected_race is not None else None
+        race_demand = (
+            RaceDemand(
+                distance_meters=float(selected_race["distance_meters"]), race_date=race_date,
+                target_finish_seconds=selected_race.get("target_finish_seconds"),
+                ascent_meters=selected_race.get("ascent_meters"), descent_meters=selected_race.get("descent_meters"),
+                terrain_difficulty=selected_race.get("terrain_difficulty"), cutoff_seconds=selected_race.get("cutoff_seconds"),
+                goal_intent=selected_race.get("goal_intent"),
+            ) if selected_race is not None and race_date is not None and selected_race.get("distance_meters") else None
+        )
         skeleton_starts_on, skeleton_ends_on = projection_window(anchor, race_date, canonical_plan_type)
         skeleton = build_plan_skeleton(
             starts_on=skeleton_starts_on,
@@ -584,14 +600,29 @@ class RunningCompanionAgent:
             race_distance_meters=selected_race.get("distance_meters") if selected_race else None,
             current_weekly_mileage_km=profile_payload.get("current_weekly_mileage_km"),
             experience_level=profile_payload.get("experience_level"),
+            capacity_snapshot=capacity_snapshot,
+            race_demand=race_demand,
+            prior_plan=last_active_plan if isinstance(last_active_plan, dict) else None,
         )
         plan_skeleton = _plan_skeleton_payload(skeleton)
+        prescription = skeleton.workload_prescription
+        policy_summary = {
+            "weeks": [asdict(week) for week in prescription.weeks],
+            "policy_version": prescription.policy_version,
+        } if prescription is not None else None
         return {
             "athlete_context": athlete_context,
             "selected_race": selected_race,
             "selected_race_id": effective_selected_race_id,
             "recent_activity_summary": _recent_activity_summary(activities),
-            "capacity_snapshot": asdict(capacity_snapshot),
+            "capacity_snapshot": {
+                **asdict(capacity_snapshot),
+                "observation_start": capacity_snapshot.observation_start.isoformat(),
+                "observation_end": capacity_snapshot.observation_end.isoformat(),
+            },
+            "workload_policy_version": prescription.policy_version if prescription is not None else None,
+            "preparation_assessment": asdict(prescription.assessment) if prescription is not None else None,
+            "workload_prescription": policy_summary,
             "key_activities": list(activities[:3]),
             "last_active_plan": last_active_plan if isinstance(last_active_plan, dict) else None,
             "pace_profile": pace_profile.to_payload(),
@@ -766,6 +797,9 @@ def _inject_training_plan_trusted_context(arguments: dict, request_context: dict
         trusted_context["plan_skeleton"] = plan_skeleton
         trusted_context["phase_segments"] = plan_skeleton.get("phase_segments", ())
         trusted_context["skeleton_workouts"] = plan_skeleton.get("workouts", ())
+    for key in ("workload_policy_version", "preparation_assessment", "workload_prescription", "capacity_snapshot"):
+        if key in request_context:
+            trusted_context[key] = request_context[key]
     for key in PRODUCT_RUN_METADATA_KEYS:
         if key in request_context:
             trusted_context[key] = request_context.get(key)

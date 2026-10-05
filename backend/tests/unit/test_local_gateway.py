@@ -89,5 +89,9 @@ def test_local_gateway_generates_active_training_plan_tool_call_only() -> None:
     assert plan_call.arguments["name"] == "Johnny 訓練計畫"
     assert interval["purpose"] == "提升速度與有氧能力"
     assert interval["coach_note"] == "每趟保持穩定，組間以輕鬆慢跑恢復。"
+    for workout in plan_call.arguments["workouts"]:
+        def seconds(steps):
+            return sum((step.get("repeat_count", 1) * seconds(step["steps"]) if step["type"] == "repeat" else step.get("duration_seconds", 0)) for step in steps)
+        assert seconds(workout["steps"]) == workout["planned_duration_minutes"] * 60
     for workout in (item for item in plan_call.arguments["workouts"] if item["workout_type"] == "tempo"):
         assert sum(step.get("duration_seconds", 0) for step in workout["steps"]) <= workout["planned_duration_minutes"] * 60
