@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 
 VALID_DAYS = frozenset(
@@ -136,6 +136,11 @@ class RaceGoal:
     race_date: date
     distance_meters: int
     target_finish_seconds: int | None = None
+    ascent_meters: float | None = None
+    descent_meters: float | None = None
+    terrain_difficulty: Literal["runnable", "mixed", "technical"] | None = None
+    cutoff_seconds: int | None = None
+    goal_intent: Literal["complete", "perform"] | None = None
     priority: str = "primary"
     status: str = "planned"
     id: str | None = None
@@ -149,6 +154,16 @@ class RaceGoal:
             raise DomainValidationError("race distance must be greater than zero")
         if self.target_finish_seconds is not None and self.target_finish_seconds <= 0:
             raise DomainValidationError("target finish time must be greater than zero")
+        if self.ascent_meters is not None and self.ascent_meters < 0:
+            raise DomainValidationError("race ascent cannot be negative")
+        if self.descent_meters is not None and self.descent_meters < 0:
+            raise DomainValidationError("race descent cannot be negative")
+        if self.terrain_difficulty not in {None, "runnable", "mixed", "technical"}:
+            raise DomainValidationError("race terrain difficulty is invalid")
+        if self.cutoff_seconds is not None and self.cutoff_seconds <= 0:
+            raise DomainValidationError("race cutoff must be greater than zero")
+        if self.goal_intent not in {None, "complete", "perform"}:
+            raise DomainValidationError("race goal intent is invalid")
         if self.priority not in VALID_RACE_PRIORITIES:
             raise DomainValidationError("race priority is invalid")
         if self.status not in VALID_RACE_STATUSES:
@@ -163,6 +178,11 @@ class RaceGoal:
         race_date: date,
         distance_meters: int,
         target_finish_seconds: int | None = None,
+        ascent_meters: float | None = None,
+        descent_meters: float | None = None,
+        terrain_difficulty: Literal["runnable", "mixed", "technical"] | None = None,
+        cutoff_seconds: int | None = None,
+        goal_intent: Literal["complete", "perform"] | None = None,
         priority: str = "primary",
         status: str = "planned",
         id: str | None = None,
@@ -174,6 +194,11 @@ class RaceGoal:
             race_date=race_date,
             distance_meters=distance_meters,
             target_finish_seconds=target_finish_seconds,
+            ascent_meters=ascent_meters,
+            descent_meters=descent_meters,
+            terrain_difficulty=terrain_difficulty,
+            cutoff_seconds=cutoff_seconds,
+            goal_intent=goal_intent,
             priority=priority,
             status=status,
         )

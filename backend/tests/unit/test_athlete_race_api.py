@@ -225,6 +225,37 @@ def test_race_create_rejects_status_and_unexpected_fields() -> None:
     assert with_extra.status_code == 422
 
 
+def test_race_api_round_trips_course_fields_and_accepts_legacy_request() -> None:
+    client = _client()
+    headers = {"X-Johnny-User-Id": "user-1"}
+    course = {
+        "name": "Mountain Trail 40K", "race_date": "2027-05-01",
+        "distance_meters": 40_000, "priority": "primary",
+        "ascent_meters": 1800, "descent_meters": 1750,
+        "terrain_difficulty": "technical", "cutoff_seconds": 28800,
+        "goal_intent": "complete",
+    }
+    created = client.post("/api/v1/races", headers=headers, json=course)
+    assert created.status_code == 200
+    race_id = created.json()["data"]["id"]
+    detail = client.get(f"/api/v1/races/{race_id}", headers=headers)
+    assert detail.status_code == 200
+    assert {key: detail.json()["data"][key] for key in (
+        "ascent_meters", "descent_meters", "terrain_difficulty", "cutoff_seconds", "goal_intent"
+    )} == {key: course[key] for key in (
+        "ascent_meters", "descent_meters", "terrain_difficulty", "cutoff_seconds", "goal_intent"
+    )}
+    legacy = client.post("/api/v1/races", headers=headers, json={
+        "name": "Trail by name only", "race_date": "2027-06-01",
+        "distance_meters": 40_000, "priority": "primary",
+    })
+    assert legacy.status_code == 200
+    assert legacy.json()["data"]["terrain_difficulty"] is None
+
+    invalid = client.post("/api/v1/races", headers=headers, json={**course, "cutoff_seconds": -1})
+    assert invalid.status_code == 422
+
+
 def test_race_update_accepts_status_but_rejects_unexpected_fields() -> None:
     client = _client()
     race = client.post(

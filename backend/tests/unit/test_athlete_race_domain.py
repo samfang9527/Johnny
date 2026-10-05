@@ -177,6 +177,25 @@ def test_race_goal_can_be_created_with_or_without_target_finish_time() -> None:
     assert without_target.target_pace_seconds_per_km is None
 
 
+def test_race_goal_accepts_course_demands_and_rejects_invalid_values() -> None:
+    race = RaceGoal.create(
+        user_id="user-1", name="Mountain 40K", race_date=date(2027, 5, 1),
+        distance_meters=40_000, ascent_meters=1800, descent_meters=1750,
+        terrain_difficulty="technical", cutoff_seconds=28800, goal_intent="complete",
+    )
+    assert (race.ascent_meters, race.descent_meters, race.terrain_difficulty) == (1800, 1750, "technical")
+    assert (race.cutoff_seconds, race.goal_intent) == (28800, "complete")
+
+    for invalid in ({"ascent_meters": -1}, {"descent_meters": -1},
+                    {"cutoff_seconds": 0}, {"terrain_difficulty": "unknown"},
+                    {"goal_intent": "win"}):
+        with pytest.raises(DomainValidationError):
+            RaceGoal.create(
+                user_id="user-1", name="Mountain 40K", race_date=date(2027, 5, 1),
+                distance_meters=40_000, **invalid,
+            )
+
+
 def test_race_goal_date_validation_rejects_past_dates() -> None:
     race = RaceGoal.create(
         user_id="user-1",

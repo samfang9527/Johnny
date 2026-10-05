@@ -196,6 +196,11 @@ def _profile_from_model(model: AthleteProfileModel) -> AthleteProfile:
 def _race_metadata(race_goal: RaceGoal) -> dict:
     return {
         "target_finish_seconds": race_goal.target_finish_seconds,
+        "ascent_meters": race_goal.ascent_meters,
+        "descent_meters": race_goal.descent_meters,
+        "terrain_difficulty": race_goal.terrain_difficulty,
+        "cutoff_seconds": race_goal.cutoff_seconds,
+        "goal_intent": race_goal.goal_intent,
         "priority": race_goal.priority,
         "target_pace_seconds_per_km": race_goal.target_pace_seconds_per_km,
     }
@@ -210,6 +215,11 @@ def _race_goal_from_model(model: RaceModel) -> RaceGoal:
         race_date=model.race_date,
         distance_meters=model.distance_meters,
         target_finish_seconds=metadata.get("target_finish_seconds"),
+        ascent_meters=metadata.get("ascent_meters"),
+        descent_meters=metadata.get("descent_meters"),
+        terrain_difficulty=metadata.get("terrain_difficulty"),
+        cutoff_seconds=metadata.get("cutoff_seconds"),
+        goal_intent=metadata.get("goal_intent"),
         priority=metadata.get("priority", "primary"),
         status=model.status,
     )
