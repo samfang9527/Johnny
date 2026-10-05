@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import asdict
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Callable, Iterable
 
 from src.application.training_plan_generation import _template_steps, build_plan_skeleton, projection_window, select_race_strategy
 from src.application.training_targets import build_pace_profile_from_payloads
+from src.application.training_workload_policy import derive_capacity_snapshot
 from src.domain.agent_runtime import (
     AgentContextSource,
     AgentRun,
@@ -533,10 +535,8 @@ class RunningCompanionAgent:
             "getRecentActivities",
             user_id=user_id,
             arguments={
-                "start_date": (anchor - timedelta(days=28)).isoformat(),
+                "start_date": (anchor - timedelta(days=56)).isoformat(),
                 "end_date": anchor.isoformat(),
-                "limit": 20,
-                "offset": 0,
             },
         )
         current_plan_payload = _safe_tool_payload(
@@ -548,7 +548,16 @@ class RunningCompanionAgent:
         race_goals = list((athlete_context or {}).get("race_goals", ()))
         selected_race = next((goal for goal in race_goals if goal.get("id") == selected_race_id), None)
         effective_selected_race_id = str(selected_race["id"]) if selected_race is not None else None
-        activities = tuple((recent_activities or {}).get("activities", ()))
+        all_activities = tuple((recent_activities or {}).get("activities", ()))
+        profile = (athlete_context or {}).get("profile")
+        profile_payload = profile if isinstance(profile, dict) else {}
+        capacity_snapshot = derive_capacity_snapshot(profile=profile_payload, activities=all_activities, anchor=anchor)
+        activities = tuple(
+            sorted(
+                (item for item in all_activities if str(item.get("started_at") or "")[:10] >= (anchor - timedelta(days=28)).isoformat()),
+                key=lambda item: str(item.get("started_at") or ""), reverse=True,
+            )[:20]
+        )
         last_active_plan = (current_plan_payload or {}).get("training_plan")
         pace_profile = build_pace_profile_from_payloads(
             profile_payload=(athlete_context or {}).get("profile"),
@@ -559,8 +568,6 @@ class RunningCompanionAgent:
             last_active_plan if isinstance(last_active_plan, dict) else None,
             selected_race_id=effective_selected_race_id,
         )
-        profile = (athlete_context or {}).get("profile")
-        profile_payload = profile if isinstance(profile, dict) else {}
         canonical_plan_type = "race" if plan_type == "race" and selected_race is not None else "maintenance"
         race_date = _goal_date(selected_race) if selected_race is not None else None
         skeleton_starts_on, skeleton_ends_on = projection_window(anchor, race_date, canonical_plan_type)
@@ -584,6 +591,7 @@ class RunningCompanionAgent:
             "selected_race": selected_race,
             "selected_race_id": effective_selected_race_id,
             "recent_activity_summary": _recent_activity_summary(activities),
+            "capacity_snapshot": asdict(capacity_snapshot),
             "key_activities": list(activities[:3]),
             "last_active_plan": last_active_plan if isinstance(last_active_plan, dict) else None,
             "pace_profile": pace_profile.to_payload(),

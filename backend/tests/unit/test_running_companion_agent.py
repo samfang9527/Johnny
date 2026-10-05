@@ -91,6 +91,24 @@ class StaticTool:
         return self.payload
 
 
+def test_plan_preload_uses_full_activity_window_before_model_slice():
+    athlete = StaticTool("getAthleteContext", {"profile": {"timezone": "Asia/Taipei", "current_weekly_mileage_km": 25}, "race_goals": []})
+    dates = ["2026-12-28", "2026-12-30", "2027-01-04", "2027-01-06", "2027-01-11", "2027-01-13", "2027-01-18", "2027-01-20"]
+    runs = [{"id": f"run-{index}", "started_at": f"{day}T07:00:00+08:00", "sport_type": "run", "duration_seconds": 5400, "distance_meters": 15000} for index, day in enumerate(dates)]
+    extras = [{"id": f"ride-{index}", "started_at": "2027-01-27T07:00:00+08:00", "sport_type": "ride", "duration_seconds": 3600, "distance_meters": 30000} for index in range(17)]
+    recent = StaticTool("getRecentActivities", {"activities": extras + runs})
+    plan = StaticTool("getTrainingPlan", {"training_plan": None})
+    agent = RunningCompanionAgent(run_store=FakeRunStore(), model_gateway=FakeModelGateway(), tools=AgentToolRegistry((athlete, recent, plan)), prompt_version="test")
+
+    context = agent._training_plan_generation_preload_context(user_id="user-1", selected_race_id=None, starts_on=date(2027, 1, 28), plan_type="maintenance")
+
+    assert recent.calls[0]["arguments"]["start_date"] == "2026-12-03"
+    assert "limit" not in recent.calls[0]["arguments"]
+    assert context["capacity_snapshot"]["source"] == "activities"
+    assert context["capacity_snapshot"]["activity_count"] == 8
+    assert context["recent_activity_summary"]["activity_count"] <= 20
+
+
 class FailingTool:
     name = "getRecoveryState"
 
