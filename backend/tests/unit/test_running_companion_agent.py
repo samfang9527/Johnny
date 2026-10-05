@@ -753,7 +753,8 @@ def test_training_plan_generation_preloads_planning_context_and_pace_profile() -
     assert skeleton["starts_on"] == "2027-01-01"
     assert skeleton["ends_on"] == "2027-03-07"
     assert len(skeleton["workouts"]) == 48
-    assert {workout["workout_type"] for workout in skeleton["workouts"]} == {"easy_run"}
+    assert {workout["workout_type"] for workout in skeleton["workouts"]} == {"easy_run", "race"}
+    assert [workout["race_goal_id"] for workout in skeleton["workouts"] if workout["workout_type"] == "race"] == ["race-1"]
     assert skeleton["phase_segments"] == model.requests[0].context["phase_segments"]
     assert skeleton["workouts"] == model.requests[0].context["skeleton_workouts"]
     assert "must not move workout dates" in model.requests[0].messages[0]["content"]

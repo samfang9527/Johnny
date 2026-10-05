@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 
 from src.application.training_plan_generation import (
+    PlanRace,
     _week_starts,
     build_plan_skeleton,
     effective_hard_session_limit,
@@ -167,6 +168,51 @@ def _skeleton(**overrides):
     }
     arguments.update(overrides)
     return build_plan_skeleton(**arguments)
+
+
+def test_in_horizon_races_replace_runs_and_reserve_off_day_events() -> None:
+    secondary = PlanRace("secondary-1", "Spring 10K", date(2027, 1, 12), 10_000, "secondary", False, "perform")
+    tune_up = PlanRace("tune-1", "Park 5K", date(2027, 1, 16), 5_000, "tune_up", False, None)
+    skeleton = _skeleton(races=(secondary, tune_up))
+
+    races = [workout for workout in skeleton.workouts if workout.workout_type == "race"]
+    assert {(workout.race_goal_id, workout.scheduled_for, workout.planned_distance_meters) for workout in races} == {
+        ("secondary-1", date(2027, 1, 12), 10_000),
+        ("tune-1", date(2027, 1, 16), 5_000),
+    }
+    assert all(workout.planned_duration_minutes is None for workout in races)
+    assert all(sum(workout.scheduled_for == race.scheduled_for for workout in skeleton.workouts if workout.workout_type != "race") == 0 for race in races)
+    assert len([workout for workout in skeleton.workouts if date(2027, 1, 11) <= workout.scheduled_for <= date(2027, 1, 17)]) <= 3
+
+
+def test_same_day_races_survive_run_cap_and_report_constraint() -> None:
+    day = date(2027, 1, 12)
+    races = (
+        PlanRace("race-1", "First", day, 5_000, "secondary", False, None),
+        PlanRace("race-2", "Second", day, 10_000, "tune_up", False, None),
+    )
+    skeleton = _skeleton(races=races, max_runs_per_week=1)
+
+    assert [workout.race_goal_id for workout in skeleton.workouts if workout.workout_type == "race"] == ["race-1", "race-2"]
+    assert not any(workout.workout_type != "race" and date(2027, 1, 11) <= workout.scheduled_for <= date(2027, 1, 17) for workout in skeleton.workouts)
+    assert "constrained_schedule" in skeleton.workload_prescription.assessment.factors
+
+
+def test_target_race_appears_once_even_when_already_a_preferred_day() -> None:
+    event = date(2027, 1, 31)
+    target = PlanRace("target-1", "Goal Race", event, 21_097, "primary", True, "perform")
+    skeleton = _skeleton(plan_type="race", race_date=event, race_distance_meters=21_097, races=(target,))
+
+    assert [workout.race_goal_id for workout in skeleton.workouts if workout.scheduled_for == event] == ["target-1"]
+    assert skeleton.workouts[-1].workout_type == "race"
+
+
+def test_off_day_race_on_phase_boundary_uses_its_calendar_phase() -> None:
+    event = PlanRace("support-1", "Monday 5K", date(2027, 1, 11), 5_000, "tune_up", False, None)
+    skeleton = _skeleton(plan_type="race", race_date=date(2027, 1, 31), race_distance_meters=10_000, races=(event,))
+
+    race = next(workout for workout in skeleton.workouts if workout.race_goal_id == "support-1")
+    assert race.phase == "build"
 
 
 def test_build_plan_skeleton_creates_four_week_maintenance_block() -> None:

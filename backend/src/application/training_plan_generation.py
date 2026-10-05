@@ -42,12 +42,29 @@ QUALITY_WORKOUT_TYPES = ("interval", "tempo", "hill")
 
 
 @dataclass(frozen=True)
+class PlanRace:
+    race_goal_id: str
+    name: str
+    race_date: date
+    distance_meters: int
+    priority: str
+    is_target: bool
+    goal_intent: str | None
+
+
+@dataclass(frozen=True)
 class SkeletonWorkout:
     scheduled_for: date
     workout_type: str
     phase: str
     planned_duration_minutes: int | None
     planned_distance_meters: int | None
+    race_goal_id: str | None = None
+    race_name: str | None = None
+    race_priority: str | None = None
+    focus_zone: str | None = None
+    race_goal_intent: str | None = None
+    is_target_race: bool = False
 
 
 @dataclass(frozen=True)
@@ -97,6 +114,7 @@ def build_plan_skeleton(
     capacity_snapshot: CapacitySnapshot | None = None,
     race_demand: RaceDemand | None = None,
     prior_plan: Mapping[str, Any] | None = None,
+    races: Sequence[PlanRace] = (),
 ) -> PlanSkeleton:
     if ends_on < starts_on:
         raise ValueError("plan end date cannot be before start date")
@@ -218,6 +236,18 @@ def build_plan_skeleton(
             allocated.append(SkeletonWorkout(workout.scheduled_for, workout.workout_type, workout.phase, duration, None))
         weekly_totals.append(sum(workout.planned_duration_minutes or 0 for workout in allocated if workout.scheduled_for in scheduled_days))
         weekly_longs.append(long_minutes)
+    allocated, race_schedule_constrained, race_conflict = _reserve_race_workouts(
+        allocated, races, starts_on=starts_on, ends_on=ends_on, max_runs_per_week=max_runs_per_week,
+        phase_by_day=phase_by_day,
+    )
+    weekly_totals = [
+        sum(workout.planned_duration_minutes or 0 for workout in allocated if week_start <= workout.scheduled_for <= min(week_start + timedelta(days=6), ends_on))
+        for week_start in _week_starts(starts_on, ends_on)
+    ]
+    weekly_longs = [
+        sum(workout.planned_duration_minutes or 0 for workout in allocated if workout.workout_type == "long_run" and week_start <= workout.scheduled_for <= min(week_start + timedelta(days=6), ends_on))
+        for week_start in _week_starts(starts_on, ends_on)
+    ]
     development_indexes = [week.week_index for week in prescription.weeks if week.phase not in {"taper", "race"}]
     final_development_indexes = set(development_indexes[-8:])
     actual_assessment = assess_preparation(
@@ -231,6 +261,17 @@ def build_plan_skeleton(
         ),
         policy_version=prescription.policy_version,
     )
+    extra_factors = []
+    if race_schedule_constrained:
+        extra_factors.append("constrained_schedule")
+    if race_conflict:
+        extra_factors.append("race_conflict")
+    if extra_factors:
+        actual_assessment = replace(
+            actual_assessment,
+            factors=(*actual_assessment.factors, *extra_factors),
+            explanation_zh=f"{actual_assessment.explanation_zh}；賽事日期限制了可安排的訓練日",
+        )
     actual_weeks = tuple(
         replace(week, target_minutes=weekly_totals[index], long_run_minutes=weekly_longs[index])
         for index, week in enumerate(prescription.weeks)
@@ -243,6 +284,53 @@ def build_plan_skeleton(
         workouts=allocated,
         workload_prescription=prescription,
     )
+
+
+def _reserve_race_workouts(
+    ordinary_workouts: Sequence[SkeletonWorkout],
+    races: Sequence[PlanRace],
+    *,
+    starts_on: date,
+    ends_on: date,
+    max_runs_per_week: int,
+    phase_by_day: Mapping[date, str],
+) -> tuple[list[SkeletonWorkout], bool, bool]:
+    included: dict[str, PlanRace] = {}
+    for race in races:
+        if starts_on <= race.race_date <= ends_on and race.race_goal_id and race.distance_meters > 0:
+            included[race.race_goal_id] = race
+    protected_dates = {race.race_date for race in included.values()}
+    result = [workout for workout in ordinary_workouts if workout.scheduled_for not in protected_dates]
+    result.extend(
+        SkeletonWorkout(
+            scheduled_for=race.race_date,
+            workout_type="race",
+            phase=phase_by_day[race.race_date],
+            planned_duration_minutes=None,
+            planned_distance_meters=race.distance_meters,
+            race_goal_id=race.race_goal_id,
+            race_name=race.name,
+            race_priority=race.priority,
+            race_goal_intent=race.goal_intent,
+            is_target_race=race.is_target,
+        )
+        for race in included.values()
+    )
+    constrained = False
+    conflict = len(protected_dates) < len(included)
+    for week_start in _week_starts(starts_on, ends_on):
+        week_end = min(week_start + timedelta(days=6), ends_on)
+        week = [workout for workout in result if week_start <= workout.scheduled_for <= week_end]
+        excess = max(0, len(week) - max_runs_per_week)
+        removable = sorted(
+            (workout for workout in week if workout.workout_type != "race"),
+            key=lambda workout: (workout.workout_type == "long_run", workout.scheduled_for),
+        )
+        for workout in removable[:excess]:
+            result.remove(workout)
+        if excess > 0:
+            constrained = True
+    return sorted(result, key=lambda workout: (workout.scheduled_for, workout.race_goal_id or "")), constrained, conflict
 
 
 def validate_generated_plan(plan: TrainingPlan, skeleton: PlanSkeleton) -> list[str]:

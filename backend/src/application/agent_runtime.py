@@ -4,9 +4,9 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict
 from dataclasses import replace
 from datetime import date, timedelta
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Sequence
 
-from src.application.training_plan_generation import _template_steps, build_plan_skeleton, projection_window, select_race_strategy
+from src.application.training_plan_generation import PlanRace, _template_steps, build_plan_skeleton, projection_window, select_race_strategy
 from src.application.training_targets import build_pace_profile_from_payloads
 from src.application.training_workload_policy import RaceDemand, derive_capacity_snapshot
 from src.domain.agent_runtime import (
@@ -521,11 +521,7 @@ class RunningCompanionAgent:
         starts_on: date | None,
         plan_type: str,
     ) -> dict:
-        athlete_arguments = (
-            {"race_id": selected_race_id}
-            if selected_race_id is not None
-            else {"race_date_from": (starts_on or date.today()).isoformat()}
-        )
+        athlete_arguments = {"race_date_from": (starts_on or date.today()).isoformat()}
         athlete_context = _safe_tool_payload(
             self._tools,
             "getAthleteContext",
@@ -552,7 +548,17 @@ class RunningCompanionAgent:
         )
         race_goals = list((athlete_context or {}).get("race_goals", ()))
         selected_race = next((goal for goal in race_goals if goal.get("id") == selected_race_id), None)
-        if selected_race_id is not None and (selected_race is None or selected_race.get("status") == "cancelled"):
+        if selected_race_id is not None and selected_race is None:
+            explicit_context = _safe_tool_payload(
+                self._tools, "getAthleteContext", user_id=user_id, arguments={"race_id": selected_race_id},
+            )
+            selected_race = next(
+                (goal for goal in (explicit_context or {}).get("race_goals", ()) if goal.get("id") == selected_race_id),
+                None,
+            )
+            if selected_race is not None:
+                race_goals.append(selected_race)
+        if selected_race_id is not None and (selected_race is None or selected_race.get("status", "planned") not in {"planned", "active"}):
             raise ValueError("selected race is unavailable for plan generation")
         effective_selected_race_id = str(selected_race["id"]) if selected_race is not None else None
         all_activities = tuple((recent_activities or {}).get("activities", ()))
@@ -587,6 +593,12 @@ class RunningCompanionAgent:
             ) if selected_race is not None and race_date is not None and selected_race.get("distance_meters") else None
         )
         skeleton_starts_on, skeleton_ends_on = projection_window(anchor, race_date, canonical_plan_type)
+        plan_races = _plan_races_from_payloads(
+            race_goals,
+            starts_on=skeleton_starts_on,
+            ends_on=skeleton_ends_on,
+            selected_race_id=effective_selected_race_id if canonical_plan_type == "race" else None,
+        )
         skeleton = build_plan_skeleton(
             starts_on=skeleton_starts_on,
             ends_on=skeleton_ends_on,
@@ -603,6 +615,7 @@ class RunningCompanionAgent:
             capacity_snapshot=capacity_snapshot,
             race_demand=race_demand,
             prior_plan=last_active_plan if isinstance(last_active_plan, dict) else None,
+            races=plan_races,
         )
         plan_skeleton = _plan_skeleton_payload(skeleton)
         prescription = skeleton.workload_prescription
@@ -861,6 +874,36 @@ def _profile_int(profile: dict, key: str, *, default: int) -> int:
     return default if value is None else int(value)
 
 
+def _plan_races_from_payloads(
+    race_goals: Sequence[dict],
+    *,
+    starts_on: date,
+    ends_on: date,
+    selected_race_id: str | None,
+) -> tuple[PlanRace, ...]:
+    races: dict[str, PlanRace] = {}
+    for goal in race_goals:
+        if not isinstance(goal, dict) or goal.get("status", "planned") not in {"planned", "active"}:
+            continue
+        race_date = _goal_date(goal)
+        race_id = goal.get("id")
+        distance = goal.get("distance_meters")
+        if not race_id or race_date is None or not starts_on <= race_date <= ends_on:
+            continue
+        if not isinstance(distance, int) or distance <= 0:
+            continue
+        races[str(race_id)] = PlanRace(
+            race_goal_id=str(race_id),
+            name=str(goal.get("name") or "賽事"),
+            race_date=race_date,
+            distance_meters=distance,
+            priority=str(goal.get("priority") or "primary"),
+            is_target=str(race_id) == selected_race_id,
+            goal_intent=goal.get("goal_intent"),
+        )
+    return tuple(sorted(races.values(), key=lambda race: (race.race_date, race.race_goal_id)))
+
+
 def _plan_skeleton_payload(skeleton) -> dict:
     workouts = [
         {
@@ -869,6 +912,12 @@ def _plan_skeleton_payload(skeleton) -> dict:
             "phase": workout.phase,
             "planned_duration_minutes": workout.planned_duration_minutes,
             "planned_distance_meters": workout.planned_distance_meters,
+            "race_goal_id": workout.race_goal_id,
+            "race_name": workout.race_name,
+            "race_priority": workout.race_priority,
+            "race_goal_intent": workout.race_goal_intent,
+            "is_target_race": workout.is_target_race,
+            "focus_zone": workout.focus_zone,
         }
         for workout in skeleton.workouts
     ]

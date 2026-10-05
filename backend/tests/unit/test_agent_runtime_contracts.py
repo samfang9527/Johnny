@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.application.agent_runtime import _plan_races_from_payloads
+
 from src.domain.agent_runtime import (
     AgentContextSource,
     AgentRun,
@@ -12,6 +14,22 @@ from src.domain.agent_runtime import (
     TokenUsage,
     ToolCallRequest,
 )
+
+
+def test_plan_race_preload_filters_status_and_horizon_without_losing_target() -> None:
+    races = _plan_races_from_payloads(
+        [
+            {"id": "target", "name": "Goal", "race_date": "2027-06-01", "distance_meters": 42_195, "priority": "primary", "status": "planned"},
+            {"id": "support", "name": "Support", "race_date": "2027-01-10", "distance_meters": 10_000, "priority": "secondary", "status": "active"},
+            {"id": "cancelled", "name": "No", "race_date": "2027-01-12", "distance_meters": 5_000, "priority": "tune_up", "status": "cancelled"},
+            {"id": "done", "name": "Past", "race_date": "2027-01-14", "distance_meters": 5_000, "priority": "tune_up", "status": "completed"},
+        ],
+        starts_on=datetime(2027, 1, 1).date(),
+        ends_on=datetime(2027, 1, 31).date(),
+        selected_race_id="target",
+    )
+
+    assert [(race.race_goal_id, race.is_target) for race in races] == [("support", False)]
 
 
 def test_agent_run_requires_trusted_user_and_prompt_version() -> None:
