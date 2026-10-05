@@ -259,6 +259,26 @@ def test_supporting_race_protects_local_window_and_never_counts_as_training_minu
     assert all(week.target_minutes == sum(workout.planned_duration_minutes or 0 for workout in skeleton.workouts if (workout.scheduled_for - skeleton.starts_on).days // 7 == week.week_index) for week in skeleton.workload_prescription.weeks)
 
 
+def test_completion_repair_preserves_two_same_day_races_with_exact_distances() -> None:
+    event_day = date(2027, 1, 12)
+    skeleton = _skeleton(races=(
+        PlanRace("race-a", "First 5K", event_day, 5_000, "secondary", False, None),
+        PlanRace("race-b", "Second 10K", event_day, 10_000, "tune_up", False, None),
+    ))
+    partial = TrainingPlan.create(
+        user_id="user-1", name="Partial", starts_on=skeleton.starts_on, ends_on=skeleton.ends_on,
+        metadata={"phase_segments": skeleton.phase_segments, "workload_policy_version": "race-workload-v2"},
+    )
+    repaired = repair_generated_plan(partial, skeleton, "missing races").plan
+
+    races = [workout for workout in repaired.workouts if workout.workout_type == "race"]
+    assert {(workout.race_goal_id, workout.planned_distance_meters, workout.steps[0].distance_meters) for workout in races} == {
+        ("race-a", 5_000, 5_000), ("race-b", 10_000, 10_000),
+    }
+    assert all(workout.planned_duration_minutes is None for workout in races)
+    assert validate_generated_plan(repaired, skeleton) == []
+
+
 def test_build_plan_skeleton_creates_four_week_maintenance_block() -> None:
     skeleton = _skeleton()
 
@@ -537,7 +557,7 @@ def _complete_workout(skeleton_workout, *, id: str | None = None) -> Workout:
             WorkoutStep.create(
                 step_type="work",
                 duration_seconds=1_500,
-                target=WorkoutTarget.pace(zone="threshold", rpe=7),
+                target=WorkoutTarget.pace(zone=skeleton_workout.focus_zone or "threshold", rpe=7),
             ),
             WorkoutStep.create(step_type="cooldown", duration_seconds=600, target=easy_target),
         )
@@ -551,7 +571,7 @@ def _complete_workout(skeleton_workout, *, id: str | None = None) -> Workout:
                     WorkoutStep.create(
                         step_type="work",
                         duration_seconds=300,
-                        target=WorkoutTarget.pace(zone="interval", rpe=8),
+                        target=WorkoutTarget.pace(zone=skeleton_workout.focus_zone or "interval", rpe=8),
                     ),
                     WorkoutStep.create(step_type="recovery", duration_seconds=180, target=easy_target),
                 ),
@@ -568,7 +588,7 @@ def _complete_workout(skeleton_workout, *, id: str | None = None) -> Workout:
                     WorkoutStep.create(
                         step_type="hill",
                         duration_seconds=120,
-                        target=WorkoutTarget.rpe(8),
+                        target=WorkoutTarget(kind="rpe", zone=skeleton_workout.focus_zone or "rpe_only", rpe=8),
                     ),
                     WorkoutStep.create(step_type="recovery", duration_seconds=300, target=easy_target),
                 ),

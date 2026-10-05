@@ -160,6 +160,7 @@ def test_openai_gateway_exposes_training_plan_generation_write_contract() -> Non
         "rest",
         "strength",
         "cross_training",
+        "race",
     ]
     assert workout_schema["properties"]["planned_duration_minutes"]["minimum"] == 1
     assert workout_schema["properties"]["planned_distance_meters"]["minimum"] == 1
@@ -212,7 +213,8 @@ def test_openai_gateway_rejects_non_positive_generated_plan_distance() -> None:
                     '"workout_type": "easy_run", "purpose": "Aerobic base", '
                     '"planned_duration_minutes": null, "planned_distance_meters": 0, '
                     '"pace_range_seconds_per_km": null, "heart_rate_zone": null, '
-                    '"phase": null, "coach_note": null, "steps": [], "status": "planned"}]}'
+                    '"phase": null, "coach_note": null, "steps": [], "status": "planned", '
+                    '"race_goal_id": null, "race_name": null, "race_priority": null}]}'
                 ),
             )
         ]

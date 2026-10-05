@@ -445,14 +445,12 @@ def validate_generated_plan(plan: TrainingPlan, skeleton: PlanSkeleton) -> list[
                 f"week {week_index} workout count is {len(generated_workouts)}; expected {len(expected_workouts)}"
             )
             continue
-        if sorted(workout.scheduled_for for workout in generated_workouts) != sorted(
-            workout.scheduled_for for workout in expected_workouts
-        ):
-            errors.append(f"week {week_index} workout dates do not match the skeleton")
+        expected_by_key = {_workout_identity(workout): workout for workout in expected_workouts}
+        if sorted(_workout_identity(workout) for workout in generated_workouts) != sorted(expected_by_key):
+            errors.append(f"week {week_index} workout identities do not match the skeleton")
             continue
-        expected_by_date = {workout.scheduled_for: workout for workout in expected_workouts}
         for workout in generated_workouts:
-            expected_workout = expected_by_date[workout.scheduled_for]
+            expected_workout = expected_by_key[_workout_identity(workout)]
             if workout.phase != expected_workout.phase:
                 errors.append(f"week {week_index} workout phase does not match the skeleton")
             if workout.workout_type != expected_workout.workout_type:
@@ -461,6 +459,14 @@ def validate_generated_plan(plan: TrainingPlan, skeleton: PlanSkeleton) -> list[
                 errors.append(f"week {week_index} workout planned duration does not match the skeleton")
             if workout.planned_distance_meters != expected_workout.planned_distance_meters:
                 errors.append(f"week {week_index} workout planned distance does not match the skeleton")
+            if workout.workout_type == "race" and (
+                workout.race_name != expected_workout.race_name
+                or workout.race_priority != expected_workout.race_priority
+                or not _race_steps_match_distance(workout, expected_workout)
+            ):
+                errors.append(f"week {week_index} race identity or executable distance does not match the skeleton")
+            if expected_workout.focus_zone and workout.workout_type in QUALITY_WORKOUT_TYPES and not _has_focus_zone(workout, expected_workout.focus_zone):
+                errors.append(f"week {week_index} key session focus zone does not match the skeleton")
             if workout.status != "planned":
                 errors.append(f"week {week_index} workout status must be planned")
             if not _executable_load_within_skeleton(workout, expected_workout):
@@ -591,22 +597,50 @@ def _plan_workouts_for_week(plan: TrainingPlan, skeleton: PlanSkeleton, week_ind
 def _week_is_complete(generated_workouts: Sequence[Workout], expected_workouts: Sequence[SkeletonWorkout], *, enforce_floor: bool = False) -> bool:
     if len(generated_workouts) != len(expected_workouts):
         return False
-    if sorted(workout.scheduled_for for workout in generated_workouts) != sorted(
-        workout.scheduled_for for workout in expected_workouts
-    ):
+    expected_by_key = {_workout_identity(workout): workout for workout in expected_workouts}
+    if sorted(_workout_identity(workout) for workout in generated_workouts) != sorted(expected_by_key):
         return False
-    expected_by_date = {workout.scheduled_for: workout for workout in expected_workouts}
     return all(
-        workout.phase == expected_by_date[workout.scheduled_for].phase
-        and workout.workout_type == expected_by_date[workout.scheduled_for].workout_type
-        and workout.planned_duration_minutes == expected_by_date[workout.scheduled_for].planned_duration_minutes
-        and workout.planned_distance_meters == expected_by_date[workout.scheduled_for].planned_distance_meters
+        workout.phase == expected_by_key[_workout_identity(workout)].phase
+        and workout.workout_type == expected_by_key[_workout_identity(workout)].workout_type
+        and workout.planned_duration_minutes == expected_by_key[_workout_identity(workout)].planned_duration_minutes
+        and workout.planned_distance_meters == expected_by_key[_workout_identity(workout)].planned_distance_meters
         and workout.status == "planned"
-        and _executable_load_within_skeleton(workout, expected_by_date[workout.scheduled_for])
-        and (not enforce_floor or _executable_load_meets_floor(workout, expected_by_date[workout.scheduled_for]))
+        and _executable_load_within_skeleton(workout, expected_by_key[_workout_identity(workout)])
+        and (not enforce_floor or _executable_load_meets_floor(workout, expected_by_key[_workout_identity(workout)]))
         and (workout.workout_type not in QUALITY_WORKOUT_TYPES or _has_required_key_session_steps(workout))
+        and (workout.workout_type != "race" or (
+            workout.race_name == expected_by_key[_workout_identity(workout)].race_name
+            and workout.race_priority == expected_by_key[_workout_identity(workout)].race_priority
+            and _race_steps_match_distance(workout, expected_by_key[_workout_identity(workout)])
+        ))
+        and (not expected_by_key[_workout_identity(workout)].focus_zone or workout.workout_type not in QUALITY_WORKOUT_TYPES or _has_focus_zone(workout, expected_by_key[_workout_identity(workout)].focus_zone))
         for workout in generated_workouts
     )
+
+
+def _workout_identity(workout: Workout | SkeletonWorkout) -> tuple[date, str]:
+    return workout.scheduled_for, workout.race_goal_id or ""
+
+
+def _race_steps_match_distance(workout: Workout, expected: SkeletonWorkout) -> bool:
+    if workout.workout_type != "race" or expected.planned_distance_meters is None:
+        return False
+    def distance(step: WorkoutStep) -> int:
+        if step.step_type == "repeat":
+            return (step.repeat_count or 0) * sum(distance(child) for child in step.steps)
+        return step.distance_meters or 0
+    def has_duration(step: WorkoutStep) -> bool:
+        return step.duration_seconds is not None or any(has_duration(child) for child in step.steps)
+    return bool(workout.steps) and not any(has_duration(step) for step in workout.steps) and sum(distance(step) for step in workout.steps) == expected.planned_distance_meters
+
+
+def _has_focus_zone(workout: Workout, expected_zone: str) -> bool:
+    def targets(steps: Sequence[WorkoutStep]) -> list[WorkoutTarget]:
+        return [target for step in steps for target in (
+            targets(step.steps) if step.step_type == "repeat" else [step.target] if step.step_type in {"work", "hill"} and step.target is not None else []
+        )]
+    return any(target.zone == expected_zone for target in targets(workout.steps))
 
 
 def _executable_load_within_skeleton(workout: Workout, expected: SkeletonWorkout) -> bool:
@@ -689,8 +723,15 @@ def _template_workout(skeleton_workout: SkeletonWorkout, _week_index: int) -> Wo
         purpose=_template_purpose(skeleton_workout.workout_type),
         planned_duration_minutes=skeleton_workout.planned_duration_minutes,
         planned_distance_meters=skeleton_workout.planned_distance_meters,
+        race_goal_id=skeleton_workout.race_goal_id,
+        race_name=skeleton_workout.race_name,
+        race_priority=skeleton_workout.race_priority,
         phase=skeleton_workout.phase,
-        steps=_template_steps(skeleton_workout.workout_type, skeleton_workout.planned_duration_minutes),
+        steps=_template_steps(
+            skeleton_workout.workout_type, skeleton_workout.planned_duration_minutes,
+            skeleton_workout.planned_distance_meters, skeleton_workout.focus_zone,
+            race_rpe=_race_rpe(skeleton_workout),
+        ),
     )
 
 
@@ -698,7 +739,29 @@ def _template_purpose(workout_type: str) -> str:
     return workout_purpose_zh(workout_type)
 
 
-def _template_steps(workout_type: str, planned_duration_minutes: int | None) -> tuple[WorkoutStep, ...]:
+def _race_rpe(workout: SkeletonWorkout) -> int:
+    if workout.race_priority == "tune_up" or (workout.is_target_race and workout.race_goal_intent == "complete"):
+        return 6
+    return 8
+
+
+def _template_steps(
+    workout_type: str,
+    planned_duration_minutes: int | None,
+    planned_distance_meters: int | None = None,
+    focus_zone: str | None = None,
+    *,
+    race_rpe: int = 8,
+) -> tuple[WorkoutStep, ...]:
+    if workout_type == "race":
+        if planned_distance_meters is None:
+            raise ValueError("race template requires event distance")
+        return (
+            WorkoutStep.create(
+                step_type="free_run", distance_meters=planned_distance_meters,
+                target=WorkoutTarget(kind="rpe", zone="marathon" if race_rpe <= 6 else "interval", rpe=race_rpe),
+            ),
+        )
     easy_target = WorkoutTarget.pace(zone="easy", rpe=3)
     total_seconds = (planned_duration_minutes or 20) * 60
     warmup = max(1, total_seconds // 4)
@@ -718,7 +781,7 @@ def _template_steps(workout_type: str, planned_duration_minutes: int | None) -> 
             WorkoutStep.create(
                 step_type="work",
                 duration_seconds=main_seconds,
-                target=WorkoutTarget.pace(zone="threshold", rpe=7),
+                target=WorkoutTarget.pace(zone=focus_zone or "threshold", rpe=7),
             ),
             WorkoutStep.create(step_type="cooldown", duration_seconds=cooldown, target=easy_target),
         )
@@ -732,7 +795,7 @@ def _template_steps(workout_type: str, planned_duration_minutes: int | None) -> 
                     WorkoutStep.create(
                         step_type="work",
                         duration_seconds=max(1, main_seconds // 6),
-                        target=WorkoutTarget.pace(zone="interval", rpe=8),
+                        target=WorkoutTarget.pace(zone=focus_zone or "interval", rpe=8),
                     ),
                     WorkoutStep.create(step_type="recovery", duration_seconds=max(1, main_seconds // 6), target=easy_target),
                 ),
@@ -746,7 +809,7 @@ def _template_steps(workout_type: str, planned_duration_minutes: int | None) -> 
                 step_type="repeat",
                 repeat_count=4,
                 steps=(
-                    WorkoutStep.create(step_type="hill", duration_seconds=max(1, main_seconds // 12), target=WorkoutTarget.rpe(8)),
+                    WorkoutStep.create(step_type="hill", duration_seconds=max(1, main_seconds // 12), target=WorkoutTarget(kind="rpe", zone=focus_zone or "rpe_only", rpe=8)),
                     WorkoutStep.create(step_type="recovery", duration_seconds=max(1, main_seconds // 6), target=easy_target),
                 ),
             ),

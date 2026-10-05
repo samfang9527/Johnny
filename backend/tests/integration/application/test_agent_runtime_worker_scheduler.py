@@ -867,7 +867,7 @@ def test_manual_regeneration_produces_race_aware_40km_projection(monkeypatch) ->
     active = next(plan for plan in plans if plan["status"] == "active")
     previous = next(plan for plan in plans if plan["id"] == "previous-race-plan")
     assert previous["status"] == "superseded"
-    assert active["metadata"]["workload_policy_version"] == "race-workload-v1"
+    assert active["metadata"]["workload_policy_version"] == "race-workload-v2"
     assert active["preparation_assessment"]["status"] == "gap"
     assert max(workout["planned_duration_minutes"] for workout in active["workouts"] if workout["workout_type"] == "long_run") > 70
     assert all(workout["steps"] for workout in active["workouts"])

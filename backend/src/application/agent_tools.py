@@ -222,6 +222,22 @@ class CreateTrainingPlanTool:
             starts_on, ends_on = _date_arg(arguments, "starts_on"), _date_arg(arguments, "ends_on")
         for payload in arguments.get("workouts", ()):
             try:
+                if skeleton is not None and payload.get("workout_type") == "race":
+                    expected_race = next(
+                        (
+                            item for item in skeleton.workouts
+                            if item.workout_type == "race"
+                            and item.scheduled_for == _date_arg(payload, "scheduled_for")
+                            and item.race_goal_id == payload.get("race_goal_id")
+                        ),
+                        None,
+                    )
+                    if expected_race is not None:
+                        payload = {
+                            **payload,
+                            "race_name": expected_race.race_name,
+                            "race_priority": expected_race.race_priority,
+                        }
                 workout = _workout_from_payload({**payload, "id": str(uuid4()), "_pace_profile": pace_profile})
                 if skeleton is not None and not skeleton.starts_on <= workout.scheduled_for <= skeleton.ends_on:
                     raise ValueError("workout is outside skeleton date range")
@@ -382,8 +398,6 @@ def _workout_from_payload(payload: dict) -> Workout:
         step if isinstance(step, WorkoutStep) else WorkoutStep.from_payload(step)
         for step in payload.get("steps", ())
     )
-    pace_profile = PaceProfile.from_payload(payload.get("_pace_profile"))
-    workout_steps = enrich_workout_steps(steps, pace_profile=pace_profile)
     return Workout.create(
         id=payload.get("id"),
         scheduled_for=_date_arg(payload, "scheduled_for"),
@@ -395,8 +409,11 @@ def _workout_from_payload(payload: dict) -> Workout:
         heart_rate_zone=payload.get("heart_rate_zone"),
         phase=payload.get("phase"),
         coach_note=payload.get("coach_note"),
-        steps=tuple(workout_steps),
+        steps=steps,
         status=payload.get("status", "planned"),
+        race_goal_id=payload.get("race_goal_id"),
+        race_name=payload.get("race_name"),
+        race_priority=payload.get("race_priority"),
     )
 
 
@@ -459,6 +476,12 @@ def _trusted_plan_skeleton(trusted_context: dict) -> PlanSkeleton | None:
                 phase=str(workout["phase"]),
                 planned_duration_minutes=workout.get("planned_duration_minutes"),
                 planned_distance_meters=workout.get("planned_distance_meters"),
+                race_goal_id=workout.get("race_goal_id"),
+                race_name=workout.get("race_name"),
+                race_priority=workout.get("race_priority"),
+                race_goal_intent=workout.get("race_goal_intent"),
+                is_target_race=workout.get("is_target_race") is True,
+                focus_zone=workout.get("focus_zone"),
             )
             for workout in payload["workouts"]
         ]

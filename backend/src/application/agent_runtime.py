@@ -214,8 +214,9 @@ class RunningCompanionAgent:
                         "Do not create recommendations in this workflow. plan_skeleton owns the plan dates, "
                         "weekly structure, phase segments, and workouts. You must not move workout dates or "
                         "change the weekly structure; call createTrainingPlan using the plan_skeleton dates. "
-                        "Keep every workout type and planned duration exactly as prescribed. Fill Workout Steps "
-                        "so their executable time matches each planned duration. Explain preparation_assessment "
+                        "Keep every workout type, planned duration or distance, race_goal_id, and focus_zone exactly as prescribed. "
+                        "Race workouts have event distance without a predicted duration; include every target, secondary, and tune-up race. "
+                        "Fill timed Workout Steps so their executable time matches each planned duration. Explain preparation_assessment "
                         "gap factors in coach notes without promising race completion. "
                         "Write all athlete-facing text in Traditional Chinese (zh-TW), including plan name, "
                         "workout purpose, coach notes, step notes, and weekly rationales. Keep canonical "
@@ -950,6 +951,12 @@ def _fallback_training_plan_arguments(context: dict) -> dict:
             phase=str(workout["phase"]),
             planned_duration_minutes=workout.get("planned_duration_minutes"),
             planned_distance_meters=workout.get("planned_distance_meters"),
+            race_goal_id=workout.get("race_goal_id"),
+            race_name=workout.get("race_name"),
+            race_priority=workout.get("race_priority"),
+            race_goal_intent=workout.get("race_goal_intent"),
+            is_target_race=workout.get("is_target_race") is True,
+            focus_zone=workout.get("focus_zone"),
             week=(
                 ((_date_from_context(workout.get("scheduled_for")) or starts_on) - starts_on).days // 7
             ),
@@ -988,6 +995,12 @@ def _fallback_workout_payload(
     planned_duration_minutes: int | None,
     planned_distance_meters: int | None,
     week: int,
+    race_goal_id: str | None = None,
+    race_name: str | None = None,
+    race_priority: str | None = None,
+    race_goal_intent: str | None = None,
+    is_target_race: bool = False,
+    focus_zone: str | None = None,
 ) -> dict:
     return {
         "scheduled_for": scheduled_for.isoformat(),
@@ -995,8 +1008,16 @@ def _fallback_workout_payload(
         "purpose": purpose,
         "planned_duration_minutes": planned_duration_minutes,
         "planned_distance_meters": planned_distance_meters,
+        "race_goal_id": race_goal_id,
+        "race_name": race_name,
+        "race_priority": race_priority,
         "phase": phase,
-        "steps": [step.to_payload() for step in _template_steps(workout_type, planned_duration_minutes)],
+        "steps": [
+            step.to_payload() for step in _template_steps(
+                workout_type, planned_duration_minutes, planned_distance_meters, focus_zone,
+                race_rpe=6 if race_priority == "tune_up" or (is_target_race and race_goal_intent == "complete") else 8,
+            )
+        ],
     }
 
 

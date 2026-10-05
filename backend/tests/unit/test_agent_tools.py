@@ -20,6 +20,7 @@ from src.application.agent_tools import (
 )
 from src.application.training_targets import build_pace_profile
 from src.application.training_plan_generation import build_plan_skeleton
+from src.application.training_plan_generation import PlanRace
 from src.application.agent_tools import _plan_metadata
 from src.application.training_analytics import BuildTodayContextHandler
 from src.application.interfaces.training_plan_store import TrainingPlanStore
@@ -280,6 +281,35 @@ def _eight_week_skeleton():
         max_runs_per_week=3,
         max_hard_sessions_per_week=0,
     )
+
+
+def test_trusted_race_identity_overrides_model_copy_and_repairs_wrong_distance() -> None:
+    from src.application.agent_runtime import _fallback_training_plan_arguments, _plan_skeleton_payload
+
+    event_day = date(2027, 1, 10)
+    skeleton = build_plan_skeleton(
+        starts_on=date(2027, 1, 4), ends_on=event_day, plan_type="maintenance", race_date=None,
+        preferred_training_days=("tuesday", "thursday", "sunday"), preferred_long_run_day="sunday",
+        max_runs_per_week=3,
+        races=(PlanRace("event-1", "Real Race", event_day, 10_000, "secondary", False, "perform"),),
+    )
+    skeleton_payload = _plan_skeleton_payload(skeleton)
+    arguments = _fallback_training_plan_arguments({"plan_skeleton": skeleton_payload})
+    arguments["trusted_context"] = {"plan_skeleton": skeleton_payload}
+    race_payload = next(workout for workout in arguments["workouts"] if workout["workout_type"] == "race")
+    race_payload["race_name"] = "Model-invented name"
+    race_payload["race_priority"] = "tune_up"
+    store = FakeTrainingPlanStore(None)
+    saved = CreateTrainingPlanTool(training_plans=store).run(user_id="user-1", arguments=arguments)["training_plan"]
+    race = next(workout for workout in saved["workouts"] if workout["workout_type"] == "race")
+    assert (race["race_name"], race["race_priority"]) == ("Real Race", "secondary")
+
+    race_payload["planned_distance_meters"] = 9_000
+    store = FakeTrainingPlanStore(None)
+    repaired = CreateTrainingPlanTool(training_plans=store).run(user_id="user-1", arguments=arguments)
+    race = next(workout for workout in repaired["training_plan"]["workouts"] if workout["workout_type"] == "race")
+    assert repaired["completion_repair"]["repaired_week_indexes"] == [0]
+    assert (race["planned_distance_meters"], race["steps"][0]["distance_meters"]) == (10_000, 10_000)
 
 
 def _skeleton_payload(skeleton) -> dict:

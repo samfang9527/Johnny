@@ -98,6 +98,12 @@ def _plan_arguments(context: dict) -> dict:
             phase=str(workout["phase"]),
             planned_duration_minutes=workout.get("planned_duration_minutes"),
             planned_distance_meters=workout.get("planned_distance_meters"),
+            race_goal_id=workout.get("race_goal_id"),
+            race_name=workout.get("race_name"),
+            race_priority=workout.get("race_priority"),
+            race_goal_intent=workout.get("race_goal_intent"),
+            is_target_race=workout.get("is_target_race") is True,
+            focus_zone=workout.get("focus_zone"),
             week=(_required_skeleton_date(workout) - starts_on).days // 7,
         )
         for workout in skeleton_workouts
@@ -142,7 +148,30 @@ def _workout_payload(
     planned_duration_minutes: int | None,
     planned_distance_meters: int | None,
     week: int,
+    race_goal_id: str | None = None,
+    race_name: str | None = None,
+    race_priority: str | None = None,
+    race_goal_intent: str | None = None,
+    is_target_race: bool = False,
+    focus_zone: str | None = None,
 ) -> dict:
+    if workout_type == "race":
+        race_rpe = 6 if race_priority == "tune_up" or (is_target_race and race_goal_intent == "complete") else 8
+        return {
+            "scheduled_for": scheduled_for.isoformat(),
+            "workout_type": "race",
+            "purpose": _workout_purpose("race"),
+            "planned_duration_minutes": None,
+            "planned_distance_meters": planned_distance_meters,
+            "race_goal_id": race_goal_id,
+            "race_name": race_name,
+            "race_priority": race_priority,
+            "phase": phase,
+            "steps": [{
+                "type": "free_run", "distance_meters": planned_distance_meters,
+                "target": {"kind": "rpe", "zone": "marathon" if race_rpe == 6 else "interval", "rpe": race_rpe},
+            }],
+        }
     duration_minutes = planned_duration_minutes or 45
     if workout_type == "interval":
         total_seconds = duration_minutes * 60
@@ -166,7 +195,7 @@ def _workout_payload(
                     "type": "repeat",
                     "repeat_count": repetitions,
                     "steps": [
-                        {"type": "work", "duration_seconds": work_seconds, "target": {"kind": "pace", "zone": "interval", "rpe": 8}},
+                        {"type": "work", "duration_seconds": work_seconds, "target": {"kind": "pace", "zone": focus_zone or "interval", "rpe": 8}},
                         {"type": "recovery", "duration_seconds": per_repeat - work_seconds, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
                     ],
                 },
@@ -185,7 +214,7 @@ def _workout_payload(
             "coach_note": "節奏維持平順，以能穩定完成全程為原則。",
             "steps": [
                 {"type": "warmup", "duration_seconds": warmup_seconds, "target": {"kind": "rpe", "rpe": 3}},
-                {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": "threshold", "rpe": 7}},
+                {"type": "work", "duration_seconds": work_duration_seconds, "target": {"kind": "pace", "zone": focus_zone or "threshold", "rpe": 7}},
                 {"type": "cooldown", "duration_seconds": cooldown_seconds, "target": {"kind": "rpe", "rpe": 2}},
             ],
         }
@@ -210,7 +239,7 @@ def _workout_payload(
                     "type": "repeat",
                     "repeat_count": 4,
                     "steps": [
-                        {"type": "hill", "duration_seconds": hill_seconds, "target": {"kind": "rpe", "rpe": 8}},
+                        {"type": "hill", "duration_seconds": hill_seconds, "target": {"kind": "rpe", "zone": focus_zone or "rpe_only", "rpe": 8}},
                         {"type": "recovery", "duration_seconds": per_repeat - hill_seconds, "target": {"kind": "pace", "zone": "easy", "rpe": 3}},
                     ],
                 },

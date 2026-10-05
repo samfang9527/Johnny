@@ -290,6 +290,7 @@ def _workout_payload_schema() -> dict[str, Any]:
                     "rest",
                     "strength",
                     "cross_training",
+                    "race",
                 ],
             },
             "purpose": {"type": "string"},
@@ -307,6 +308,9 @@ def _workout_payload_schema() -> dict[str, Any]:
             "coach_note": {"type": ["string", "null"]},
             "steps": {"type": "array", "items": _workout_step_schema(depth=0)},
             "status": {"type": "string", "enum": ["planned", "adjusted", "completed", "skipped"]},
+            "race_goal_id": {"type": ["string", "null"]},
+            "race_name": {"type": ["string", "null"]},
+            "race_priority": {"type": ["string", "null"], "enum": ["primary", "secondary", "tune_up", None]},
         },
         required=[
             "id",
@@ -321,6 +325,9 @@ def _workout_payload_schema() -> dict[str, Any]:
             "coach_note",
             "steps",
             "status",
+            "race_goal_id",
+            "race_name",
+            "race_priority",
         ],
     )
 

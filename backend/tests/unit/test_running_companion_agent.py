@@ -5,6 +5,39 @@ import pytest
 from src.application.agent_runtime import FakeModelGateway, RunningCompanionAgent
 from src.application.agent_tools import AgentToolRegistry
 from src.domain.agent_runtime import AgentContextSource, AgentRun, AgentRunStep, ModelResponse, TokenUsage, ToolCallRequest
+from src.infrastructure.llm.local_gateway import _plan_arguments
+
+
+def test_local_plan_output_keeps_race_distance_and_default_effort() -> None:
+    skeleton = {
+        "starts_on": "2027-01-01", "ends_on": "2027-01-07",
+        "phase_segments": [{"phase": "maintenance", "starts_on": "2027-01-01", "ends_on": "2027-01-07"}],
+        "workouts": [
+            {
+                "scheduled_for": "2027-01-03", "workout_type": "race", "phase": "maintenance",
+                "planned_duration_minutes": None, "planned_distance_meters": 5_000,
+                "race_goal_id": "tune-1", "race_name": "Park 5K", "race_priority": "tune_up",
+            },
+            {
+                "scheduled_for": "2027-01-06", "workout_type": "race", "phase": "maintenance",
+                "planned_duration_minutes": None, "planned_distance_meters": 10_000,
+                "race_goal_id": "secondary-1", "race_name": "City 10K", "race_priority": "secondary",
+            },
+            {
+                "scheduled_for": "2027-01-07", "workout_type": "race", "phase": "maintenance",
+                "planned_duration_minutes": None, "planned_distance_meters": 21_097,
+                "race_goal_id": "target-1", "race_name": "Goal Half", "race_priority": "primary",
+                "race_goal_intent": "complete", "is_target_race": True,
+            },
+        ],
+    }
+    output = _plan_arguments({"plan_skeleton": skeleton})
+    tune, secondary, target = output["workouts"]
+
+    assert (tune["race_goal_id"], tune["planned_duration_minutes"], tune["steps"][0]["distance_meters"]) == ("tune-1", None, 5_000)
+    assert tune["steps"][0]["target"]["rpe"] == 6
+    assert secondary["steps"][0]["target"]["rpe"] == 8
+    assert target["steps"][0]["target"]["rpe"] == 6
 
 
 class FakeRunStore:
@@ -186,7 +219,8 @@ def test_generation_hr_target_numeric_contract_and_model_repair(rpe, bpm):
 
     skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, current_weekly_mileage_km=25, experience_level="intermediate")
     arguments = _fallback_training_plan_arguments({"plan_skeleton": _skeleton_payload(skeleton)})
-    arguments["workouts"][0]["steps"][1]["steps"][0]["target"] = {"kind": "heart_rate", "heart_rate_zone": "threshold", "heart_rate_range_bpm": bpm, "rpe": rpe}
+    focus_zone = arguments["workouts"][0]["steps"][1]["steps"][0]["target"]["zone"]
+    arguments["workouts"][0]["steps"][1]["steps"][0]["target"] = {"kind": "heart_rate", "zone": focus_zone, "heart_rate_zone": "threshold", "heart_rate_range_bpm": bpm, "rpe": rpe}
     store = FakeTrainingPlanStore(None)
     response = ModelResponse(content="Generated", tool_calls=(ToolCallRequest(tool_name="createTrainingPlan", arguments=arguments),))
     class Gateway(FakeModelGateway):
