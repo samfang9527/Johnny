@@ -40,6 +40,8 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
         "max_hard_sessions_per_week": 1,
         "unit_preference": "metric",
         "threshold_pace_seconds_per_km": None,
+        "resting_heart_rate_bpm": None,
+        "max_heart_rate_bpm": None,
         "training_preferences": {"surface": "road"},
         "injury_status": "recent",
         "injury_areas": ["calf", "quad"],
@@ -95,6 +97,48 @@ def test_athlete_profile_route_preserves_hidden_training_preferences_on_save() -
     assert response.status_code == 200
     assert response.json()["data"]["training_preferences"] == {"surface": "trail", "coach_note": "preserve me"}
     assert response.json()["data"]["preferred_training_days"] == []
+
+
+def test_athlete_profile_heart_rate_settings_round_trip_and_clear() -> None:
+    client = _client()
+    data = {
+        "timezone": "Asia/Taipei",
+        "current_weekly_mileage_km": 25,
+        "preferred_training_days": ["tuesday", "sunday"],
+        "preferred_long_run_day": "sunday",
+        "max_runs_per_week": 3,
+        "resting_heart_rate_bpm": 52,
+        "max_heart_rate_bpm": 188,
+    }
+    path = "/api/v1/athlete/profile"
+    headers = {"X-Johnny-User-Id": "hr-athlete"}
+    saved = client.put(path, headers=headers, json=data)
+    assert saved.status_code == 200
+    assert saved.json()["data"]["resting_heart_rate_bpm"] == 52
+    assert saved.json()["data"]["max_heart_rate_bpm"] == 188
+    assert client.get(path, headers=headers).json()["data"]["max_heart_rate_bpm"] == 188
+
+    cleared = client.put(path, headers=headers, json={**data, "max_heart_rate_bpm": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["resting_heart_rate_bpm"] == 52
+    assert cleared.json()["data"]["max_heart_rate_bpm"] is None
+
+
+def test_athlete_profile_rejects_reversed_hr_pair_but_accepts_partial_pair() -> None:
+    client = _client()
+    data = {
+        "timezone": "Asia/Taipei",
+        "current_weekly_mileage_km": 25,
+        "preferred_training_days": ["tuesday", "sunday"],
+        "preferred_long_run_day": "sunday",
+        "max_runs_per_week": 3,
+        "resting_heart_rate_bpm": 80,
+        "max_heart_rate_bpm": 60,
+    }
+    path = "/api/v1/athlete/profile"
+    headers = {"X-Johnny-User-Id": "hr-athlete"}
+    assert client.put(path, headers=headers, json=data).status_code == 422
+    assert client.put(path, headers=headers, json={**data, "max_heart_rate_bpm": None}).status_code == 200
 
 
 def test_athlete_profile_route_rejects_legacy_unknown_and_other_injury_without_notes() -> None:

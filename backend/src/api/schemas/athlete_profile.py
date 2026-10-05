@@ -17,6 +17,8 @@ class AthleteProfileRequest(BaseModel):
     max_hard_sessions_per_week: int = Field(default=2, ge=0, le=2)
     unit_preference: Literal["metric", "imperial"] = "metric"
     threshold_pace_seconds_per_km: int | None = Field(default=None, ge=120, le=900)
+    resting_heart_rate_bpm: int | None = Field(default=None, gt=0)
+    max_heart_rate_bpm: int | None = Field(default=None, gt=0)
     training_preferences: dict = Field(default_factory=dict)
     injury_status: Literal["none", "current", "recent", "recurring"] = "none"
     injury_areas: list[Literal["knee", "calf", "shin", "ankle", "foot", "hamstring", "quad", "hip", "back", "other"]] = Field(
@@ -28,6 +30,12 @@ class AthleteProfileRequest(BaseModel):
     def validate_injury_notes(self) -> AthleteProfileRequest:
         if "other" in self.injury_areas and not (self.injury_notes or "").strip():
             raise ValueError("other injury area requires injury notes")
+        if (
+            self.resting_heart_rate_bpm is not None
+            and self.max_heart_rate_bpm is not None
+            and self.max_heart_rate_bpm <= self.resting_heart_rate_bpm
+        ):
+            raise ValueError("maximum heart rate must exceed resting heart rate")
         return self
 
 

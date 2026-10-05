@@ -514,6 +514,8 @@ def _profile_payload(profile) -> dict | None:
         "max_hard_sessions_per_week": profile.preferences.max_hard_sessions_per_week,
         "unit_preference": profile.preferences.unit_preference,
         "training_preferences": dict(profile.preferences.training_preferences),
+        "resting_heart_rate_bpm": profile.preferences.training_preferences.get("resting_heart_rate_bpm"),
+        "max_heart_rate_bpm": profile.preferences.training_preferences.get("max_heart_rate_bpm"),
         "injury_status": profile.preferences.injury_status,
         "injury_areas": list(profile.preferences.injury_areas),
         "injury_notes": profile.preferences.injury_notes,

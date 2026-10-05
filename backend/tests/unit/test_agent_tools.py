@@ -468,6 +468,16 @@ def test_athlete_context_tool_returns_profile_and_race_goals_without_domain_obje
     assert all(not isinstance(value, AthleteProfile) for value in payload.values())
 
 
+def test_athlete_context_serializes_hr_settings_for_trusted_target_policy() -> None:
+    profile = _profile(training_preferences={"resting_heart_rate_bpm": 52, "max_heart_rate_bpm": 188})
+    tool = AthleteContextTool(profiles=FakeAthleteProfileStore(profile), race_goals=FakeRaceGoalStore(()))
+
+    payload = tool.run(user_id="user-1", arguments={})
+
+    assert payload["profile"]["resting_heart_rate_bpm"] == 52
+    assert payload["profile"]["max_heart_rate_bpm"] == 188
+
+
 def test_athlete_context_tool_lists_all_future_races_and_scopes_an_explicit_race_to_its_owner() -> None:
     past_race = replace(_goal(), id="past-race", race_date=date(2027, 1, 1))
     future_secondary = replace(_goal(), id="future-secondary", race_date=date(2027, 2, 7), priority="secondary")

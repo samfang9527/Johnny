@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiNotFoundError
@@ -40,6 +40,17 @@ def save_profile(
             training_preferences.pop("threshold_pace_seconds_per_km", None)
         else:
             training_preferences["threshold_pace_seconds_per_km"] = payload.threshold_pace_seconds_per_km
+    for field_name in ("resting_heart_rate_bpm", "max_heart_rate_bpm"):
+        if field_name in payload.model_fields_set:
+            value = getattr(payload, field_name)
+            if value is None:
+                training_preferences.pop(field_name, None)
+            else:
+                training_preferences[field_name] = value
+    resting_hr = _heart_rate_setting(training_preferences, "resting_heart_rate_bpm")
+    max_hr = _heart_rate_setting(training_preferences, "max_heart_rate_bpm")
+    if resting_hr is not None and max_hr is not None and max_hr <= resting_hr:
+        raise HTTPException(status_code=422, detail="maximum heart rate must exceed resting heart rate")
 
     profile = AthleteProfile.create(
         user_id=current_user.id,
@@ -77,8 +88,15 @@ def _profile_response(profile: AthleteProfile) -> AthleteProfileResponse:
         max_hard_sessions_per_week=profile.preferences.max_hard_sessions_per_week,
         unit_preference=profile.preferences.unit_preference,
         threshold_pace_seconds_per_km=threshold_pace,
+        resting_heart_rate_bpm=_heart_rate_setting(profile.preferences.training_preferences, "resting_heart_rate_bpm"),
+        max_heart_rate_bpm=_heart_rate_setting(profile.preferences.training_preferences, "max_heart_rate_bpm"),
         training_preferences=profile.preferences.training_preferences,
         injury_status=profile.preferences.injury_status,
         injury_areas=list(profile.preferences.injury_areas),
         injury_notes=profile.preferences.injury_notes,
     )
+
+
+def _heart_rate_setting(training_preferences: dict, name: str) -> int | None:
+    value = training_preferences.get(name)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
