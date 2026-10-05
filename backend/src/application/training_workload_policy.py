@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 RUNNING_SPORTS = frozenset({"run", "running", "trail_run", "trail_running", "virtual_run", "treadmill_run"})
-POLICY_VERSION = "race-workload-v1"
+POLICY_VERSION = "race-workload-v2"
 
 
 @dataclass(frozen=True)

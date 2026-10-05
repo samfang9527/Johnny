@@ -121,7 +121,7 @@ def build_plan_skeleton(
     if plan_type not in {"maintenance", "race"}:
         raise ValueError(f"unsupported plan type: {plan_type}")
 
-    phase_segments = _build_phase_segments(starts_on, ends_on, plan_type, race_date)
+    phase_segments = _build_phase_segments(starts_on, ends_on, plan_type, race_date, race_distance_meters)
     capacity = capacity_snapshot or derive_capacity_snapshot(
         profile={"current_weekly_mileage_km": current_weekly_mileage_km}, activities=(), anchor=starts_on,
     )
@@ -185,12 +185,14 @@ def build_plan_skeleton(
                 continue
             if not _is_safely_spaced(scheduled_for, hard_dates):
                 continue
-
-            quality_types = QUALITY_WORKOUT_TYPES
-            if prescription.weeks[week_index].terrain_focus:
-                quality_types = ("hill",)
-            elif plan_type == "race" and race_distance_meters is not None:
-                quality_types = ("interval", "hill") if race_distance_meters <= 10_000 else ("tempo", "hill")
+            phase = phase_by_day[scheduled_for]
+            if phase in {"taper", "race"}:
+                continue
+            if phase == "base" and plan_type == "race" and week_index % 2:
+                continue
+            quality_types = _quality_types_for_phase(
+                phase, race_distance_meters, terrain_focus=prescription.weeks[week_index].terrain_focus,
+            )
             workout_type_by_date[scheduled_for] = quality_types[quality_index % len(quality_types)]
             quality_index += 1
             weekly_hard_session_count += 1
@@ -205,6 +207,7 @@ def build_plan_skeleton(
                     phase=phase_by_day[scheduled_for],
                     planned_duration_minutes=0,
                     planned_distance_meters=None,
+                    focus_zone=_focus_zone_for_workout(workout_type, phase_by_day[scheduled_for], race_distance_meters),
                 )
             )
 
@@ -233,12 +236,16 @@ def build_plan_skeleton(
             else:
                 duration = each + int(ordinary_index < extra)
                 ordinary_index += 1
-            allocated.append(SkeletonWorkout(workout.scheduled_for, workout.workout_type, workout.phase, duration, None))
+            allocated.append(replace(workout, planned_duration_minutes=duration))
         weekly_totals.append(sum(workout.planned_duration_minutes or 0 for workout in allocated if workout.scheduled_for in scheduled_days))
         weekly_longs.append(long_minutes)
     allocated, race_schedule_constrained, race_conflict = _reserve_race_workouts(
         allocated, races, starts_on=starts_on, ends_on=ends_on, max_runs_per_week=max_runs_per_week,
         phase_by_day=phase_by_day,
+    )
+    allocated, hard_session_conflict = _adjust_training_around_races(
+        allocated, starts_on=starts_on, prescription=prescription,
+        max_runs_per_week=max_runs_per_week, hard_session_limit=hard_session_limit,
     )
     weekly_totals = [
         sum(workout.planned_duration_minutes or 0 for workout in allocated if week_start <= workout.scheduled_for <= min(week_start + timedelta(days=6), ends_on))
@@ -266,6 +273,8 @@ def build_plan_skeleton(
         extra_factors.append("constrained_schedule")
     if race_conflict:
         extra_factors.append("race_conflict")
+    if hard_session_conflict:
+        extra_factors.append("hard_session_capacity")
     if extra_factors:
         actual_assessment = replace(
             actual_assessment,
@@ -331,6 +340,89 @@ def _reserve_race_workouts(
         if excess > 0:
             constrained = True
     return sorted(result, key=lambda workout: (workout.scheduled_for, workout.race_goal_id or "")), constrained, conflict
+
+
+def _quality_types_for_phase(phase: str, race_distance_meters: int | None, *, terrain_focus: bool) -> tuple[str, ...]:
+    if terrain_focus:
+        return ("hill",)
+    if phase == "maintenance":
+        return QUALITY_WORKOUT_TYPES
+    short = race_distance_meters is not None and race_distance_meters <= 10_000
+    if phase == "base":
+        return ("tempo",)
+    if phase == "build":
+        return ("interval", "hill") if short else ("tempo", "hill")
+    if phase == "peak":
+        return ("interval", "tempo") if short else ("tempo",)
+    return ()
+
+
+def _focus_zone_for_workout(workout_type: str, phase: str, race_distance_meters: int | None) -> str | None:
+    if workout_type == "interval":
+        return "interval"
+    if workout_type == "tempo":
+        return "marathon" if phase == "peak" and race_distance_meters is not None and race_distance_meters >= 21_097 else "threshold"
+    if workout_type == "hill":
+        return "rpe_only"
+    return None
+
+
+def _adjust_training_around_races(
+    workouts: Sequence[SkeletonWorkout],
+    *,
+    starts_on: date,
+    prescription: WorkloadPrescription,
+    max_runs_per_week: int,
+    hard_session_limit: int,
+) -> tuple[list[SkeletonWorkout], bool]:
+    events = [workout for workout in workouts if workout.workout_type == "race"]
+    adjusted: list[SkeletonWorkout] = []
+    for workout in workouts:
+        if workout.workout_type == "race":
+            adjusted.append(workout)
+            continue
+        duration = workout.planned_duration_minutes
+        workout_type = workout.workout_type
+        focus_zone = workout.focus_zone
+        week_index = (workout.scheduled_for - starts_on).days // 7
+        if workout.phase == "taper":
+            if prescription.weeks[week_index].phase != "taper":
+                duration = max(1, round((duration or 0) * .65))
+            if workout_type in QUALITY_WORKOUT_TYPES:
+                workout_type, focus_zone = "easy_run", None
+        for event in events:
+            before, after = _supporting_race_window(event)
+            offset = (workout.scheduled_for - event.scheduled_for).days
+            if -before <= offset <= after:
+                if workout_type in HARD_SESSION_WORKOUT_TYPES:
+                    workout_type, focus_zone = "easy_run", None
+                duration = min(duration or 30, 30)
+        adjusted.append(replace(workout, workout_type=workout_type, planned_duration_minutes=duration, focus_zone=focus_zone))
+    conflict = False
+    result = list(adjusted)
+    for week_index, week in enumerate(prescription.weeks):
+        week_start = starts_on + timedelta(weeks=week_index)
+        week_end = week_start + timedelta(days=6)
+        weekly = [workout for workout in result if week_start <= workout.scheduled_for <= week_end]
+        race_count = sum(workout.workout_type == "race" for workout in weekly)
+        if race_count > hard_session_limit:
+            conflict = True
+        extra_hard = max(0, sum(workout.workout_type in HARD_SESSION_WORKOUT_TYPES for workout in weekly) + race_count - hard_session_limit)
+        for workout in sorted(
+            (item for item in weekly if item.workout_type in HARD_SESSION_WORKOUT_TYPES),
+            key=lambda item: (item.workout_type == "long_run", item.scheduled_for),
+        )[:extra_hard]:
+            result[result.index(workout)] = replace(workout, workout_type="easy_run", focus_zone=None, planned_duration_minutes=min(workout.planned_duration_minutes or 30, 30))
+    return result, conflict
+
+
+def _supporting_race_window(event: SkeletonWorkout) -> tuple[int, int]:
+    if event.is_target_race:
+        return (0, 0)
+    long_race = (event.planned_distance_meters or 0) >= 21_097
+    if event.race_priority == "tune_up":
+        return (2, 3) if long_race else (1, 1)
+    return (3, 5) if long_race else (2, 2)
 
 
 def validate_generated_plan(plan: TrainingPlan, skeleton: PlanSkeleton) -> list[str]:
@@ -672,6 +764,7 @@ def _build_phase_segments(
     ends_on: date,
     plan_type: str,
     race_date: date | None,
+    race_distance_meters: int | None = None,
 ) -> list[dict]:
     if plan_type == "maintenance":
         return [_phase_segment("maintenance", starts_on, ends_on)]
@@ -682,7 +775,8 @@ def _build_phase_segments(
     race_starts_on = race_date if race_is_inside_horizon else None
     taper_starts_on = None
     if race_starts_on is not None and race_starts_on > starts_on:
-        taper_starts_on = max(starts_on, race_starts_on - timedelta(days=7))
+        taper_days = 14 if race_distance_meters is not None and race_distance_meters >= 21_097 else 7
+        taper_starts_on = max(starts_on, race_starts_on - timedelta(days=taper_days))
 
     development_ends_on = (taper_starts_on or race_starts_on or date.fromordinal(ends_on.toordinal() + 1)) - timedelta(days=1)
     segments = _development_phase_segments(starts_on, development_ends_on)

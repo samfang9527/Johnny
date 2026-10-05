@@ -215,6 +215,50 @@ def test_off_day_race_on_phase_boundary_uses_its_calendar_phase() -> None:
     assert race.phase == "build"
 
 
+def test_race_plan_changes_quality_mix_and_focus_across_phases() -> None:
+    target_day = date(2027, 4, 25)
+    target = PlanRace("goal", "40K", target_day, 40_000, "primary", True, "complete")
+    skeleton = _skeleton(
+        plan_type="race", race_date=target_day, ends_on=target_day,
+        race_distance_meters=40_000, races=(target,),
+        max_runs_per_week=5,
+        preferred_training_days=("tuesday", "wednesday", "thursday", "friday", "sunday"),
+    )
+    base_quality = [workout for workout in skeleton.workouts if workout.phase == "base" and workout.workout_type in {"tempo", "interval", "hill"}]
+    peak_quality = [workout for workout in skeleton.workouts if workout.phase == "peak" and workout.workout_type in {"tempo", "interval", "hill"}]
+
+    assert not any(workout.workout_type == "interval" for workout in base_quality)
+    assert peak_quality
+    assert all(workout.workout_type in {"tempo", "hill"} for workout in peak_quality)
+    assert all(workout.focus_zone == "marathon" for workout in peak_quality if workout.workout_type == "tempo")
+    assert not any(workout.workout_type in {"tempo", "interval", "hill"} for workout in skeleton.workouts if workout.phase == "taper")
+
+
+def test_long_target_taper_starts_fourteen_days_before_race_and_reduces_midweek_load() -> None:
+    target_day = date(2027, 3, 3)
+    target = PlanRace("goal", "Half", target_day, 21_097, "primary", True, "perform")
+    skeleton = _skeleton(
+        starts_on=date(2027, 1, 4), ends_on=target_day,
+        plan_type="race", race_date=target_day, race_distance_meters=21_097,
+        races=(target,), max_runs_per_week=5,
+    )
+    taper_start = target_day - timedelta(days=14)
+    assert next(segment["starts_on"] for segment in skeleton.phase_segments if segment["phase"] == "taper") == taper_start.isoformat()
+    assert all(workout.workout_type not in {"tempo", "interval", "hill"} for workout in skeleton.workouts if taper_start <= workout.scheduled_for < target_day)
+    assert sum(workout.planned_duration_minutes or 0 for workout in skeleton.workouts if taper_start <= workout.scheduled_for <= taper_start + timedelta(days=6)) < sum(workout.planned_duration_minutes or 0 for workout in skeleton.workouts if taper_start - timedelta(days=7) <= workout.scheduled_for < taper_start)
+    assert skeleton.workload_prescription.weeks[-1].target_minutes == sum(workout.planned_duration_minutes or 0 for workout in skeleton.workouts if workout.scheduled_for >= skeleton.starts_on + timedelta(weeks=len(skeleton.workload_prescription.weeks)-1))
+
+
+def test_supporting_race_protects_local_window_and_never_counts_as_training_minutes() -> None:
+    event = PlanRace("support", "Sunday Half", date(2027, 1, 17), 21_097, "secondary", False, "perform")
+    skeleton = _skeleton(races=(event,), max_runs_per_week=5)
+    protected = [workout for workout in skeleton.workouts if workout.workout_type != "race" and -3 <= (workout.scheduled_for - event.race_date).days <= 5]
+
+    assert all(workout.workout_type not in {"long_run", "tempo", "interval", "hill"} for workout in protected)
+    assert all((workout.planned_duration_minutes or 0) <= 30 for workout in protected)
+    assert all(week.target_minutes == sum(workout.planned_duration_minutes or 0 for workout in skeleton.workouts if (workout.scheduled_for - skeleton.starts_on).days // 7 == week.week_index) for week in skeleton.workload_prescription.weeks)
+
+
 def test_build_plan_skeleton_creates_four_week_maintenance_block() -> None:
     skeleton = _skeleton()
 

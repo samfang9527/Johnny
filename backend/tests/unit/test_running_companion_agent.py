@@ -766,7 +766,7 @@ def test_training_plan_generation_preloads_planning_context_and_pace_profile() -
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["phase_segments"] == skeleton["phase_segments"]
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["skeleton_workouts"] == skeleton["workouts"]
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["race_id"] == "race-1"
-    assert model.requests[0].context["workload_policy_version"] == "race-workload-v1"
+    assert model.requests[0].context["workload_policy_version"] == "race-workload-v2"
     assert model.requests[0].context["workload_prescription"]["weeks"]
     assert plan_tool.calls[0]["arguments"]["trusted_context"]["preparation_assessment"] == model.requests[0].context["preparation_assessment"]
 
