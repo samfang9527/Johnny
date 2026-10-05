@@ -20,6 +20,7 @@ from src.application.agent_tools import (
 )
 from src.application.training_targets import build_pace_profile
 from src.application.training_plan_generation import build_plan_skeleton
+from src.application.agent_tools import _plan_metadata
 from src.application.training_analytics import BuildTodayContextHandler
 from src.application.interfaces.training_plan_store import TrainingPlanStore
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
@@ -29,6 +30,27 @@ from src.domain.training_plan import DomainValidationError, TrainingPlan, Workou
 
 
 ANCHOR = date(2027, 1, 28)
+
+
+def test_generated_plan_metadata_uses_trusted_assessment_and_private_evidence():
+    skeleton = {"phase_segments": []}
+    assessment = {"status": "gap", "factors": ["weekly_volume"], "explanation_zh": "跑量不足", "policy_version": "race-workload-v1"}
+    metadata = _plan_metadata(arguments={"metadata": {"preparation_assessment": {"status": "on_track"}, "internal": {"secret": "model"}}}, trusted_context={"plan_skeleton": skeleton, "preparation_assessment": assessment, "workload_policy_version": "race-workload-v1", "capacity_snapshot": {"source": "activities", "activity_count": 8}})
+    assert metadata["preparation_assessment"] == assessment
+    assert metadata["workload_policy_version"] == "race-workload-v1"
+    assert metadata["internal"]["capacity_snapshot"]["activity_count"] == 8
+    assert "secret" not in metadata["internal"]
+
+
+def test_plan_api_response_hides_private_policy_metadata_and_handles_legacy_plan():
+    from src.api.routes.training_plans import _plan_response
+
+    assessment = {"status": "gap", "factors": ["weekly_volume"], "explanation_zh": "跑量不足", "policy_version": "race-workload-v1"}
+    plan = TrainingPlan.create(user_id="runner", name="計畫", starts_on=date(2027, 1, 1), ends_on=date(2027, 1, 31), metadata={"preparation_assessment": assessment, "internal": {"source_activity_id": "private"}})
+    response = _plan_response(plan).model_dump()
+    assert response["preparation_assessment"] == assessment
+    assert "internal" not in response["metadata"]
+    assert _plan_response(replace(plan, metadata={})).preparation_assessment is None
 
 
 class FakeAthleteProfileStore:

@@ -422,6 +422,12 @@ def _plan_metadata(*, arguments: dict, trusted_context: dict) -> dict:
     for key in ("plan_series_id", "previous_plan_id", "version", "continuity_summary"):
         if key in trusted_context:
             metadata[key] = trusted_context[key]
+    if trusted_context.get("workload_policy_version"):
+        metadata["workload_policy_version"] = trusted_context["workload_policy_version"]
+    if isinstance(trusted_context.get("preparation_assessment"), dict):
+        metadata["preparation_assessment"] = dict(trusted_context["preparation_assessment"])
+    if isinstance(trusted_context.get("capacity_snapshot"), dict):
+        metadata["internal"] = {"capacity_snapshot": dict(trusted_context["capacity_snapshot"])}
     metadata["generation_mode"] = trusted_context.get("generation_mode", "generated")
     return metadata
 

@@ -103,4 +103,5 @@ class TrainingPlanResponse(BaseModel):
     starts_on: date
     ends_on: date
     metadata: dict[str, Any] = Field(default_factory=dict)
+    preparation_assessment: dict[str, Any] | None = None
     workouts: list[WorkoutResponse]

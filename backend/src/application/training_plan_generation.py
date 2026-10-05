@@ -232,36 +232,6 @@ def build_plan_skeleton(
     )
 
 
-def _planned_duration(
-    workout_type: str,
-    phase: str,
-    week_index: int,
-    *,
-    max_runs_per_week: int,
-    plan_type: str,
-    mileage: float | None,
-    experience: str | None,
-    race_distance: int | None,
-    injury_status: str,
-) -> int:
-    # Six minutes/km is a load-accounting conversion, never a pace Target.
-    if mileage is None or mileage <= 0:
-        return 30 if workout_type == "long_run" else 20
-    baseline_factor = 0.9 if experience in {"intermediate", "advanced"} else 0.75
-    budget = min(360, mileage * 6 * baseline_factor)
-    if injury_status in {"current", "recent"}:
-        budget *= 0.8
-    cycle = (1.0, 1.025, 1.05, 0.85)[week_index % 4]
-    if plan_type == "race":
-        cycle = min(1.10, 1 + 0.02 * week_index) * (0.85 if week_index % 4 == 3 else 1)
-    cycle *= {"taper": 0.65, "race": 0.5}.get(phase, 1.0)
-    long_weight = 1.5
-    if plan_type == "race" and race_distance is not None:
-        long_weight = 1.3 if race_distance <= 10_000 else 1.6 if race_distance <= 21_100 else 1.8
-    share = (long_weight if workout_type == "long_run" else 1) / (max_runs_per_week - 1 + long_weight)
-    return max(1, min(120 if workout_type == "long_run" else 60, int(budget * cycle * share)))
-
-
 def validate_generated_plan(plan: TrainingPlan, skeleton: PlanSkeleton) -> list[str]:
     """Return deterministic completeness errors for a generated plan."""
     errors: list[str] = []
@@ -302,6 +272,8 @@ def validate_generated_plan(plan: TrainingPlan, skeleton: PlanSkeleton) -> list[
                 errors.append(f"week {week_index} workout status must be planned")
             if not _executable_load_within_skeleton(workout, expected_workout):
                 errors.append(f"week {week_index} workout executable load exceeds the skeleton")
+            elif plan.metadata.get("workload_policy_version") and not _executable_load_meets_floor(workout, expected_workout):
+                errors.append(f"week {week_index} workout executable load is below the skeleton")
             if workout.workout_type in QUALITY_WORKOUT_TYPES and not _has_required_key_session_steps(workout):
                 errors.append(f"week {week_index} {workout.workout_type} workout is missing required steps or numeric Targets")
 
@@ -325,9 +297,9 @@ def repair_generated_plan(
         week_start = skeleton.starts_on + timedelta(weeks=week_index)
         week_end = min(week_start + timedelta(days=6), skeleton.ends_on)
         original_week = [w for w in preserved_workouts if week_start <= w.scheduled_for <= week_end]
-        if _week_is_complete(original_week, expected_workouts):
+        if _week_is_complete(original_week, expected_workouts, enforce_floor=bool(plan.metadata.get("workload_policy_version"))):
             generated_workouts = original_week
-        if _week_is_complete(generated_workouts, expected_workouts):
+        if _week_is_complete(generated_workouts, expected_workouts, enforce_floor=bool(plan.metadata.get("workload_policy_version"))):
             repaired_workouts.extend(generated_workouts)
             continue
 
@@ -423,7 +395,7 @@ def _plan_workouts_for_week(plan: TrainingPlan, skeleton: PlanSkeleton, week_ind
     return [workout for workout in plan.workouts if week_start <= workout.scheduled_for <= week_ends_on]
 
 
-def _week_is_complete(generated_workouts: Sequence[Workout], expected_workouts: Sequence[SkeletonWorkout]) -> bool:
+def _week_is_complete(generated_workouts: Sequence[Workout], expected_workouts: Sequence[SkeletonWorkout], *, enforce_floor: bool = False) -> bool:
     if len(generated_workouts) != len(expected_workouts):
         return False
     if sorted(workout.scheduled_for for workout in generated_workouts) != sorted(
@@ -438,6 +410,7 @@ def _week_is_complete(generated_workouts: Sequence[Workout], expected_workouts: 
         and workout.planned_distance_meters == expected_by_date[workout.scheduled_for].planned_distance_meters
         and workout.status == "planned"
         and _executable_load_within_skeleton(workout, expected_by_date[workout.scheduled_for])
+        and (not enforce_floor or _executable_load_meets_floor(workout, expected_by_date[workout.scheduled_for]))
         and (workout.workout_type not in QUALITY_WORKOUT_TYPES or _has_required_key_session_steps(workout))
         for workout in generated_workouts
     )
@@ -460,6 +433,16 @@ def _executable_load_within_skeleton(workout: Workout, expected: SkeletonWorkout
     )
     # A fixed allowance covers integer-second rounding, not repeat-scaled slack.
     return sum(step_seconds(step) for step in workout.steps) <= budget + 30
+
+
+def _executable_load_meets_floor(workout: Workout, expected: SkeletonWorkout) -> bool:
+    if expected.planned_duration_minutes is None:
+        return True
+    def seconds(step: WorkoutStep) -> int:
+        if step.step_type == "repeat":
+            return int(step.repeat_count or 0) * sum(seconds(child) for child in step.steps)
+        return max(step.duration_seconds or 0, ((step.distance_meters or 0) * 600 + 999) // 1000)
+    return sum(seconds(step) for step in workout.steps) >= expected.planned_duration_minutes * 60 * .9
 
 
 def _has_required_key_session_steps(workout: Workout) -> bool:

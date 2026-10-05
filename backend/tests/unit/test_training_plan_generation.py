@@ -529,6 +529,19 @@ def test_validate_generated_plan_reports_interval_without_required_steps() -> No
     assert any("interval" in error and "required steps" in error for error in errors)
 
 
+def test_generated_workout_steps_must_cover_at_least_ninety_percent_of_duration() -> None:
+    from src.application.training_plan_generation import _template_steps
+    skeleton = _skeleton(max_hard_sessions_per_week=0)
+    workouts = tuple(replace(_complete_workout(workout), steps=_template_steps(workout.workout_type, workout.planned_duration_minutes)) for workout in skeleton.workouts)
+    first = workouts[0]
+    short = replace(first, steps=(WorkoutStep.create(step_type="free_run", distance_meters=1000),))
+    plan = replace(_generated_plan(skeleton, (short,) + workouts[1:]), metadata={"phase_segments": skeleton.phase_segments, "workload_policy_version": "race-workload-v1"})
+    assert any("executable load" in error for error in validate_generated_plan(plan, skeleton))
+    near = replace(first, steps=(WorkoutStep.create(step_type="free_run", distance_meters=round(first.planned_duration_minutes * 100 * .92)),))
+    plan = replace(_generated_plan(skeleton, (near,) + workouts[1:]), metadata={"phase_segments": skeleton.phase_segments, "workload_policy_version": "race-workload-v1"})
+    assert not any("executable load" in error for error in validate_generated_plan(plan, skeleton))
+
+
 @pytest.mark.parametrize(
     ("workout_type", "effort_step_type"),
     [("tempo", "work"), ("interval", "work"), ("hill", "hill")],

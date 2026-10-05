@@ -123,7 +123,7 @@ def test_incomplete_generation_gets_model_repair_then_preserves_original_week(se
     from src.application.training_plan_generation import build_plan_skeleton
 
     skeleton = build_plan_skeleton(starts_on=date(2027, 1, 4), ends_on=date(2027, 1, 31), plan_type="maintenance", race_date=None, preferred_training_days=(), preferred_long_run_day="sunday", max_runs_per_week=3, max_hard_sessions_per_week=0)
-    original = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "原本有效的訓練目的", "planned_duration_minutes": w.planned_duration_minutes} for w in skeleton.workouts[:3]]
+    original = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "原本有效的訓練目的", "planned_duration_minutes": w.planned_duration_minutes, "steps": [{"type": "free_run", "duration_seconds": w.planned_duration_minutes * 60, "target": {"kind": "rpe", "rpe": 3}}]} for w in skeleton.workouts[:3]]
     arguments = {"name": "Partial", "starts_on": "2027-01-04", "ends_on": "2027-01-31", "workouts": original}
     if second_output == "outside":
         arguments["workouts"] = [*original, {**original[0], "scheduled_for": "2027-02-01"}]
@@ -142,7 +142,7 @@ def test_incomplete_generation_gets_model_repair_then_preserves_original_week(se
     second_arguments = {**arguments, "workouts": []}
     second_arguments["name"] = "Repaired plan"
     if second_output == "complete":
-        second_arguments["workouts"] = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "修復後的訓練目的", "planned_duration_minutes": w.planned_duration_minutes} for w in skeleton.workouts]
+        second_arguments["workouts"] = [{"scheduled_for": w.scheduled_for.isoformat(), "workout_type": w.workout_type, "phase": w.phase, "purpose": "修復後的訓練目的", "planned_duration_minutes": w.planned_duration_minutes, "steps": [{"type": "free_run", "duration_seconds": w.planned_duration_minutes * 60, "target": {"kind": "rpe", "rpe": 3}}]} for w in skeleton.workouts]
     if second_output == "malformed":
         second_arguments["ends_on"] = "2026-01-01"
     second = ModelResponse(content="Repair", tool_calls=() if second_output in {"absent", "empty_name_absent"} else (ToolCallRequest(tool_name="createTrainingPlan", arguments=second_arguments),))

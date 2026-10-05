@@ -124,7 +124,8 @@ def _plan_response(plan: TrainingPlan) -> TrainingPlanResponse:
         status=plan.status,
         starts_on=plan.starts_on,
         ends_on=plan.ends_on,
-        metadata=plan.metadata,
+        metadata={key: value for key, value in plan.metadata.items() if key != "internal"},
+        preparation_assessment=plan.metadata.get("preparation_assessment") if isinstance(plan.metadata.get("preparation_assessment"), dict) else None,
         workouts=[
             WorkoutResponse(
                 id=workout.id,
