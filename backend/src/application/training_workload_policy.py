@@ -131,11 +131,12 @@ def build_workload_prescription(
         raise ValueError("invalid training window or run limit")
     injured = injury_status in {"current", "recent"}
     baseline = capacity.weekly_minutes
-    if baseline is None:
+    missing_baseline = baseline is None
+    if missing_baseline:
         baseline = max_runs_per_week * 20 + 10  # 20-minute ordinary runs and a 30-minute long run
     baseline = round(baseline * .8) if injured else baseline
-    long_anchor = capacity.recent_long_run_minutes or min(90, round(.4 * baseline))
-    long_cap = 180 if race is not None and 30_000 <= race.distance_meters <= 50_000 else 120
+    long_anchor = capacity.recent_long_run_minutes or (30 if missing_baseline else min(90, round(.4 * baseline)))
+    long_cap = 180 if race is not None and 30_000 <= race.distance_meters <= 50_000 else 90 if race is not None and race.distance_meters <= 10_000 else 120
     week_starts = []
     current = starts_on
     while current <= ends_on:
@@ -158,7 +159,7 @@ def build_workload_prescription(
             target = min(previous_target, baseline)
         else:
             development_number += 1
-            if injured:
+            if injured or missing_baseline:
                 target = baseline
             elif development_number == 1:
                 target = baseline
@@ -171,7 +172,7 @@ def build_workload_prescription(
         available_days = min(7, (ends_on - day).days + 1)
         if available_days < 7:
             target = round(target * available_days / 7)
-        long_minutes = min(round(long_anchor * 1.1), round(target * .5), long_cap)
+        long_minutes = min(30 if missing_baseline else round(long_anchor * 1.1), round(target * .5), long_cap)
         if phase == "race":
             long_minutes = min(long_minutes, 30)
         weeks.append(WorkloadWeek(index, target, long_minutes, phase, index in terrain_indexes))

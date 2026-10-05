@@ -209,15 +209,36 @@ def test_lower_mileage_beginner_keeps_conservative_aerobic_skeleton() -> None:
     assert not any(workout.workout_type in {"interval", "tempo", "hill"} for workout in skeleton.workouts)
 
 
-def test_mileage_experience_and_maintenance_cycle_determine_load() -> None:
+def test_mileage_not_experience_determines_starting_load() -> None:
     beginner = _skeleton(current_weekly_mileage_km=20, experience_level="beginner")
     experienced = _skeleton(current_weekly_mileage_km=40, experience_level="advanced")
     same_mileage = _skeleton(current_weekly_mileage_km=40, experience_level="beginner")
     total = lambda s: sum(w.planned_duration_minutes for w in s.workouts)
-    assert total(beginner) < total(same_mileage) < total(experienced)
+    assert total(beginner) < total(same_mileage) == total(experienced)
     weeks = [sum(w.planned_duration_minutes for w in experienced.workouts if (w.scheduled_for - experienced.starts_on).days // 7 == i) for i in range(4)]
     assert weeks[0] < weeks[1] < weeks[2]
     assert weeks[3] < weeks[0]
+
+
+def test_40km_three_day_plan_builds_beyond_old_long_run_and_reports_gap() -> None:
+    from src.application.training_workload_policy import RaceDemand
+
+    skeleton = _skeleton(
+        plan_type="race", race_date=date(2027, 4, 25), ends_on=date(2027, 4, 25),
+        race_distance_meters=40_000, current_weekly_mileage_km=25,
+        race_demand=RaceDemand(40_000, date(2027, 4, 25), None, None, None, "technical", None, "complete"),
+    )
+    assert max(workout.planned_duration_minutes for workout in skeleton.workouts if workout.workout_type == "long_run") > 70
+    assert skeleton.workload_prescription.assessment.status == "gap"
+    assert "weekly_volume" in skeleton.workload_prescription.assessment.factors
+
+
+def test_high_capacity_40km_plan_can_exceed_old_120_minute_ceiling() -> None:
+    from src.application.training_workload_policy import RaceDemand, CapacitySnapshot
+
+    capacity = CapacitySnapshot("activities", "high", 320, 53, 150, date(2026, 12, 1), date(2026, 12, 28), 12, ())
+    skeleton = _skeleton(plan_type="race", race_date=date(2027, 4, 25), ends_on=date(2027, 4, 25), race_distance_meters=40_000, current_weekly_mileage_km=53, capacity_snapshot=capacity, race_demand=RaceDemand(40_000, date(2027, 4, 25), None, None, None, None, None, "complete"))
+    assert max(workout.planned_duration_minutes for workout in skeleton.workouts if workout.workout_type == "long_run") > 120
 
 
 def test_race_distance_changes_key_sessions_and_long_run_progression() -> None:

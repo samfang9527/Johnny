@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 from math import ceil
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
 from src.domain.training_plan import (
@@ -21,6 +21,10 @@ from src.domain.training_plan_regeneration import (
     RaceStrategySelection,
     projection_window,
     select_race_strategy,
+)
+from src.application.training_workload_policy import (
+    CapacitySnapshot, RaceDemand, WorkloadPrescription, assess_preparation,
+    build_workload_prescription, derive_capacity_snapshot,
 )
 
 
@@ -52,6 +56,7 @@ class PlanSkeleton:
     ends_on: date
     phase_segments: list[dict]
     workouts: list[SkeletonWorkout]
+    workload_prescription: WorkloadPrescription | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,9 @@ def build_plan_skeleton(
     race_distance_meters: int | None = None,
     current_weekly_mileage_km: float | None = None,
     experience_level: str | None = None,
+    capacity_snapshot: CapacitySnapshot | None = None,
+    race_demand: RaceDemand | None = None,
+    prior_plan: Mapping[str, Any] | None = None,
 ) -> PlanSkeleton:
     if ends_on < starts_on:
         raise ValueError("plan end date cannot be before start date")
@@ -96,6 +104,19 @@ def build_plan_skeleton(
         raise ValueError(f"unsupported plan type: {plan_type}")
 
     phase_segments = _build_phase_segments(starts_on, ends_on, plan_type, race_date)
+    capacity = capacity_snapshot or derive_capacity_snapshot(
+        profile={"current_weekly_mileage_km": current_weekly_mileage_km}, activities=(), anchor=starts_on,
+    )
+    demand = race_demand or (
+        RaceDemand(race_distance_meters, race_date, None, None, None, None, None, None)
+        if race_date is not None and race_distance_meters is not None else None
+    )
+    prescription = build_workload_prescription(
+        capacity=capacity, race=demand, starts_on=starts_on, ends_on=ends_on,
+        phase_segments=phase_segments, max_runs_per_week=max_runs_per_week,
+        max_hard_sessions_per_week=max_hard_sessions_per_week,
+        injury_status=injury_status, prior_plan=prior_plan,
+    )
     phase_by_day = _phase_by_day(phase_segments)
     training_days = tuple(preferred_training_days) or DEFAULT_TRAINING_DAYS
     selected_days = _selected_training_days(training_days, preferred_long_run_day, max_runs_per_week)
@@ -104,12 +125,13 @@ def build_plan_skeleton(
         max_hard_sessions_per_week,
         injury_status,
     )
-    known_mileage = current_weekly_mileage_km is not None and current_weekly_mileage_km > 0
+    effective_mileage = capacity.weekly_distance_km or current_weekly_mileage_km
+    known_mileage = effective_mileage is not None and effective_mileage > 0
     quality_allowed = (
         known_mileage and injury_status == "none"
         and (
-            (current_weekly_mileage_km >= 20 and experience_level in {"intermediate", "advanced"})
-            or (current_weekly_mileage_km >= 40 and experience_level == "beginner")
+            (effective_mileage >= 20 and experience_level in {"intermediate", "advanced"})
+            or (effective_mileage >= 40 and experience_level == "beginner")
         )
     )
     aerobic_only = plan_type == "race" and (race_date is None or race_date > ends_on)
@@ -146,7 +168,7 @@ def build_plan_skeleton(
             if not _is_safely_spaced(scheduled_for, hard_dates):
                 continue
 
-            quality_types = QUALITY_WORKOUT_TYPES
+            quality_types = ("hill",) if prescription.weeks[week_index].terrain_focus else QUALITY_WORKOUT_TYPES
             if plan_type == "race" and race_distance_meters is not None:
                 quality_types = ("interval", "hill") if race_distance_meters <= 10_000 else ("tempo", "hill")
             workout_type_by_date[scheduled_for] = quality_types[quality_index % len(quality_types)]
@@ -156,27 +178,57 @@ def build_plan_skeleton(
 
         for scheduled_for in scheduled_days:
             workout_type = workout_type_by_date.get(scheduled_for, "easy_run")
-            duration = _planned_duration(
-                workout_type, phase_by_day[scheduled_for], week_index,
-                max_runs_per_week=max_runs_per_week, plan_type=plan_type,
-                mileage=current_weekly_mileage_km, experience=experience_level,
-                race_distance=race_distance_meters, injury_status=injury_status,
-            )
             workouts.append(
                 SkeletonWorkout(
                     scheduled_for=scheduled_for,
                     workout_type=workout_type,
                     phase=phase_by_day[scheduled_for],
-                    planned_duration_minutes=duration,
+                    planned_duration_minutes=0,
                     planned_distance_meters=None,
                 )
             )
 
+    # Allocate the complete weekly budget to its scheduled workouts, preserving
+    # the policy long-run cap and exact weekly totals.
+    allocated: list[SkeletonWorkout] = []
+    weekly_totals: list[int] = []
+    weekly_longs: list[int] = []
+    for week_index, (_, scheduled_days) in enumerate(weeks):
+        week_workouts = [workout for workout in workouts if workout.scheduled_for in scheduled_days]
+        if not week_workouts:
+            weekly_totals.append(0)
+            weekly_longs.append(0)
+            continue
+        budget = prescription.weeks[week_index].target_minutes
+        long_workout = next((workout for workout in week_workouts if workout.workout_type == "long_run"), None)
+        long_minutes = min(prescription.weeks[week_index].long_run_minutes, max(1, budget - len(week_workouts) + 1)) if long_workout else 0
+        ordinary_count = len(week_workouts) - int(long_workout is not None)
+        ordinary_budget = budget - long_minutes
+        each, extra = divmod(ordinary_budget, ordinary_count) if ordinary_count else (0, 0)
+        ordinary_index = 0
+        for workout in week_workouts:
+            if workout is long_workout:
+                duration = long_minutes
+            else:
+                duration = each + int(ordinary_index < extra)
+                ordinary_index += 1
+            allocated.append(SkeletonWorkout(workout.scheduled_for, workout.workout_type, workout.phase, duration, None))
+        weekly_totals.append(budget)
+        weekly_longs.append(long_minutes)
+    actual_assessment = assess_preparation(
+        capacity=capacity, race=demand, starts_on=starts_on, ends_on=ends_on,
+        weekly_minutes=[total for total, week in zip(weekly_totals, prescription.weeks) if week.phase not in {"taper", "race"}],
+        long_run_minutes=[minutes for minutes, week in zip(weekly_longs, prescription.weeks) if week.phase not in {"taper", "race"}],
+        terrain_session_count=sum(workout.workout_type == "hill" for workout in allocated),
+        policy_version=prescription.policy_version,
+    )
+    prescription = WorkloadPrescription(prescription.weeks, actual_assessment, prescription.policy_version)
     return PlanSkeleton(
         starts_on=starts_on,
         ends_on=ends_on,
         phase_segments=phase_segments,
-        workouts=workouts,
+        workouts=allocated,
+        workload_prescription=prescription,
     )
 
 
