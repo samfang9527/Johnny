@@ -17,6 +17,8 @@ export interface AthleteProfileResponse {
   max_hard_sessions_per_week?: number | null
   unit_preference?: 'metric' | 'imperial' | null
   threshold_pace_seconds_per_km?: number | null
+  resting_heart_rate_bpm?: number | null
+  max_heart_rate_bpm?: number | null
   training_preferences?: Record<string, unknown>
   injury_status?: 'none' | 'current' | 'recent' | 'recurring' | null
   injury_areas?: string[] | null
@@ -33,6 +35,8 @@ export interface AthleteProfileSavePayload {
   max_hard_sessions_per_week: number
   unit_preference: 'metric' | 'imperial'
   threshold_pace_seconds_per_km: number | null
+  resting_heart_rate_bpm: number | null
+  max_heart_rate_bpm: number | null
   injury_status: 'none' | 'current' | 'recent' | 'recurring'
   injury_areas: string[]
   injury_notes: string | null
@@ -218,6 +222,7 @@ export interface WorkoutTarget {
   paceRangeSecondsPerKm?: number[] | null
   heartRateRangeBpm?: number[] | null
   confidence?: WorkoutTargetConfidence | null
+  paceSource?: 'threshold_pace' | 'completed_race' | 'paired_easy_activities' | 'goal_time' | null
 }
 
 export interface WorkoutStep {
@@ -237,6 +242,9 @@ export interface WorkoutSummary {
   dateLabel: string
   scheduledFor?: string
   type: string
+  workoutType?: string
+  raceName?: string
+  racePriority?: 'primary' | 'secondary' | 'tune_up'
   purpose: string
   distance?: string
   duration?: string

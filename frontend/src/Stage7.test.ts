@@ -338,6 +338,48 @@ describe('Stage 7 frontend acceptance', () => {
     expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('RPE 8')
     expect(app.get('#workout-detail-title').text()).toBe('6 x 400m Intervals')
   })
+  it('shows each race workout with its event identity and distance', async () => {
+    const races = [
+      ['primary', 'Autumn Marathon', 42195],
+      ['secondary', 'Riverside Half', 21097],
+      ['tune_up', 'Park 10K', 10000],
+    ] as const
+    const app = await render([plan('race', { workouts: races.map(([priority, name, distance], index) => ({
+      ...workout(`race-${index}`, `2026-09-${27 + index}`), workout_type: 'race', race_goal_id: `goal-${index}`,
+      race_name: name, race_priority: priority, planned_distance_meters: distance,
+    })) })])
+    await app.get('[data-testid="load-next-training-week"]').trigger('click')
+    for (const [priority, name, distance] of races) {
+      expect(app.text()).toContain(name)
+      expect(app.text()).toContain(priority === 'tune_up' ? '暖身賽' : priority === 'secondary' ? '次要目標' : '主要目標')
+      expect(app.text()).toContain(`${Number((distance / 1000).toFixed(3))} km`)
+    }
+  })
+  it('shows primary effort and estimated pace evidence for RPE and heart-rate targets', async () => {
+    const app = await render([plan('maintenance', { workouts: [
+      { ...workout('rpe-pace', '2026-09-27'), steps: [{ type: 'work', duration_seconds: 1200, target: { kind: 'rpe', rpe: 6, zone: 'marathon', pace_range_seconds_per_km: [318, 336], pace_source: 'threshold_pace', confidence: 'high' } }] },
+      { ...workout('hr-pace', '2026-09-28'), steps: [{ type: 'work', duration_seconds: 1200, target: { kind: 'heart_rate', heart_rate_zone: 'easy', heart_rate_range_bpm: [120, 140], rpe: 3, pace_range_seconds_per_km: [360, 390], pace_source: 'paired_easy_activities', confidence: 'medium' } }] },
+      { ...workout('no-pace', '2026-09-29'), steps: [{ type: 'work', duration_seconds: 1200, target: { kind: 'rpe', rpe: 3 } }] },
+      { ...workout('hill-pace', '2026-09-30'), workout_type: 'hill', steps: [{ type: 'hill', duration_seconds: 90, target: { kind: 'rpe', rpe: 8, pace_range_seconds_per_km: [300, 330], pace_source: 'goal_time', confidence: 'low' } }] },
+    ] })])
+    await app.get('[data-testid="workout-detail-rpe-pace"]').trigger('click')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('RPE 6')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('預估配速 5:18-5:36 /km')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('閾值配速 · 高信心')
+    await app.get('[data-testid="workout-detail-close"]').trigger('click')
+    await app.get('[data-testid="workout-detail-hr-pace"]').trigger('click')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('120-140 bpm')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('預估配速 6:00-6:30 /km')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('配對輕鬆跑 · 中信心')
+    await app.get('[data-testid="workout-detail-close"]').trigger('click')
+    await app.get('[data-testid="load-next-training-week"]').trigger('click')
+    await app.get('[data-testid="workout-detail-no-pace"]').trigger('click')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('RPE 3')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).not.toContain('預估配速')
+    await app.get('[data-testid="workout-detail-close"]').trigger('click')
+    await app.get('[data-testid="workout-detail-hill-pace"]').trigger('click')
+    expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('平地參考配速')
+  })
   it('shows one plan week first, loads the next, and labels executable workout stages', async () => {
     const app = await render([plan('maintenance', { starts_on: '2026-09-27', ends_on: '2026-10-24', workouts: [
       { ...workout('first-week', '2026-09-27'), workout_type: 'interval', display_name: 'Intervals', steps: [

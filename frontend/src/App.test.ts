@@ -459,6 +459,8 @@ describe('Johnny product shell', () => {
                 max_hard_sessions_per_week: 2,
                 unit_preference: 'metric',
                 threshold_pace_seconds_per_km: 300,
+                resting_heart_rate_bpm: 55,
+                max_heart_rate_bpm: 190,
                 training_preferences: { surface: 'trail' },
                 injury_status: 'none',
                 injury_areas: [],
@@ -478,6 +480,8 @@ describe('Johnny product shell', () => {
           max_hard_sessions_per_week: 0,
           unit_preference: 'imperial',
           threshold_pace_seconds_per_km: 315,
+          resting_heart_rate_bpm: 56,
+          max_heart_rate_bpm: 189,
           injury_status: 'current',
           injury_areas: ['other'],
           injury_notes: 'Left calf watch',
@@ -496,6 +500,8 @@ describe('Johnny product shell', () => {
                 max_hard_sessions_per_week: 0,
                 unit_preference: 'imperial',
                 threshold_pace_seconds_per_km: 315,
+                resting_heart_rate_bpm: 56,
+                max_heart_rate_bpm: 189,
                 training_preferences: { surface: 'trail' },
                 injury_status: 'current',
                 injury_areas: ['other'],
@@ -516,6 +522,8 @@ describe('Johnny product shell', () => {
     expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('32.2')
     expect((wrapper.get('input[name="maxHardSessionsPerWeek"]').element as HTMLInputElement).value).toBe('2')
     expect((wrapper.get('input[name="thresholdPace"]').element as HTMLInputElement).value).toBe('5:00')
+    expect((wrapper.get('input[name="restingHeartRate"]').element as HTMLInputElement).value).toBe('55')
+    expect((wrapper.get('input[name="maxHeartRate"]').element as HTMLInputElement).value).toBe('190')
 
     await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('')
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
@@ -537,6 +545,11 @@ describe('Johnny product shell', () => {
     await wrapper.get('input[name="currentWeeklyMileage"]').setValue('25.0')
     await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('0')
     await wrapper.get('input[name="thresholdPace"]').setValue('5:15')
+    await wrapper.get('input[name="restingHeartRate"]').setValue('56')
+    await wrapper.get('input[name="maxHeartRate"]').setValue('50')
+    await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
+    expect(wrapper.get('input[name="maxHeartRate"]').attributes('aria-invalid')).toBe('true')
+    await wrapper.get('input[name="maxHeartRate"]').setValue('189')
     await wrapper.get('select[name="injuryStatus"]').setValue('current')
     await wrapper.get('input[name="injuryArea-other"]').setValue(true)
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
@@ -550,6 +563,28 @@ describe('Johnny product shell', () => {
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
     await flushPromises()
 
+    expect(wrapper.text()).toContain('運動員已更新')
+  })
+
+  it('clears saved heart-rate settings without requiring a replacement pair', async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/athlete/profile') && init?.method === 'GET') {
+        return { ok: true, json: async () => ({ data: { timezone: 'Asia/Taipei', resting_heart_rate_bpm: 55, max_heart_rate_bpm: 190 } }) } as Response
+      }
+      if (url.endsWith('/api/v1/athlete/profile') && init?.method === 'PUT') {
+        expect(JSON.parse(String(init.body))).toMatchObject({ resting_heart_rate_bpm: null, max_heart_rate_bpm: null })
+        return { ok: true, json: async () => ({ data: { timezone: 'Asia/Taipei', resting_heart_rate_bpm: null, max_heart_rate_bpm: null } }) } as Response
+      }
+      return { ok: true, json: async () => ({ data: [] }) } as Response
+    })
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.get('button[data-view="athlete"]').trigger('click')
+    await wrapper.get('input[name="restingHeartRate"]').setValue('')
+    await wrapper.get('input[name="maxHeartRate"]').setValue('')
+    await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
+    await flushPromises()
     expect(wrapper.text()).toContain('運動員已更新')
   })
 
@@ -1568,7 +1603,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('Taipei Half')
     expect(wrapper.text()).toContain('21.1 km')
     expect(wrapper.text()).toContain('1:45:00')
-    expect(wrapper.text()).toContain('賽事已加入訓練計畫')
+    expect(wrapper.text()).toContain('賽事已新增')
     expect(wrapper.find('[data-testid="race-goal-modal"]').exists()).toBe(false)
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/races',

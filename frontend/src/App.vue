@@ -419,7 +419,7 @@ const selectedWorkoutDetail = computed(() => {
   }
   return [todayWorkout.value, ...displayWorkouts.value].find((workout) => workout.id === id) ?? null
 })
-const selectedWorkoutRows = computed(() => (selectedWorkoutDetail.value ? buildWorkoutStepRows(selectedWorkoutDetail.value.steps ?? []) : []))
+const selectedWorkoutRows = computed(() => (selectedWorkoutDetail.value ? buildWorkoutStepRows(selectedWorkoutDetail.value.steps ?? [], selectedWorkoutDetail.value.workoutType) : []))
 const selectedWorkoutStages = computed(() => {
   const stages: Array<{ key: WorkoutStageKey; label: string; rows: WorkoutStepRow[] }> = []
   for (const row of selectedWorkoutRows.value) {
@@ -477,6 +477,8 @@ type AthleteSettingsForm = {
   maxRunsPerWeek: string
   maxHardSessionsPerWeek: string
   thresholdPace: string
+  restingHeartRate: string
+  maxHeartRate: string
   unitPreference: 'metric' | 'imperial'
   injuryStatus: 'none' | 'current' | 'recent' | 'recurring'
   injuryAreas: string[]
@@ -1330,13 +1332,20 @@ function requestDeleteRace(race: RaceSummary) {
   deletingRace.value = race
 }
 
+function raceFallsInRemainingPlan(...dates: Array<string | undefined>): boolean {
+  const plan = activePlan.value
+  if (!plan) return false
+  const remainingStart = plan.starts_on > todayIsoDate.value ? plan.starts_on : todayIsoDate.value
+  return dates.some((date) => Boolean(date && date >= remainingStart && date <= plan.ends_on))
+}
+
 async function confirmDeleteRace() {
   const race = deletingRace.value
   if (!race || raceGoalBusy.value) return
   raceGoalBusy.value = true
   raceDeleteError.value = ''
   const session = sessionGeneration
-  const affectsPlan = activePlan.value?.race_id === race.id
+  const affectsPlan = raceFallsInRemainingPlan(race.date)
   try {
     await deleteRaceGoal(race.id)
     if (isUnmounted || session !== sessionGeneration) return
@@ -1346,7 +1355,7 @@ async function confirmDeleteRace() {
     if (apiRaceSummary.value?.id === race.id) apiRaceSummary.value = null
     deletingRace.value = null
     showRaceSuccess('賽事已刪除，既有課表與訓練紀錄已保留。')
-    if (affectsPlan) racePlanReminder.value = '目標賽事已變更，目前課表仍保留原安排。請重新產生計畫以套用新的訓練策略。'
+    if (affectsPlan) racePlanReminder.value = '賽事已變更，目前課表仍保留原安排。請重新產生計畫，讓 Johnny 納入賽事。'
     await refreshCalendarPayloads(todayIsoDate.value)
     await nextTick()
     document.querySelector<HTMLButtonElement>('[data-testid="open-race-goal-modal"]')?.focus()
@@ -1592,7 +1601,7 @@ async function submitRaceEntry(payload: RaceGoalCreatePayload) {
   raceGoalBusy.value = true
   const session = sessionGeneration
   const editing = editingRace.value
-  const affectsPlan = editing && activePlan.value?.race_id === editing.id
+  const affectsPlan = raceFallsInRemainingPlan(editing?.values.race_date, payload.race_date)
   try {
     const response = editing
       ? await updateRaceGoal(editing.id, { ...payload, status: editing.values.status })
@@ -1607,8 +1616,8 @@ async function submitRaceEntry(payload: RaceGoalCreatePayload) {
       if (apiRaceSummary.value?.id === saved.id) apiRaceSummary.value = saved
     }
     isRaceGoalModalOpen.value = false
-    showRaceSuccess(editing ? '賽事已更新' : '賽事已加入訓練計畫')
-    if (affectsPlan) racePlanReminder.value = '目標賽事已變更，目前課表仍保留原安排。請重新產生計畫以套用新的訓練策略。'
+    showRaceSuccess(editing ? '賽事已更新' : '賽事已新增')
+    if (affectsPlan) racePlanReminder.value = '賽事已變更，目前課表仍保留原安排。請重新產生計畫，讓 Johnny 納入賽事。'
     await refreshCalendarPayloads(todayIsoDate.value)
   } catch (error) {
     if (!isUnmounted && session === sessionGeneration && !handleSessionExpiry(error)) {
@@ -1788,6 +1797,8 @@ function applyAthleteProfilePayload(profile: AthleteProfileResponse) {
     maxRunsPerWeek: String(numberValue(profile.max_runs_per_week) ?? 3),
     maxHardSessionsPerWeek: String(numberValue(profile.max_hard_sessions_per_week) ?? 2),
     thresholdPace: thresholdPace && thresholdPace > 0 ? formatPace(thresholdPace) : '',
+    restingHeartRate: profile.resting_heart_rate_bpm == null ? '' : String(profile.resting_heart_rate_bpm),
+    maxHeartRate: profile.max_heart_rate_bpm == null ? '' : String(profile.max_heart_rate_bpm),
     unitPreference,
     injuryStatus: isInjuryStatus(profile.injury_status) ? profile.injury_status : 'none',
     injuryAreas: Array.isArray(profile.injury_areas) ? profile.injury_areas.map(String) : [],
@@ -1806,6 +1817,8 @@ function defaultAthleteSettingsForm(): AthleteSettingsForm {
     maxRunsPerWeek: '3',
     maxHardSessionsPerWeek: '2',
     thresholdPace: '',
+    restingHeartRate: '',
+    maxHeartRate: '',
     unitPreference: 'metric',
     injuryStatus: 'none',
     injuryAreas: [],
@@ -1883,6 +1896,10 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   const thresholdPaceText = form.thresholdPace.trim()
   const thresholdPaceMatch = /^(\d{1,2}):([0-5]\d)$/.exec(thresholdPaceText)
   const thresholdPaceSeconds = thresholdPaceMatch ? Number(thresholdPaceMatch[1]) * 60 + Number(thresholdPaceMatch[2]) : null
+  const restingHrText = String(form.restingHeartRate ?? '').trim()
+  const maxHrText = String(form.maxHeartRate ?? '').trim()
+  const restingHr = restingHrText ? Number(restingHrText) : null
+  const maxHr = maxHrText ? Number(maxHrText) : null
   const normalizedDays = form.preferredTrainingDays.map((day) => day.trim().toLowerCase())
   const uniqueDays = new Set(normalizedDays)
   if (!form.timezone.trim() || !isValidTimezone(form.timezone.trim())) {
@@ -1903,6 +1920,14 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   }
   if (thresholdPaceText && (thresholdPaceSeconds === null || thresholdPaceSeconds < 120 || thresholdPaceSeconds > 900)) {
     setAthleteSettingsError('thresholdPace', '請輸入 2:00 到 15:00 的分/公里配速')
+    return null
+  }
+  if (restingHrText && (!Number.isInteger(restingHr) || restingHr === null || restingHr <= 0)) {
+    setAthleteSettingsError('restingHeartRate', '請輸入有效的正整數心率')
+    return null
+  }
+  if (maxHrText && (!Number.isInteger(maxHr) || maxHr === null || maxHr <= 0 || (restingHr !== null && maxHr <= restingHr))) {
+    setAthleteSettingsError('maxHeartRate', '最高心率必須是正整數，且高於靜息心率')
     return null
   }
   if (uniqueDays.size !== normalizedDays.length) {
@@ -1927,6 +1952,8 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
     max_hard_sessions_per_week: maxHardSessionsPerWeek,
     unit_preference: form.unitPreference,
     threshold_pace_seconds_per_km: thresholdPaceSeconds,
+    resting_heart_rate_bpm: restingHr,
+    max_heart_rate_bpm: maxHr,
     injury_status: form.injuryStatus,
     injury_areas: form.injuryAreas.map((area) => area.trim().toLowerCase()),
     injury_notes: form.injuryNotes.trim() || null,
@@ -2163,7 +2190,10 @@ function mapWorkout(raw: unknown): WorkoutSummary | null {
     weekday: formatWeekday(scheduledFor),
     dateLabel: formatDateLabel(scheduledFor),
     scheduledFor,
-    type: typeof workout.display_name === 'string' && workout.display_name.trim() ? workout.display_name : formatWorkoutType(String(workout.workout_type || 'workout')),
+    type: typeof workout.race_name === 'string' && workout.workout_type === 'race' ? workout.race_name : typeof workout.display_name === 'string' && workout.display_name.trim() ? workout.display_name : formatWorkoutType(String(workout.workout_type || 'workout')),
+    workoutType: String(workout.workout_type || 'workout'),
+    raceName: workout.workout_type === 'race' && workout.race_name ? String(workout.race_name) : undefined,
+    racePriority: workout.workout_type === 'race' && ['primary', 'secondary', 'tune_up'].includes(String(workout.race_priority)) ? workout.race_priority as WorkoutSummary['racePriority'] : undefined,
     purpose: workout.purpose ? String(workout.purpose) : workoutPurpose(String(workout.workout_type || 'workout')),
     distance: workout.planned_distance_meters ? formatDistance(Number(workout.planned_distance_meters)) : undefined,
     duration: workout.planned_duration_minutes ? `${workout.planned_duration_minutes} 分` : undefined,
@@ -2223,6 +2253,7 @@ function mapWorkoutTarget(raw: unknown): WorkoutTarget | undefined {
     paceRangeSecondsPerKm: optionalNumberArray(target.pace_range_seconds_per_km),
     heartRateRangeBpm: optionalNumberArray(target.heart_rate_range_bpm),
     confidence: target.confidence ? (String(target.confidence) as WorkoutTarget['confidence']) : undefined,
+    paceSource: target.pace_source ? (String(target.pace_source) as WorkoutTarget['paceSource']) : undefined,
   }
 }
 
@@ -2256,7 +2287,7 @@ function closeWorkoutDetails() {
   selectedWorkoutId.value = null
 }
 
-function buildWorkoutStepRows(steps: WorkoutStep[], depth = 0, prefix = 'step', parentStage?: WorkoutStageKey): WorkoutStepRow[] {
+function buildWorkoutStepRows(steps: WorkoutStep[], workoutType?: string, depth = 0, prefix = 'step', parentStage?: WorkoutStageKey): WorkoutStepRow[] {
   return steps.flatMap((step, index) => {
     const key = `${prefix}-${index}`
     const stage = parentStage ?? workoutStepStage(step.type)
@@ -2271,7 +2302,7 @@ function buildWorkoutStepRows(steps: WorkoutStep[], depth = 0, prefix = 'step', 
           depth,
           stage,
         },
-        ...buildWorkoutStepRows(step.steps ?? [], depth + 1, key, stage),
+        ...buildWorkoutStepRows(step.steps ?? [], workoutType, depth + 1, key, stage),
       ]
     }
     return [
@@ -2279,7 +2310,7 @@ function buildWorkoutStepRows(steps: WorkoutStep[], depth = 0, prefix = 'step', 
         key,
         label: formatWorkoutStepLabel(step.type),
         load: formatWorkoutStepLoad(step),
-        target: formatWorkoutTarget(step.target),
+        target: formatWorkoutTarget(step.target, workoutType === 'hill' || step.type === 'hill'),
         note: [step.notes, step.gradeNotes].filter(Boolean).join(' · '),
         depth,
         stage,
@@ -2348,19 +2379,23 @@ function formatWorkoutStepLoad(step: WorkoutStep): string {
   return parts.join(' / ')
 }
 
-function formatWorkoutTarget(target?: WorkoutTarget | null): string {
+function formatWorkoutTarget(target?: WorkoutTarget | null, hillReference = false): string {
   if (!target) {
     return ''
   }
+  const pace = formatPaceRange(target.paceRangeSecondsPerKm)
+  const sourceLabels = { threshold_pace: '閾值配速', completed_race: '已完成賽事', paired_easy_activities: '配對輕鬆跑', goal_time: '目標時間' }
+  const confidenceLabels = { high: '高信心', medium: '中信心', low: '低信心' }
+  const paceEvidence = pace ? [target.paceSource ? sourceLabels[target.paceSource] : '', target.confidence ? confidenceLabels[target.confidence] : ''].filter(Boolean).join(' · ') : ''
+  const paceLabel = pace ? `${hillReference ? '平地參考配速' : '預估配速'} ${pace}` : ''
   if (target.kind === 'pace') {
-    const pace = formatPaceRange(target.paceRangeSecondsPerKm)
-    return [formatPaceZone(target.zone), pace ? `估計 ${pace}` : '', target.rpe != null ? `RPE ${target.rpe}` : ''].filter(Boolean).join(' · ')
+    return [formatPaceZone(target.zone), paceLabel, target.rpe != null ? `RPE ${target.rpe}` : '', paceEvidence].filter(Boolean).join(' · ')
   }
   if (target.kind === 'heart_rate') {
     const range = target.heartRateRangeBpm && target.heartRateRangeBpm.length >= 2 ? `${target.heartRateRangeBpm[0]}-${target.heartRateRangeBpm[1]} bpm` : ''
-    return [target.heartRateZone || 'Heart rate', range || (target.rpe != null ? `RPE ${target.rpe}` : '')].filter(Boolean).join(' · ')
+    return [target.heartRateZone || 'Heart rate', range || (target.rpe != null ? `RPE ${target.rpe}` : ''), paceLabel, paceEvidence].filter(Boolean).join(' · ')
   }
-  return target.rpe ? `RPE ${target.rpe}` : 'RPE'
+  return [target.rpe != null ? `RPE ${target.rpe}` : 'RPE', paceLabel, paceEvidence].filter(Boolean).join(' · ')
 }
 
 function mapRecommendation(raw: Record<string, unknown>): InboxRecommendation | null {
@@ -3024,6 +3059,7 @@ function shouldRequireAuth(): boolean {
               </div>
               <div class="schedule-row__content">
                 <h3>{{ workout.type }}</h3>
+                <small v-if="workout.racePriority" class="schedule-row__race-priority">{{ formatRacePriority(workout.racePriority) }}</small>
                 <div v-if="workoutStagePreview(workout).length" class="workout-stage-preview" aria-label="課表步驟摘要">
                   <span v-for="(stage, index) in workoutStagePreview(workout)" :key="`${stage.label}-${index}`"><small>{{ stage.label }}</small><strong>{{ stage.load }}</strong></span>
                 </div>
@@ -3402,6 +3438,37 @@ function shouldRequireAuth(): boolean {
             </label>
 
             <label>
+              靜息心率（bpm，可選）
+              <input
+                v-model="athleteSettings.restingHeartRate"
+                name="restingHeartRate"
+                type="number"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                :aria-invalid="athleteSettingsFieldErrors.restingHeartRate ? 'true' : 'false'"
+                aria-describedby="athlete-resting-heart-rate-error athlete-heart-rate-help"
+              />
+              <span v-if="athleteSettingsFieldErrors.restingHeartRate" id="athlete-resting-heart-rate-error" class="field-error">{{ athleteSettingsFieldErrors.restingHeartRate }}</span>
+            </label>
+
+            <label>
+              最高心率（bpm，可選）
+              <input
+                v-model="athleteSettings.maxHeartRate"
+                name="maxHeartRate"
+                type="number"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                :aria-invalid="athleteSettingsFieldErrors.maxHeartRate ? 'true' : 'false'"
+                aria-describedby="athlete-max-heart-rate-error athlete-heart-rate-help"
+              />
+              <span v-if="athleteSettingsFieldErrors.maxHeartRate" id="athlete-max-heart-rate-error" class="field-error">{{ athleteSettingsFieldErrors.maxHeartRate }}</span>
+            </label>
+            <p id="athlete-heart-rate-help" class="inline-note">兩項都填寫後，Johnny 才會估算心率區間；未填時仍會使用體感強度。</p>
+
+            <label>
               偏好長跑日
               <select
                 v-model="athleteSettings.preferredLongRunDay"
@@ -3590,7 +3657,7 @@ function shouldRequireAuth(): boolean {
       <section class="app-dialog__panel workout-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="workout-detail-title" tabindex="-1">
         <div class="workout-detail-dialog__header">
           <div>
-            <p class="workout-detail-dialog__eyebrow">{{ selectedWorkoutDetail.dateLabel }} · {{ selectedWorkoutDetail.weekday }}<span v-if="selectedWorkoutDetail.phase"> · {{ selectedWorkoutDetail.phase }}</span></p>
+            <p class="workout-detail-dialog__eyebrow">{{ selectedWorkoutDetail.dateLabel }} · {{ selectedWorkoutDetail.weekday }}<span v-if="selectedWorkoutDetail.phase"> · {{ selectedWorkoutDetail.phase }}</span><span v-if="selectedWorkoutDetail.racePriority"> · {{ formatRacePriority(selectedWorkoutDetail.racePriority) }}</span></p>
             <h3 id="workout-detail-title">{{ selectedWorkoutDetail.type }}</h3>
           </div>
           <AppButton tone="neutral" type="button" data-testid="workout-detail-close" aria-label="關閉課表詳情" title="關閉" @click="closeWorkoutDetails"><span aria-hidden="true">×</span></AppButton>

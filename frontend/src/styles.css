@@ -1187,6 +1187,7 @@ button:disabled {
 .workout-detail-dialog__purpose strong,
 .workout-detail-dialog__section-label { color: var(--color-muted-green); font-size: 0.8rem; font-weight: 700; }
 .workout-detail-dialog__purpose p { margin: 0; line-height: 1.55; }
+.schedule-row__race-priority { color: var(--color-lane-green); font-weight: 700; }
 
 .workout-stage-list {
   display: grid;

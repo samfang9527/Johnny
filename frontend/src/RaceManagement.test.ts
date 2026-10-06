@@ -9,6 +9,7 @@ let writes: RequestInit[]
 let failWrite: boolean
 let writeStatus: number
 let planId: string
+let planRaceId: string
 let wrapper: ReturnType<typeof mount>
 
 beforeEach(() => {
@@ -19,6 +20,7 @@ beforeEach(() => {
   failWrite = false
   writeStatus = 500
   planId = 'plan-1'
+  planRaceId = 'race-1'
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     if (url.endsWith('/auth/login')) return json({ user: { id: 'runner', capabilities: ['today', 'races', 'training-plans'] } })
@@ -33,7 +35,7 @@ beforeEach(() => {
       return json(races[0])
     }
     if (url.includes('/races?')) return json(races)
-    if (url.endsWith('/training-plans')) return json([{ id: planId, user_id: 'runner', race_id: races.length ? 'race-1' : null, name: 'Plan', status: 'active', starts_on: '2026-10-01', ends_on: '2027-02-01', metadata: {}, workouts: [] }])
+    if (url.endsWith('/training-plans')) return json([{ id: planId, user_id: 'runner', race_id: planRaceId, name: 'Plan', status: 'active', starts_on: '2026-10-01', ends_on: '2027-02-01', metadata: {}, workouts: [] }])
     return json([])
   }))
 })
@@ -62,6 +64,17 @@ it('edits saved canonical values, preserves status and precise cutoff, and refre
   expect(wrapper.get('.plan-race-goal').text()).toContain('Updated race')
   expect(wrapper.find('[data-testid="race-goal-modal"]').exists()).toBe(false)
   expect(wrapper.get('[data-testid="race-plan-reminder"]').text()).toContain('重新產生')
+})
+
+it('reminds regeneration after changing a secondary race inside the remaining plan', async () => {
+  planRaceId = 'another-primary-race'
+  await render()
+  await wrapper.get('[data-testid="edit-race"]').trigger('click')
+  await flushPromises()
+  await wrapper.get('[name="raceName"]').setValue('Updated secondary race')
+  await wrapper.get('[data-testid="race-form"]').trigger('submit')
+  await flushPromises()
+  expect(wrapper.get('[data-testid="race-plan-reminder"]').text()).toContain('重新產生計畫')
 })
 
 it('keeps edits on failure and confirms before discarding changed values', async () => {
