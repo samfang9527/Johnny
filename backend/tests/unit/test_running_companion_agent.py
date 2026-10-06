@@ -243,8 +243,8 @@ def test_generation_hr_target_numeric_contract_and_model_repair(rpe, bpm):
     else:
         assert len(gateway.requests) == 1
         assert "completion_repair" not in store.plan.metadata.get("internal", {})
-        assert target["kind"] == ("heart_rate" if bpm else "rpe")
-        assert target["heart_rate_range_bpm"] == bpm
+        assert target["kind"] == "rpe"
+        assert target["heart_rate_range_bpm"] is None
         assert target["rpe"] == rpe
 
 

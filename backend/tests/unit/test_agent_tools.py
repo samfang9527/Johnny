@@ -18,7 +18,7 @@ from src.application.agent_tools import (
     TrainingPlanTool,
     WorkoutAdjustmentProposalTool,
 )
-from src.application.training_targets import build_pace_profile
+from src.application.training_targets import build_pace_profile, build_target_profile_from_payloads
 from src.application.training_plan_generation import build_plan_skeleton
 from src.application.training_plan_generation import PlanRace
 from src.application.agent_tools import _plan_metadata
@@ -312,6 +312,33 @@ def test_trusted_race_identity_overrides_model_copy_and_repairs_wrong_distance()
     assert (race["planned_distance_meters"], race["steps"][0]["distance_meters"]) == (10_000, 10_000)
 
 
+def test_create_plan_uses_trusted_target_evidence_after_model_output() -> None:
+    target_profile = build_target_profile_from_payloads(
+        profile_payload={"training_preferences": {"threshold_pace_seconds_per_km": 300}},
+        selected_race_payload=None, recent_activity_payloads=(), prior_plan_payload=None,
+    )
+    store = FakeTrainingPlanStore(None)
+    saved = CreateTrainingPlanTool(training_plans=store).run(
+        user_id="user-1",
+        arguments={
+            "name": "Evidence plan", "starts_on": "2027-01-01", "ends_on": "2027-01-07",
+            "metadata": {"phase_segments": [{"phase": "base", "starts_on": "2027-01-01", "ends_on": "2027-01-07"}]},
+            "workouts": [{
+                "scheduled_for": "2027-01-03", "workout_type": "easy_run", "purpose": "Easy",
+                "planned_duration_minutes": 30, "phase": "base",
+                "steps": [{"type": "free_run", "duration_seconds": 1800, "target": {
+                    "kind": "pace", "zone": "easy", "pace_range_seconds_per_km": [100, 120],
+                }}],
+            }],
+            "trusted_context": {"target_profile": target_profile.to_payload()},
+        },
+    )["training_plan"]
+    target = saved["workouts"][0]["steps"][0]["target"]
+    assert target["kind"] == "rpe"
+    assert target["pace_range_seconds_per_km"] == [360, 405]
+    assert target["pace_source"] == "threshold_pace"
+
+
 def _skeleton_payload(skeleton) -> dict:
     return {
         "starts_on": skeleton.starts_on.isoformat(),
@@ -461,8 +488,8 @@ def test_key_session_hr_targets_require_numeric_execution(rpe, bpm, location) ->
     result = tool.run(user_id="user-1", arguments=arguments)
     assert "completion_repair" not in result
     target = result["training_plan"]["workouts"][0]["steps"][1]["steps"][0]["target"]
-    assert target["kind"] == ("heart_rate" if bpm else "rpe")
-    assert target["heart_rate_range_bpm"] == bpm
+    assert target["kind"] == "rpe"
+    assert target["heart_rate_range_bpm"] is None
     assert target["rpe"] == rpe
 
 

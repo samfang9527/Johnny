@@ -8,10 +8,11 @@ from uuid import uuid4
 from src.application.training_plan_generation import (
     PlanSkeleton,
     SkeletonWorkout,
+    _race_rpe,
     repair_generated_plan,
     validate_generated_plan,
 )
-from src.application.training_targets import PaceProfile, enrich_workout_steps
+from src.application.training_targets import TargetProfile, enrich_workout_steps
 from src.application.training_analytics import BuildTodayContextHandler
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
 from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, validate_phase_segments, workout_coach_note_zh, workout_purpose_zh
@@ -279,9 +280,25 @@ class CreateTrainingPlanTool:
                 repaired_errors = validate_generated_plan(plan, skeleton)
                 if repaired_errors:
                     raise ValueError(f"completion repair did not produce a valid plan: {'; '.join(repaired_errors)}")
-        canonical_pace_profile = PaceProfile.from_payload(pace_profile)
+        canonical_target_profile = TargetProfile.from_payload(
+            trusted_context.get("target_profile") if isinstance(trusted_context.get("target_profile"), dict) else pace_profile,
+        )
         plan = replace(plan, workouts=tuple(
-            replace(workout, steps=enrich_workout_steps(workout.steps, pace_profile=canonical_pace_profile))
+            replace(
+                workout,
+                steps=enrich_workout_steps(
+                    workout.steps, workout_type=workout.workout_type,
+                    target_profile=canonical_target_profile,
+                    race_rpe=next(
+                        (
+                            _race_rpe(expected) for expected in skeleton.workouts
+                            if expected.workout_type == "race" and expected.race_goal_id == workout.race_goal_id
+                            and expected.scheduled_for == workout.scheduled_for
+                        ),
+                        None,
+                    ) if skeleton is not None and workout.workout_type == "race" else None,
+                ),
+            )
             for workout in plan.workouts
         ))
         if skeleton is not None:
@@ -445,6 +462,11 @@ def _plan_metadata(*, arguments: dict, trusted_context: dict) -> dict:
         metadata["preparation_assessment"] = dict(trusted_context["preparation_assessment"])
     if isinstance(trusted_context.get("capacity_snapshot"), dict):
         metadata["internal"] = {"capacity_snapshot": dict(trusted_context["capacity_snapshot"])}
+    if isinstance(trusted_context.get("target_profile"), dict):
+        internal = dict(metadata.get("internal") or {})
+        internal["target_policy_version"] = trusted_context["target_profile"].get("policy_version")
+        internal["pace_source"] = trusted_context["target_profile"].get("pace_source")
+        metadata["internal"] = internal
     metadata["generation_mode"] = trusted_context.get("generation_mode", "generated")
     return metadata
 

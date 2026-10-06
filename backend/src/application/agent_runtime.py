@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from typing import Callable, Iterable, Sequence
 
 from src.application.training_plan_generation import PlanRace, _template_steps, build_plan_skeleton, projection_window, select_race_strategy
-from src.application.training_targets import build_pace_profile_from_payloads
+from src.application.training_targets import build_pace_profile_from_payloads, build_target_profile_from_payloads
 from src.application.training_workload_policy import RaceDemand, derive_capacity_snapshot
 from src.domain.agent_runtime import (
     AgentContextSource,
@@ -573,6 +573,12 @@ class RunningCompanionAgent:
             )[:20]
         )
         last_active_plan = (current_plan_payload or {}).get("training_plan")
+        target_profile = build_target_profile_from_payloads(
+            profile_payload={**profile_payload, "_planning_anchor": anchor.isoformat()},
+            selected_race_payload=selected_race,
+            recent_activity_payloads=all_activities,
+            prior_plan_payload=last_active_plan if isinstance(last_active_plan, dict) else None,
+        )
         pace_profile = build_pace_profile_from_payloads(
             profile_payload=(athlete_context or {}).get("profile"),
             selected_race_payload=selected_race,
@@ -640,6 +646,7 @@ class RunningCompanionAgent:
             "key_activities": list(activities[:3]),
             "last_active_plan": last_active_plan if isinstance(last_active_plan, dict) else None,
             "pace_profile": pace_profile.to_payload(),
+            "target_profile": target_profile.to_payload(),
             "starts_on": plan_skeleton["starts_on"],
             "ends_on": plan_skeleton["ends_on"],
             "plan_skeleton": plan_skeleton,
@@ -806,6 +813,9 @@ def _inject_training_plan_trusted_context(arguments: dict, request_context: dict
     pace_profile = request_context.get("pace_profile")
     if isinstance(pace_profile, dict):
         trusted_context["pace_profile"] = pace_profile
+    target_profile = request_context.get("target_profile")
+    if isinstance(target_profile, dict):
+        trusted_context["target_profile"] = target_profile
     plan_skeleton = request_context.get("plan_skeleton")
     if isinstance(plan_skeleton, dict):
         trusted_context["plan_skeleton"] = plan_skeleton
