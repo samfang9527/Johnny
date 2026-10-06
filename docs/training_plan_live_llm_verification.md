@@ -70,6 +70,7 @@ curl -sS -X PUT "$API/api/v1/athlete/profile" \
 ```
 
 預期：`data.user_id` 等於案例 ID，輸入限制完整回傳。記錄 profile JSON 作為預期 skeleton 的依據。
+需要驗證心率區間時，在完整 profile 中加入 `resting_heart_rate_bpm` 與 `max_heart_rate_bpm`（最高須大於靜息）；缺少任一值的案例應以 RPE 為主要 Target。若設定閾值配速，可加入 `threshold_pace_seconds_per_km`，並分別記錄估算配速的來源與信心。
 賽事案例用下方命令；`RACE_DATE` 必須替換為相對執行日的實際 ISO 日期，勿照抄過期日期：
 
 ```bash
@@ -91,6 +92,7 @@ curl -sS -X POST "$API/api/v1/races" \
 | weak-baseline | profile 改為里程 0、experience_level null、hard 上限 0；無活動資料 | 保守負荷、不安排 Hard Session、不編造活動、配速或健康證據 |
 
 priority 建立多場賽事時改 `name`、`race_date`、`priority`；合法順位為 `primary`、`secondary`、`tune_up`。
+在已選 Race Strategy 的計畫期間，另建 secondary 與 tune-up 賽事，至少一場放在非偏好訓練日。預期每場在 event date 有獨立 race workout，距離等於賽事距離；secondary 預設完整表現強度，tune-up 預設受控訓練強度。賽事新增、改期、取消或刪除後，既有 Active Projection 不會自動改寫；介面應提示手動重新產生。
 weak-baseline 重送完整 profile，保留必要欄位；受傷降載與更多距離變體先由第 7 節 fixtures 驗證，增加 live 樣本須另行核准。
 
 ## 4. 產品再生成與正式 worker
@@ -134,8 +136,10 @@ curl -sS -H "X-Johnny-User-Id: $VERIFY_USER" "$API/api/v1/training-plans"
 - 安全：每週 runs 不超 profile；interval、tempo、hill、long_run 均計入 Hard Session，跨週也不可相鄰。
 - hard 上限：不超 `min(max_hard_sessions_per_week, ceil(max_runs_per_week/2), 2)`；current/recent injury 再降至最多 1，弱基準或遠期策略另依 skeleton 降載。
 - Workout Step：關鍵課有可執行暖身、工作／恢復與收操；Repeat Block 有正整數次數與巢狀 steps，總量不超 skeleton。
-- 數值 Target：檢查實際 `steps[].target`，不是新增 `numericTarget` 欄位；pace/bpm 範圍有效、RPE 為 1–10，不能只給 zone 標籤。
-- 弱 Pace Profile 應保守 RPE，不要求每課都有數字配速；`display_name`／`compact_summary` 由結構決定，不採模型取名。
+- 數值 Target：檢查實際 `steps[].target`，不是新增 `numericTarget` 欄位；pace/bpm 範圍有效、RPE 為 1–10，不能只給 zone 標籤。數值範圍必須由可信 Athlete Baseline 與活動證據在生成／修復後推算，不採模型提供的數值。
+- 配速估算：每個 running target 可在 RPE 或 HR 主目標外附 `pace_range_seconds_per_km`、`pace_source`、`confidence`。來源依序為閾值配速、符合條件的已完成賽事、三筆配對輕鬆跑、目標完賽時間；無足夠證據時不顯示配速。坡跑配速僅為平地參考。
+- 心率：完整有效靜息／最高心率組合可為持續跑提供 HRR 估計範圍；缺失、無效組合及短間歇、坡跑、賽事強度以 RPE 為主。`display_name`／`compact_summary` 由結構決定，不採模型取名。
+- 賽事：檢查每場 in-horizon target、secondary、tune-up 的 `race_goal_id`、日期、距離與 priority；缺漏須經修復後才可成為 Active Projection。
 - repair：核對 failed steps、`metadata.internal.model_repair`、`internal.completion_repair` 的原因、週索引及 workout IDs，並比對 step 的 `payload.completion_repair`。
 - 分類：無修復的有效 LLM、一次模型修復後有效、deterministic completion repair/fallback、failed，分開統計。
 - fallback：即使 run completed 且 provider openai，`generation_mode=fallback` 或 deterministic fallback 摘要仍不得記為純 LLM 有效通過。
@@ -153,7 +157,7 @@ curl -sS -H "X-Johnny-User-Id: $VERIFY_USER" "$API/api/v1/training-plans"
 失敗、跨午夜、畸形 schema、漏週或原子 rollback 不要求隨機 LLM 重現；以現有 fake gateway fixtures 驗證：
 
 ```bash
-ENV=test LLM_PROVIDER='' LLM_API_KEY='' OPENAI_API_KEY='' ./.venv/bin/python -m pytest -q backend/tests/unit/test_training_plan_generation.py backend/tests/unit/test_training_plan_generation_domain.py backend/tests/unit/test_training_targets.py backend/tests/unit/test_running_companion_agent.py backend/tests/unit/test_training_plan_regeneration.py backend/tests/unit/test_openai_gateway.py backend/tests/unit/test_openai_agent_composition.py backend/tests/integration/application/test_agent_runtime_worker_scheduler.py
+ENV=test LLM_PROVIDER='' LLM_API_KEY='' OPENAI_API_KEY='' ./.venv/bin/python -m pytest -q backend/tests/unit/test_training_plan_generation.py backend/tests/unit/test_training_plan_generation_domain.py backend/tests/unit/test_training_targets.py backend/tests/unit/test_running_companion_agent.py backend/tests/unit/test_training_plan_regeneration.py backend/tests/unit/test_openai_gateway.py backend/tests/unit/test_openai_agent_composition.py backend/tests/integration/application/test_agent_runtime_worker_scheduler.py backend/tests/integration/application/test_race_aware_generation_flow.py
 ```
 
 預期 tests passed；fixtures 涵蓋漏週、一次 repair、fallback、numeric Target、持久化失敗與配額／冪等。未覆蓋的 PostgreSQL 故障原子性須列未驗證，不由 unit pass 推論。

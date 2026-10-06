@@ -2342,7 +2342,7 @@ function workoutStagePreview(workout: WorkoutSummary): Array<{ label: string; lo
 }
 
 function workoutPurpose(type: string): string {
-  return ({ easy_run: '維持有氧基礎', recovery: '促進恢復', long_run: '建立長距離耐力', tempo: '提升持續配速能力', interval: '提升速度與有氧能力', hill: '建立爬坡力量與跑姿穩定性' } as Record<string, string>)[type] ?? '完成本次訓練'
+  return ({ easy_run: '維持有氧基礎', recovery: '促進恢復', long_run: '建立長距離耐力', tempo: '提升持續配速能力', interval: '提升速度與有氧能力', hill: '建立爬坡力量與跑姿穩定性', race: '依賽事安排完成當日努力' } as Record<string, string>)[type] ?? '完成本次訓練'
 }
 
 function formatPlanPhase(value: string): string {
@@ -2490,7 +2490,7 @@ function statusLabel(status: RecommendationStatus): string {
 }
 
 function formatWorkoutType(value: string): string {
-  return ({ easy_run: '輕鬆跑', recovery: '恢復跑', long_run: '長跑', tempo: '節奏跑', interval: '間歇跑', hill: '坡跑', strength: '肌力訓練', cross_training: '交叉訓練', rest: '休息' } as Record<string, string>)[value] ?? '訓練'
+  return ({ easy_run: '輕鬆跑', recovery: '恢復跑', long_run: '長跑', tempo: '節奏跑', interval: '間歇跑', hill: '坡跑', race: '賽事', strength: '肌力訓練', cross_training: '交叉訓練', rest: '休息' } as Record<string, string>)[value] ?? '訓練'
 }
 
 function formatDistance(meters: number): string {

@@ -53,5 +53,5 @@
 
 - Race editing reuses `RaceGoalModal` and loads the current values from the race detail API; unchanged optional values retain their saved precision. Unsaved edits require a discard confirmation.
 - Race deletion uses `ConfirmDialog`, names the target, and explains that plans and workouts are retained. The owner-scoped race API detaches linked plan versions before removing the race.
-- Saves and deletes disable duplicate submission, retain user input or the confirmation on failure, and refresh race and training displays on success. Changing the active projection's target shows a manual regeneration reminder.
+- Saves and deletes disable duplicate submission, retain user input or the confirmation on failure, and refresh race and training displays on success. Adding, moving, editing, cancelling, or deleting any race in the active projection's remaining date range shows a manual regeneration reminder; a saved race is not shown as part of the current workout plan until regeneration succeeds.
 - `useModalFocus` owns focus, Escape, background isolation, and scroll restoration for the race form and shared confirmation dialog, including nested discard confirmations.

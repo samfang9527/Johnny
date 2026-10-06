@@ -16,6 +16,10 @@ _Avoid_: Interval group, repetition set
 The intended effort for a workout step, expressed as pace, heart rate, or RPE.
 _Avoid_: Intensity, prescription
 
+**Target Evidence**:
+The athlete-provided or matched activity evidence Johnny uses to derive optional numeric pace and heart-rate ranges after a workout is generated. Pace source and confidence describe the estimate independently of its primary effort target.
+_Avoid_: Model pace guess, measured zone
+
 **Pace Profile**:
 Johnny's deterministic mapping from athlete baseline data to training pace zones used to enrich workout targets.
 _Avoid_: LLM pace estimate, pace guess
@@ -47,6 +51,10 @@ _Avoid_: Provider status, sync dashboard, data completeness
 **Race Strategy**:
 The selected race context Johnny prepares for, including the target race and any athlete-stated race goal.
 _Avoid_: Race selection, goal race, A race
+
+**Supporting Race**:
+A secondary or tune-up race inside the current plan horizon. A secondary race defaults to a full performance effort; a tune-up race defaults to a controlled training effort. Each occupies its event date in the Plan Skeleton, even when that date is outside preferred training days.
+_Avoid_: Extra workout, optional event note
 
 **Plan Series**:
 A stable grouping of generated training plan versions that prepare for the same race strategy.
