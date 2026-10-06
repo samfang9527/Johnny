@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Protocol
 
-from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan
+from src.domain.training_plan import PlanAdjustmentProposal, TrainingPlan, Workout
 
 
 class TrainingPlanStore(Protocol):
@@ -28,6 +28,9 @@ class TrainingPlanStore(Protocol):
         ...
 
     def get_plan_for_user(self, user_id: str, plan_id: str | None) -> TrainingPlan | None:
+        ...
+
+    def list_recent_workouts_for_user(self, user_id: str, *, since: date, through: date) -> list[Workout]:
         ...
 
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:

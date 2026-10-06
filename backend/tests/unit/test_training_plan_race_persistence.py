@@ -1,6 +1,7 @@
 from datetime import date
 
 from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, WorkoutTarget
+from src.application.agent_tools import TrainingPlanTool
 from src.infrastructure.database.models import Base, UserModel
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
@@ -54,3 +55,33 @@ def test_race_workout_and_target_evidence_survive_sqlite_round_trip(sqlite_sessi
         assert race.planned_duration_minutes is None
         assert race.steps[0].target is not None
         assert race.steps[0].target.pace_source == "goal_time"
+
+
+def test_training_plan_tool_includes_recent_workouts_from_superseded_plans(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    with sqlite_session_factory() as session:
+        user = UserModel(email="race-history@example.com", display_name="Runner")
+        session.add(user)
+        session.flush()
+        repository = SqlAlchemyTrainingPlanRepository(session)
+        race = Workout.create(
+            scheduled_for=date(2027, 1, 14), workout_type="race", purpose="Race",
+            planned_distance_meters=10_000, race_goal_id="recent-race", race_name="City 10K",
+            race_priority="secondary", status="completed",
+        )
+        repository.save_plan(user.id, TrainingPlan.create(
+            user_id=user.id, name="Old plan", status="superseded",
+            starts_on=date(2027, 1, 1), ends_on=date(2027, 1, 20), workouts=(race,),
+        ))
+        repository.save_plan(user.id, TrainingPlan.create(
+            user_id=user.id, name="Current plan", status="active",
+            starts_on=date(2027, 1, 21), ends_on=date(2027, 2, 15), workouts=(),
+        ))
+        session.flush()
+        payload = TrainingPlanTool(training_plans=repository).run(user_id=user.id, arguments={
+            "training_plan_id": None, "recent_workouts_since": "2027-01-01",
+            "recent_workouts_through": "2027-01-28",
+        })
+        assert payload["training_plan"]["name"] == "Current plan"
+        assert [item["race_goal_id"] for item in payload["recent_workouts"]] == ["recent-race"]
+        assert payload["recent_workouts"][0]["status"] == "completed"

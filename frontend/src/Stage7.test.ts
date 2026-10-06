@@ -344,11 +344,14 @@ describe('Stage 7 frontend acceptance', () => {
       ['secondary', 'Riverside Half', 21097],
       ['tune_up', 'Park 10K', 10000],
     ] as const
-    const app = await render([plan('race', { workouts: races.map(([priority, name, distance], index) => ({
+    const app = await render([plan('race', { race_id: 'goal-0', workouts: races.map(([priority, name, distance], index) => ({
       ...workout(`race-${index}`, `2026-09-${27 + index}`), workout_type: 'race', race_goal_id: `goal-${index}`,
       race_name: name, race_priority: priority, planned_distance_meters: distance,
+      display_name: `${name} · ${Number((distance / 1000).toFixed(3))} km`,
     })) })])
     await app.get('[data-testid="load-next-training-week"]').trigger('click')
+    expect(app.get('[data-testid="schedule-workout-race-0"] h3').text()).toBe('Autumn Marathon · 42.195 km')
+    expect(app.get('[data-testid="schedule-workout-race-0"]').text()).toContain('目標賽事')
     for (const [priority, name, distance] of races) {
       expect(app.text()).toContain(name)
       expect(app.text()).toContain(priority === 'tune_up' ? '暖身賽' : priority === 'secondary' ? '次要目標' : '主要目標')

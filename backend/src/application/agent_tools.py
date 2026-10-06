@@ -73,7 +73,13 @@ class TrainingPlanTool:
             if plan_id
             else self._training_plans.get_current_plan_for_user(user_id)
         )
-        return {"training_plan": _plan_payload(plan)}
+        payload = {"training_plan": _plan_payload(plan)}
+        if arguments.get("recent_workouts_since") is not None:
+            since = _date_arg(arguments, "recent_workouts_since")
+            through = _date_arg(arguments, "recent_workouts_through")
+            workouts = self._training_plans.list_recent_workouts_for_user(user_id, since=since, through=through)
+            payload["recent_workouts"] = [item.to_payload() for item in workouts]
+        return payload
 
 
 class TodayWorkoutTool:

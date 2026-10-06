@@ -10,8 +10,8 @@ from src.infrastructure.llm.local_gateway import _plan_arguments
 
 def test_local_plan_output_keeps_race_distance_and_default_effort() -> None:
     skeleton = {
-        "starts_on": "2027-01-01", "ends_on": "2027-01-07",
-        "phase_segments": [{"phase": "maintenance", "starts_on": "2027-01-01", "ends_on": "2027-01-07"}],
+        "starts_on": "2027-01-01", "ends_on": "2027-01-08",
+        "phase_segments": [{"phase": "maintenance", "starts_on": "2027-01-01", "ends_on": "2027-01-08"}],
         "workouts": [
             {
                 "scheduled_for": "2027-01-03", "workout_type": "race", "phase": "maintenance",
@@ -29,15 +29,22 @@ def test_local_plan_output_keeps_race_distance_and_default_effort() -> None:
                 "race_goal_id": "target-1", "race_name": "Goal Half", "race_priority": "primary",
                 "race_goal_intent": "complete", "is_target_race": True,
             },
+            {
+                "scheduled_for": "2027-01-08", "workout_type": "race", "phase": "maintenance",
+                "planned_duration_minutes": None, "planned_distance_meters": 5_000,
+                "race_goal_id": "target-tune", "race_name": "Target Tune 5K", "race_priority": "tune_up",
+                "race_goal_intent": "perform", "is_target_race": True,
+            },
         ],
     }
     output = _plan_arguments({"plan_skeleton": skeleton})
-    tune, secondary, target = output["workouts"]
+    tune, secondary, target, target_tune = output["workouts"]
 
     assert (tune["race_goal_id"], tune["planned_duration_minutes"], tune["steps"][0]["distance_meters"]) == ("tune-1", None, 5_000)
     assert tune["steps"][0]["target"]["rpe"] == 6
     assert secondary["steps"][0]["target"]["rpe"] == 8
     assert target["steps"][0]["target"]["rpe"] == 6
+    assert target_tune["steps"][0]["target"]["rpe"] == 8
 
 
 class FakeRunStore:
@@ -140,6 +147,33 @@ def test_plan_preload_uses_full_activity_window_before_model_slice():
     assert context["capacity_snapshot"]["source"] == "activities"
     assert context["capacity_snapshot"]["activity_count"] == 8
     assert context["recent_activity_summary"]["activity_count"] <= 20
+
+
+def test_plan_preload_uses_recent_completed_race_from_superseded_plan_for_pace() -> None:
+    athlete = StaticTool("getAthleteContext", {"profile": {"current_weekly_mileage_km": 25}, "race_goals": []})
+    activity = {
+        "id": "result", "started_at": "2027-01-20T07:00:00+08:00", "sport_type": "run",
+        "duration_seconds": 3000, "distance_meters": 10_000, "matched_workout_id": "old-race",
+    }
+    recent = StaticTool("getRecentActivities", {"activities": [activity]})
+    plans = StaticTool("getTrainingPlan", {
+        "training_plan": {"id": "active", "workouts": []},
+        "recent_workouts": [{
+            "id": "old-race", "workout_type": "race", "status": "completed",
+            "planned_distance_meters": 10_000,
+        }],
+    })
+    agent = RunningCompanionAgent(
+        run_store=FakeRunStore(), model_gateway=FakeModelGateway(),
+        tools=AgentToolRegistry((athlete, recent, plans)), prompt_version="test",
+    )
+
+    context = agent._training_plan_generation_preload_context(
+        user_id="user-1", selected_race_id=None, starts_on=date(2027, 1, 28), plan_type="maintenance",
+    )
+
+    assert plans.calls[0]["arguments"]["recent_workouts_since"] == "2026-12-03"
+    assert context["target_profile"]["pace_source"] == "completed_race"
 
 
 class FailingTool:

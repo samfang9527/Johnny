@@ -2185,14 +2185,20 @@ function mapWorkout(raw: unknown): WorkoutSummary | null {
   const workout = raw as Record<string, unknown>
   const scheduledFor = String(workout.scheduled_for || '')
   const steps = mapWorkoutSteps(workout.steps)
+  const workoutType = String(workout.workout_type || 'workout')
+  const canonicalName = typeof workout.display_name === 'string' ? workout.display_name.trim() : ''
+  const raceName = workoutType === 'race' && workout.race_name ? String(workout.race_name) : ''
+  const raceFallbackName = raceName && workout.planned_distance_meters
+    ? `${raceName} · ${formatDistance(Number(workout.planned_distance_meters))}` : raceName
   return {
     id: String(workout.id || scheduledFor || crypto.randomUUID()),
     weekday: formatWeekday(scheduledFor),
     dateLabel: formatDateLabel(scheduledFor),
     scheduledFor,
-    type: typeof workout.race_name === 'string' && workout.workout_type === 'race' ? workout.race_name : typeof workout.display_name === 'string' && workout.display_name.trim() ? workout.display_name : formatWorkoutType(String(workout.workout_type || 'workout')),
-    workoutType: String(workout.workout_type || 'workout'),
-    raceName: workout.workout_type === 'race' && workout.race_name ? String(workout.race_name) : undefined,
+    type: canonicalName || raceFallbackName || formatWorkoutType(workoutType),
+    workoutType,
+    raceName: raceName || undefined,
+    raceGoalId: workoutType === 'race' && workout.race_goal_id ? String(workout.race_goal_id) : undefined,
     racePriority: workout.workout_type === 'race' && ['primary', 'secondary', 'tune_up'].includes(String(workout.race_priority)) ? workout.race_priority as WorkoutSummary['racePriority'] : undefined,
     purpose: workout.purpose ? String(workout.purpose) : workoutPurpose(String(workout.workout_type || 'workout')),
     distance: workout.planned_distance_meters ? formatDistance(Number(workout.planned_distance_meters)) : undefined,
@@ -3059,7 +3065,7 @@ function shouldRequireAuth(): boolean {
               </div>
               <div class="schedule-row__content">
                 <h3>{{ workout.type }}</h3>
-                <small v-if="workout.racePriority" class="schedule-row__race-priority">{{ formatRacePriority(workout.racePriority) }}</small>
+                <small v-if="workout.racePriority" class="schedule-row__race-priority">{{ formatRacePriority(workout.racePriority) }}<span v-if="workout.raceGoalId && activePlan?.race_id === workout.raceGoalId"> · 目標賽事</span></small>
                 <div v-if="workoutStagePreview(workout).length" class="workout-stage-preview" aria-label="課表步驟摘要">
                   <span v-for="(stage, index) in workoutStagePreview(workout)" :key="`${stage.label}-${index}`"><small>{{ stage.label }}</small><strong>{{ stage.load }}</strong></span>
                 </div>
@@ -3657,7 +3663,7 @@ function shouldRequireAuth(): boolean {
       <section class="app-dialog__panel workout-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="workout-detail-title" tabindex="-1">
         <div class="workout-detail-dialog__header">
           <div>
-            <p class="workout-detail-dialog__eyebrow">{{ selectedWorkoutDetail.dateLabel }} · {{ selectedWorkoutDetail.weekday }}<span v-if="selectedWorkoutDetail.phase"> · {{ selectedWorkoutDetail.phase }}</span><span v-if="selectedWorkoutDetail.racePriority"> · {{ formatRacePriority(selectedWorkoutDetail.racePriority) }}</span></p>
+            <p class="workout-detail-dialog__eyebrow">{{ selectedWorkoutDetail.dateLabel }} · {{ selectedWorkoutDetail.weekday }}<span v-if="selectedWorkoutDetail.phase"> · {{ selectedWorkoutDetail.phase }}</span><span v-if="selectedWorkoutDetail.racePriority"> · {{ formatRacePriority(selectedWorkoutDetail.racePriority) }}</span><span v-if="selectedWorkoutDetail.raceGoalId && activePlan?.race_id === selectedWorkoutDetail.raceGoalId"> · 目標賽事</span></p>
             <h3 id="workout-detail-title">{{ selectedWorkoutDetail.type }}</h3>
           </div>
           <AppButton tone="neutral" type="button" data-testid="workout-detail-close" aria-label="關閉課表詳情" title="關閉" @click="closeWorkoutDetails"><span aria-hidden="true">×</span></AppButton>

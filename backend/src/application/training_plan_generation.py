@@ -377,6 +377,7 @@ def _adjust_training_around_races(
 ) -> tuple[list[SkeletonWorkout], bool]:
     events = [workout for workout in workouts if workout.workout_type == "race"]
     adjusted: list[SkeletonWorkout] = []
+    previous_long_minutes: int | None = None
     for workout in workouts:
         if workout.workout_type == "race":
             adjusted.append(workout)
@@ -388,6 +389,8 @@ def _adjust_training_around_races(
         if workout.phase == "taper":
             if prescription.weeks[week_index].phase != "taper":
                 duration = max(1, round((duration or 0) * .65))
+            if workout_type == "long_run" and previous_long_minutes is not None:
+                duration = min(duration or previous_long_minutes, max(1, round(previous_long_minutes * .8)))
             if workout_type in QUALITY_WORKOUT_TYPES:
                 workout_type, focus_zone = "easy_run", None
         for event in events:
@@ -397,6 +400,8 @@ def _adjust_training_around_races(
                 if workout_type in HARD_SESSION_WORKOUT_TYPES:
                     workout_type, focus_zone = "easy_run", None
                 duration = min(duration or 30, 30)
+        if workout_type == "long_run" and duration is not None:
+            previous_long_minutes = duration
         adjusted.append(replace(workout, workout_type=workout_type, planned_duration_minutes=duration, focus_zone=focus_zone))
     conflict = False
     result = list(adjusted)
@@ -740,9 +745,17 @@ def _template_purpose(workout_type: str) -> str:
 
 
 def _race_rpe(workout: SkeletonWorkout) -> int:
-    if workout.race_priority == "tune_up" or (workout.is_target_race and workout.race_goal_intent == "complete"):
-        return 6
-    return 8
+    return race_default_rpe(
+        is_target=workout.is_target_race,
+        priority=workout.race_priority,
+        goal_intent=workout.race_goal_intent,
+    )
+
+
+def race_default_rpe(*, is_target: bool, priority: str | None, goal_intent: str | None) -> int:
+    if is_target:
+        return 6 if goal_intent == "complete" else 8
+    return 6 if priority == "tune_up" else 8
 
 
 def _template_steps(

@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import date, timedelta
 from typing import Callable, Iterable, Sequence
 
-from src.application.training_plan_generation import PlanRace, _template_steps, build_plan_skeleton, projection_window, select_race_strategy
+from src.application.training_plan_generation import PlanRace, _template_steps, build_plan_skeleton, projection_window, race_default_rpe, select_race_strategy
 from src.application.training_targets import build_pace_profile_from_payloads, build_target_profile_from_payloads
 from src.application.training_workload_policy import RaceDemand, derive_capacity_snapshot
 from src.domain.agent_runtime import (
@@ -545,7 +545,11 @@ class RunningCompanionAgent:
             self._tools,
             "getTrainingPlan",
             user_id=user_id,
-            arguments={"training_plan_id": None},
+            arguments={
+                "training_plan_id": None,
+                "recent_workouts_since": (anchor - timedelta(days=56)).isoformat(),
+                "recent_workouts_through": anchor.isoformat(),
+            },
         )
         race_goals = list((athlete_context or {}).get("race_goals", ()))
         selected_race = next((goal for goal in race_goals if goal.get("id") == selected_race_id), None)
@@ -573,11 +577,17 @@ class RunningCompanionAgent:
             )[:20]
         )
         last_active_plan = (current_plan_payload or {}).get("training_plan")
+        recent_workouts = (current_plan_payload or {}).get("recent_workouts")
+        target_evidence_plan = (
+            {"workouts": recent_workouts}
+            if isinstance(recent_workouts, list)
+            else last_active_plan if isinstance(last_active_plan, dict) else None
+        )
         target_profile = build_target_profile_from_payloads(
             profile_payload={**profile_payload, "_planning_anchor": anchor.isoformat()},
             selected_race_payload=selected_race,
             recent_activity_payloads=all_activities,
-            prior_plan_payload=last_active_plan if isinstance(last_active_plan, dict) else None,
+            prior_plan_payload=target_evidence_plan,
         )
         pace_profile = build_pace_profile_from_payloads(
             profile_payload=(athlete_context or {}).get("profile"),
@@ -1025,7 +1035,7 @@ def _fallback_workout_payload(
         "steps": [
             step.to_payload() for step in _template_steps(
                 workout_type, planned_duration_minutes, planned_distance_meters, focus_zone,
-                race_rpe=6 if race_priority == "tune_up" or (is_target_race and race_goal_intent == "complete") else 8,
+                race_rpe=race_default_rpe(is_target=is_target_race, priority=race_priority, goal_intent=race_goal_intent),
             )
         ],
     }

@@ -385,6 +385,23 @@ def test_race_distance_changes_key_sessions_and_long_run_progression() -> None:
     assert any(w.workout_type == "tempo" for w in long.workouts)
 
 
+def test_long_runs_continue_to_decline_across_full_taper_weeks() -> None:
+    skeleton = _skeleton(
+        starts_on=date(2026, 10, 5), ends_on=date(2026, 11, 1),
+        plan_type="race", race_date=date(2026, 11, 1), race_distance_meters=21_097,
+        current_weekly_mileage_km=50,
+        races=(PlanRace("target", "Goal Half", date(2026, 11, 1), 21_097, "primary", True, "perform"),),
+    )
+    long_runs = [workout for workout in skeleton.workouts if workout.workout_type == "long_run"]
+    assert [workout.scheduled_for for workout in long_runs] == [
+        date(2026, 10, 11), date(2026, 10, 18), date(2026, 10, 25),
+    ]
+    assert all(
+        later.planned_duration_minutes < earlier.planned_duration_minutes
+        for earlier, later in zip(long_runs, long_runs[1:])
+    )
+
+
 def test_far_future_race_stays_aerobic_without_peak_or_taper() -> None:
     skeleton = _skeleton(plan_type="race", race_date=date(2027, 12, 1), ends_on=date(2027, 4, 25), current_weekly_mileage_km=40, experience_level="advanced")
     assert {s["phase"] for s in skeleton.phase_segments} <= {"base", "build"}

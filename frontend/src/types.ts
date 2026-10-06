@@ -244,6 +244,7 @@ export interface WorkoutSummary {
   type: string
   workoutType?: string
   raceName?: string
+  raceGoalId?: string
   racePriority?: 'primary' | 'secondary' | 'tune_up'
   purpose: string
   distance?: string

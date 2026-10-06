@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from src.application.training_plan_generation import race_default_rpe
 from src.domain.agent_runtime import ModelRequest, ModelResponse, TokenUsage, ToolCallRequest
 from src.domain.training_plan import workout_purpose_zh
 
@@ -156,7 +157,7 @@ def _workout_payload(
     focus_zone: str | None = None,
 ) -> dict:
     if workout_type == "race":
-        race_rpe = 6 if race_priority == "tune_up" or (is_target_race and race_goal_intent == "complete") else 8
+        race_rpe = race_default_rpe(is_target=is_target_race, priority=race_priority, goal_intent=race_goal_intent)
         return {
             "scheduled_for": scheduled_for.isoformat(),
             "workout_type": "race",

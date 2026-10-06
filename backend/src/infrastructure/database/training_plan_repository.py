@@ -215,6 +215,19 @@ class SqlAlchemyTrainingPlanRepository:
             statement = statement.limit(limit)
         return [_plan_from_model(model) for model in self._session.scalars(statement)]
 
+    def list_recent_workouts_for_user(self, user_id: str, *, since: date, through: date) -> list[Workout]:
+        statement = (
+            select(WorkoutModel)
+            .join(TrainingPlanModel, WorkoutModel.training_plan_id == TrainingPlanModel.id)
+            .where(
+                TrainingPlanModel.user_id == user_id,
+                WorkoutModel.scheduled_for >= since,
+                WorkoutModel.scheduled_for <= through,
+            )
+            .order_by(WorkoutModel.scheduled_for.desc(), WorkoutModel.id.desc())
+        )
+        return [_workout_from_model(model) for model in self._session.scalars(statement)]
+
     def create_adjustment_proposal(
         self,
         user_id: str,
