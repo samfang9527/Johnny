@@ -34,7 +34,35 @@ def test_alembic_upgrade_creates_mvp_schema(tmp_path: Path, monkeypatch) -> None
         "agent_runs",
         "agent_tasks",
         "integration_credentials",
+        "daily_advices",
     }.issubset(table_names)
+
+
+def test_daily_advice_migration_has_one_current_row_per_user_day_and_provenance(tmp_path: Path, monkeypatch) -> None:
+    database_url = f"sqlite:///{tmp_path / 'daily_advice_migration.db'}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(database_url))
+    columns = {column["name"] for column in inspector.get_columns("daily_advices")}
+    assert {
+        "id", "user_id", "advice_date", "state", "data_freshness",
+        "reserved_observed_at", "reserved_run_id", "refresh_source_sync_run_id",
+        "plan_version_id", "workout_id", "week_start", "week_end", "execution_mode",
+        "facts", "week_summary", "today_execution", "workout_guide", "generated_at",
+        "source_sync_run_id", "source_run_id", "created_at", "updated_at",
+    }.issubset(columns)
+    assert any(
+        set(unique["column_names"]) == {"user_id", "advice_date"}
+        for unique in inspector.get_unique_constraints("daily_advices")
+    )
+    assert any(
+        foreign_key["referred_table"] == "users" and foreign_key["constrained_columns"] == ["user_id"]
+        for foreign_key in inspector.get_foreign_keys("daily_advices")
+    )
 
 
 def test_root_alembic_config_supports_plain_upgrade_command(tmp_path: Path, monkeypatch) -> None:

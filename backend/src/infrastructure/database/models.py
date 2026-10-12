@@ -371,6 +371,42 @@ class AgentRunModel(TimestampMixin, Base):
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
 
+class DailyAdviceModel(TimestampMixin, Base):
+    __tablename__ = "daily_advices"
+    __table_args__ = (
+        UniqueConstraint("user_id", "advice_date", name="uq_daily_advice_user_date"),
+        CheckConstraint(
+            "state IN ('pending', 'ready', 'sync_failed', 'generation_failed', 'no_plan')",
+            name="daily_advice_state",
+        ),
+        CheckConstraint(
+            "data_freshness IN ('fresh', 'limited', 'stale')",
+            name="daily_advice_freshness",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    advice_date: Mapped[date] = mapped_column(Date, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    data_freshness: Mapped[str] = mapped_column(String(32), nullable=False)
+    reserved_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reserved_run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    refresh_source_sync_run_id: Mapped[str | None] = mapped_column(String(36))
+    plan_version_id: Mapped[str | None] = mapped_column(String(36))
+    workout_id: Mapped[str | None] = mapped_column(String(36))
+    week_start: Mapped[date | None] = mapped_column(Date)
+    week_end: Mapped[date | None] = mapped_column(Date)
+    execution_mode: Mapped[str | None] = mapped_column(String(32))
+    facts: Mapped[dict | None] = mapped_column(JSON)
+    week_summary: Mapped[str | None] = mapped_column(Text)
+    today_execution: Mapped[str | None] = mapped_column(Text)
+    workout_guide: Mapped[dict | None] = mapped_column(JSON)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_sync_run_id: Mapped[str | None] = mapped_column(String(36))
+    source_run_id: Mapped[str | None] = mapped_column(String(36))
+
+
 class AgentTaskModel(TimestampMixin, Base):
     __tablename__ = "agent_tasks"
     __table_args__ = (

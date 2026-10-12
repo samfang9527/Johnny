@@ -48,6 +48,93 @@ class WeekExecution:
             "evidence": dict(self.evidence),
         }
 
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> WeekExecution:
+        return cls(
+            week_start=date.fromisoformat(payload["week_start"]),
+            week_end=date.fromisoformat(payload["week_end"]),
+            status=payload["status"],
+            planned_count=payload["planned_count"],
+            completed_count=payload["completed_count"],
+            missed_count=payload["missed_count"],
+            extra_count=payload["extra_count"],
+            planned_minutes=payload["planned_minutes"],
+            actual_minutes=payload["actual_minutes"],
+            planned_distance_meters=payload["planned_distance_meters"],
+            actual_distance_meters=payload["actual_distance_meters"],
+            today_completed=payload["today_completed"],
+            evidence=dict(payload["evidence"]),
+        )
+
+
+@dataclass(frozen=True, order=True)
+class RefreshVersion:
+    observed_at: datetime
+    run_id: str
+
+    def __post_init__(self) -> None:
+        if not self.run_id:
+            raise ValueError("refresh run id is required")
+        object.__setattr__(self, "observed_at", _as_utc(self.observed_at))
+
+
+@dataclass(frozen=True)
+class WorkoutGuide:
+    purpose: str
+    expected_feel: str
+    if_too_hard: str
+    if_too_easy: str
+
+    def to_payload(self) -> dict[str, str]:
+        return {
+            "purpose": self.purpose,
+            "expected_feel": self.expected_feel,
+            "if_too_hard": self.if_too_hard,
+            "if_too_easy": self.if_too_easy,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, str]) -> WorkoutGuide:
+        return cls(**payload)
+
+
+@dataclass(frozen=True)
+class AdviceSections:
+    week_summary: str
+    today_execution: str
+    workout_guide: WorkoutGuide
+
+
+@dataclass(frozen=True)
+class DailyAdvice:
+    user_id: str
+    advice_date: date
+    plan_version_id: str | None
+    workout_id: str | None
+    week_start: date | None
+    week_end: date | None
+    execution_mode: str | None
+    facts: WeekExecution | None
+    sections: AdviceSections | None
+    generated_at: datetime | None
+    source_sync_run_id: str | None
+    source_run_id: str | None
+    state: str
+    data_freshness: str
+    id: str | None = None
+    refresh_version: RefreshVersion | None = None
+    refresh_source_sync_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.user_id:
+            raise ValueError("daily advice owner is required")
+        if self.state not in {"pending", "ready", "sync_failed", "generation_failed", "no_plan"}:
+            raise ValueError("daily advice state is invalid")
+        if self.data_freshness not in {"fresh", "limited", "stale"}:
+            raise ValueError("daily advice freshness is invalid")
+        if self.state == "ready" and (self.sections is None or self.facts is None or self.generated_at is None):
+            raise ValueError("ready daily advice requires content and generation time")
+
 
 def plan_week_for_date(plan: TrainingPlan, anchor_date: date) -> tuple[date, date]:
     if not plan.starts_on <= anchor_date <= plan.ends_on:
