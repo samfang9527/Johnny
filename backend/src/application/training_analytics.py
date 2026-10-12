@@ -9,6 +9,7 @@ from src.domain.training_analytics import (
     TodayContext,
     TrainingLoadService,
 )
+from src.domain.training_plan import TrainingPlan
 
 
 class BuildTodayContextHandler:
@@ -42,19 +43,7 @@ class BuildTodayContextHandler:
                 anchor_date,
             )
         )
-        plan = self._training_plans.get_current_plan_for_user(user_id)
-        visited = set()
-        # A manual projection starts tomorrow; predecessor workouts still own today.
-        while plan is not None and plan.user_id == user_id and anchor_date < plan.starts_on:
-            if plan.id in visited:
-                plan = None
-                break
-            visited.add(plan.id)
-            plan = self._training_plans.get_plan_for_user(user_id, plan.metadata.get("previous_plan_id"))
-            if plan is not None and plan.status not in {"active", "superseded", "completed"}:
-                plan = None
-        if plan is not None and (plan.user_id != user_id or not plan.starts_on <= anchor_date <= plan.ends_on):
-            plan = None
+        plan = resolve_plan_for_date(self._training_plans, user_id, anchor_date)
 
         training_load = self._training_load_service.calculate(
             user_id=user_id,
@@ -102,3 +91,19 @@ def _activity_summary(activity) -> dict:
         "average_heart_rate": activity.average_heart_rate,
         "matched_workout_id": activity.matched_workout_id,
     }
+
+
+def resolve_plan_for_date(plans: TrainingPlanStore, user_id: str, anchor_date: date) -> TrainingPlan | None:
+    plan = plans.get_current_plan_for_user(user_id)
+    visited: set[str | None] = set()
+    # A newly projected plan starts tomorrow; predecessor workouts can still own today.
+    while plan is not None and plan.user_id == user_id and anchor_date < plan.starts_on:
+        if plan.id in visited:
+            return None
+        visited.add(plan.id)
+        plan = plans.get_plan_for_user(user_id, plan.metadata.get("previous_plan_id"))
+        if plan is not None and plan.status not in {"active", "superseded", "completed"}:
+            return None
+    if plan is None or plan.user_id != user_id or not plan.starts_on <= anchor_date <= plan.ends_on:
+        return None
+    return plan
