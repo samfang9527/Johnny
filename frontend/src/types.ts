@@ -176,6 +176,32 @@ export interface AgentRunResponse {
   workflow_name: string
   finished_at: string | null
   error_message: string | null
+  daily_advice_id?: string | null
+}
+
+export interface DailyAdvice {
+  id: string
+  adviceDate: string
+  state: 'pending' | 'ready' | 'sync_failed' | 'generation_failed' | 'no_plan'
+  dataFreshness: 'fresh' | 'limited' | 'stale'
+  generatedAt: string | null
+  sourceSyncRunId: string | null
+  sourceRunId: string | null
+  planVersionId: string | null
+  workoutId: string | null
+  executionMode: 'follow_plan' | 'ease_off' | 'rest' | 'completed' | null
+  planWeek: { startsOn: string; endsOn: string } | null
+  facts: Record<string, unknown> | null
+  weekSummary: string | null
+  todayExecution: string | null
+  workoutGuide: { purpose: string; expectedFeel: string; ifTooHard: string; ifTooEasy: string } | null
+}
+
+export interface QueuedDailyAdviceRun {
+  run_id: string
+  status: string
+  workflow_name: string
+  poll_url: string
 }
 
 export interface TrainingPlanRegenerationOptions {
@@ -271,8 +297,8 @@ export type TodayDecisionState = 'run' | 'adjust' | 'rest'
 
 export interface TodayDecision {
   state: TodayDecisionState
-  label: '我可以' | '不太對勁' | '先收一下'
-  actionLabel: '開始跑步' | '接受調整' | '記錄休息'
+  label: '我可以' | '不太對勁' | '先收一下' | '今天已完成' | '建議更新中'
+  actionLabel: '開始跑步' | '接受調整' | '記錄休息' | '查看 Johnny 建議'
   tone: 'run' | 'adjust' | 'rest'
   voice: string
   memoryInsight?: string
@@ -379,6 +405,7 @@ export interface IntegrationConnectionResponse {
   sync_summary?: {
     resources: Record<string, SyncResourceSummary>
   } | null
+  daily_advice_run?: QueuedDailyAdviceRun | null
 }
 
 export interface IntegrationConnectionEnvelope {

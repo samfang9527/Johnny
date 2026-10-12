@@ -32,6 +32,7 @@ import {
 import AppButton from './components/AppButton.vue'
 import EvidenceList from './components/EvidenceList.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
+import DailyAdviceCard from './components/DailyAdviceCard.vue'
 import ProviderCard from './components/ProviderCard.vue'
 import RaceGoalModal from './components/RaceGoalModal.vue'
 import RecommendationActions from './components/RecommendationActions.vue'
@@ -54,6 +55,7 @@ import {
 } from './fixtures'
 import type {
   ConversationThread,
+  DailyAdvice,
   CurrentUser,
   InboxRecommendation,
   LinkedRecommendationContext,
@@ -150,6 +152,7 @@ const busyAction = ref('')
 const recommendationStatus = ref(fixtureRecommendation.status)
 const apiRaceSummary = ref<RaceSummary | null>(null)
 const apiTodayWorkoutPayload = ref<Record<string, unknown> | null>(null)
+const apiDailyAdvice = ref<DailyAdvice | null>(null)
 const apiTodayWorkout = computed(() => {
   const raw = apiTodayWorkoutPayload.value
   if (!raw) return null
@@ -184,6 +187,10 @@ const pendingDisconnectConnectionId = ref('')
 const userTimezone = ref('UTC')
 const calendarNow = ref(new Date())
 let calendarTimer: ReturnType<typeof setInterval> | undefined
+let advicePollTimer: ReturnType<typeof setTimeout> | undefined
+let advicePollGeneration = 0
+let advicePollAttempts = 0
+let lastMorningAdviceCheck = ''
 let sessionGeneration = 0
 let trainingReadVersion = 0
 let trainingReadPending = false
@@ -264,7 +271,7 @@ const effectiveTodayState = computed(() => {
   if (hasBackendHydrated.value && shouldRequireAuth() && hasActiveDataProvider.value) {
     return 'full'
   }
-  return hasBackendHydrated.value && shouldRequireAuth() && !apiRaceSummary.value && !apiTodayWorkout.value ? 'empty' : 'full'
+  return hasBackendHydrated.value && shouldRequireAuth() && !apiRaceSummary.value && !apiTodayWorkout.value && (!apiDailyAdvice.value || apiDailyAdvice.value.state === 'no_plan') ? 'empty' : 'full'
 })
 const raceSummary = computed(() => apiRaceSummary.value ?? (shouldRequireAuth() ? emptyRaceSummary() : fixtureRaceSummary))
 const todayWorkout = computed(() => apiTodayWorkout.value ?? (shouldRequireAuth() ? emptyWorkoutSummary() : fixtureTodayWorkout))
@@ -385,7 +392,8 @@ const recoveryFooterText = computed(() => {
   return ''
 })
 const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
-const todayDecision = computed(() => buildTodayDecision(recommendation.value, recoveryEvidence.value))
+const dailyAdvice = computed(() => apiDailyAdvice.value?.adviceDate === todayIsoDate.value ? apiDailyAdvice.value : null)
+const todayDecision = computed(() => dailyAdvice.value ? buildAdviceDecision(dailyAdvice.value) : buildTodayDecision(recommendation.value, recoveryEvidence.value))
 const todayEvidenceChips = computed(() => recoveryEvidence.value.slice(0, 3))
 const currentPlanPhase = computed(() => journeyPhases.value.find((phase) => phase.status === 'current') ?? (recoveryWindow.value ? {
   label: '恢復週 · Recovery Window', summary: `上一份計畫已結束，安排七天恢復。第 ${recoveryWindow.value.day} / 7 天`,
@@ -542,6 +550,25 @@ function buildTodayDecision(recommendation: RecommendationSummary | null, eviden
     tone: 'run',
     voice: '狀態可以，照計畫跑，節奏不要偷加。',
   }
+}
+
+function buildAdviceDecision(advice: DailyAdvice): TodayDecision {
+  if (advice.state !== 'ready' || advice.dataFreshness === 'stale' || !advice.executionMode) {
+    return {
+      state: 'adjust', label: '建議更新中', actionLabel: '查看 Johnny 建議', tone: 'adjust',
+      voice: '今天的建議還在更新，先依課表與身體感受保守執行。',
+    }
+  }
+  if (advice.executionMode === 'completed') {
+    return { state: 'rest', label: '今天已完成', actionLabel: '查看 Johnny 建議', tone: 'rest', voice: advice.todayExecution || '今天的訓練已完成。' }
+  }
+  if (advice.executionMode === 'rest') {
+    return { state: 'rest', label: '先收一下', actionLabel: '查看 Johnny 建議', tone: 'rest', voice: advice.todayExecution || '今天先休息。' }
+  }
+  if (advice.executionMode === 'ease_off') {
+    return { state: 'adjust', label: '不太對勁', actionLabel: '查看 Johnny 建議', tone: 'adjust', voice: advice.todayExecution || '今天保守執行。' }
+  }
+  return { state: 'run', label: '我可以', actionLabel: '開始跑步', tone: 'run', voice: advice.todayExecution || '照計畫執行。' }
 }
 
 function buildRecoveryDecision(
@@ -1035,6 +1062,7 @@ async function submitProvider() {
     })
     garminConnection.value = response.data
     providerMessage.value = `${response.data.provider_display_name || 'Garmin'} 已連接`
+    if (response.data.daily_advice_run) observeDailyAdviceRun(response.data.daily_advice_run.run_id)
     isProviderDialogOpen.value = false
   } catch (error) {
     if (!handleSessionExpiry(error)) {
@@ -1058,6 +1086,7 @@ async function syncGarminConnection(connection: IntegrationConnectionResponse) {
     const response = await syncIntegrationConnection(connection.id)
     garminConnection.value = response.data
     providerMessage.value = response.data.has_partial_failures ? 'Garmin 手動同步完成，部分資料需要處理。' : 'Garmin 手動同步完成'
+    if (response.data.daily_advice_run) observeDailyAdviceRun(response.data.daily_advice_run.run_id)
   } catch (error) {
     if (!handleSessionExpiry(error)) {
       providerError.value = error instanceof ApiRequestError && error.status === 409 ? 'Garmin 同步已在進行中，請稍後再試。' : 'Garmin 手動同步失敗。請稍後再試。'
@@ -1065,6 +1094,36 @@ async function syncGarminConnection(connection: IntegrationConnectionResponse) {
   } finally {
     providerBusy.value = ''
   }
+}
+
+function stopDailyAdviceObservation() {
+  advicePollGeneration += 1
+  if (advicePollTimer) clearTimeout(advicePollTimer)
+  advicePollTimer = undefined
+  advicePollAttempts = 0
+}
+
+function observeDailyAdviceRun(runId: string) {
+  stopDailyAdviceObservation()
+  const observation = advicePollGeneration
+  const session = sessionGeneration
+  const anchorDate = todayIsoDate.value
+  const poll = async () => {
+    if (isUnmounted || observation !== advicePollGeneration || session !== sessionGeneration) return
+    advicePollAttempts += 1
+    try {
+      const response = await getAgentRun(runId)
+      if (isUnmounted || observation !== advicePollGeneration || session !== sessionGeneration) return
+      if (response.data.status === 'completed' || response.data.status === 'failed') {
+        if (anchorDate === todayIsoDate.value) await refreshCalendarPayloads(anchorDate)
+        return
+      }
+    } catch (error) {
+      if (handleSessionExpiry(error)) return
+    }
+    if (advicePollAttempts < 20) advicePollTimer = setTimeout(() => { void poll() }, Math.min(30_000, 2_000 * advicePollAttempts))
+  }
+  advicePollTimer = setTimeout(() => { void poll() }, 2_000)
 }
 
 function requestDisconnectGarmin(connection: IntegrationConnectionResponse) {
@@ -1520,6 +1579,7 @@ function clearPlanRegenerationPollTimer() {
 }
 
 function stopPlanRegenerationObservation() {
+  stopDailyAdviceObservation()
   editingRace.value = null
   deletingRace.value = null
   isRaceGoalModalOpen.value = false
@@ -1672,6 +1732,13 @@ onUnmounted(() => {
 
 function refreshCalendarDate() {
   calendarNow.value = new Date()
+  const localHour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: userTimezone.value, hour: '2-digit', hourCycle: 'h23' }).format(calendarNow.value))
+  const localMinute = Number(new Intl.DateTimeFormat('en-GB', { timeZone: userTimezone.value, minute: '2-digit' }).format(calendarNow.value))
+  const morningCheck = `${todayIsoDate.value}:04`
+  if ((localHour > 4 || (localHour === 4 && localMinute >= 5)) && lastMorningAdviceCheck !== morningCheck && shouldRequireAuth() && hasBackendHydrated.value && isAuthenticated.value) {
+    lastMorningAdviceCheck = morningCheck
+    void refreshCalendarPayloads(todayIsoDate.value)
+  }
   void nextTick(ensureCurrentToday)
 }
 
@@ -2005,6 +2072,7 @@ function applyIntegrationsPayload(connections: IntegrationConnectionResponse[]) 
 }
 
 function applyTodayPayload(payload: Record<string, unknown>) {
+  apiDailyAdvice.value = mapDailyAdvice(payload.daily_advice)
   const nextRace = payload.next_race as Record<string, unknown> | null | undefined
   if (nextRace?.name && nextRace.race_date) {
     apiRaceSummary.value = {
@@ -2029,6 +2097,36 @@ function applyTodayPayload(payload: Record<string, unknown>) {
 
   const unavailable = Array.isArray(payload.unavailable_signals) ? payload.unavailable_signals : []
   apiUnavailableSignals.value = unavailable.map(String)
+}
+
+function mapDailyAdvice(value: unknown): DailyAdvice | null {
+  const raw = asRecord(value)
+  if (!raw || typeof raw.id !== 'string' || !isIsoDate(raw.advice_date)) return null
+  if (!['pending', 'ready', 'sync_failed', 'generation_failed', 'no_plan'].includes(String(raw.state))) return null
+  if (!['fresh', 'limited', 'stale'].includes(String(raw.data_freshness))) return null
+  const week = asRecord(raw.plan_week)
+  const guide = asRecord(raw.workout_guide)
+  const mode = ['follow_plan', 'ease_off', 'rest', 'completed'].includes(String(raw.execution_mode)) ? raw.execution_mode as DailyAdvice['executionMode'] : null
+  return {
+    id: raw.id,
+    adviceDate: raw.advice_date,
+    state: raw.state as DailyAdvice['state'],
+    dataFreshness: raw.data_freshness as DailyAdvice['dataFreshness'],
+    generatedAt: typeof raw.generated_at === 'string' ? raw.generated_at : null,
+    sourceSyncRunId: typeof raw.source_sync_run_id === 'string' ? raw.source_sync_run_id : null,
+    sourceRunId: typeof raw.source_run_id === 'string' ? raw.source_run_id : null,
+    planVersionId: typeof raw.plan_version_id === 'string' ? raw.plan_version_id : null,
+    workoutId: typeof raw.workout_id === 'string' ? raw.workout_id : null,
+    executionMode: mode,
+    planWeek: week && isIsoDate(week.starts_on) && isIsoDate(week.ends_on) ? { startsOn: week.starts_on, endsOn: week.ends_on } : null,
+    facts: asRecord(raw.facts) ?? null,
+    weekSummary: typeof raw.week_summary === 'string' ? raw.week_summary : null,
+    todayExecution: typeof raw.today_execution === 'string' ? raw.today_execution : null,
+    workoutGuide: guide && ['purpose', 'expected_feel', 'if_too_hard', 'if_too_easy'].every((key) => typeof guide[key] === 'string') ? {
+      purpose: guide.purpose as string, expectedFeel: guide.expected_feel as string,
+      ifTooHard: guide.if_too_hard as string, ifTooEasy: guide.if_too_easy as string,
+    } : null,
+  }
 }
 
 function applyRecommendationsPayload(items: Array<Record<string, unknown>>) {
@@ -2899,6 +2997,7 @@ function shouldRequireAuth(): boolean {
           <AppButton tone="neutral" @click="showView('johnny')">查看待決定建議</AppButton>
         </article>
         </template>
+        <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" class="today-grid__wide" data-testid="today-daily-advice" />
       </section>
 
       <section v-else-if="activeView === 'plan'" class="page-stack plan-page" aria-labelledby="plan-title">
@@ -3104,8 +3203,10 @@ function shouldRequireAuth(): boolean {
         <div class="page-heading">
           <p class="section-label">Johnny 建議</p>
           <h2 id="johnny-title">Johnny</h2>
-          <p>Johnny 只把需要你做訓練決策的建議放在這裡，對話問題仍留在對話。</p>
+          <p>今日建議說明課表怎麼執行；需要你確認的課表調整另外列在下方。</p>
         </div>
+
+        <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" data-testid="johnny-daily-advice" />
 
         <article v-if="props.inboxState === 'loading'" class="state-panel" aria-live="polite">
           <p class="section-label">Loading</p>

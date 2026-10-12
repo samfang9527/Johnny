@@ -2784,3 +2784,31 @@ button:disabled {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.daily-advice-card {
+  min-width: 0;
+  border-left: 0.3rem solid var(--color-lane-green);
+}
+.daily-advice-card__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+.daily-advice-card__heading h3 { margin: 0.2rem 0 0; }
+.daily-advice-card__week,
+.daily-advice-card__time { color: var(--color-muted-green); font-family: var(--font-data); font-size: 0.82rem; overflow-wrap: anywhere; }
+.daily-advice-card__notice { margin: 0.85rem 0; padding: 0.65rem 0.8rem; border-radius: var(--radius-md); background: var(--color-mint-surface); }
+.daily-advice-card__notice--warning { background: color-mix(in srgb, var(--color-split-amber) 16%, white); }
+.daily-advice-card__sections { display: grid; gap: 1rem; margin-top: 1rem; }
+.daily-advice-card__sections section { min-width: 0; padding-top: 0.8rem; border-top: 1px solid var(--color-line-mint); }
+.daily-advice-card__sections h4 { margin: 0 0 0.4rem; font-size: 0.9rem; color: var(--color-lane-green); }
+.daily-advice-card__sections p { margin: 0; overflow-wrap: anywhere; }
+.daily-advice-card__guide { display: grid; gap: 0.4rem; margin: 0.8rem 0 0; }
+.daily-advice-card__guide div { display: grid; grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr); gap: 0.4rem 0.8rem; }
+.daily-advice-card__guide dt { color: var(--color-muted-green); }
+.daily-advice-card__guide dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 380px) {
+  .daily-advice-card__guide div { grid-template-columns: 1fr; gap: 0; }
+}

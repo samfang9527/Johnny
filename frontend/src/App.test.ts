@@ -33,6 +33,18 @@ function garminConnectionData(overrides: Record<string, unknown> = {}): Record<s
   }
 }
 
+function advicePayload(id = 'advice-1', summary = '本週多跑了一堂，今天稍微收一點。', mode = 'ease_off') {
+  return {
+    id, advice_date: '2026-09-26', state: 'ready', data_freshness: 'fresh',
+    generated_at: '2026-09-26T04:05:00Z', source_sync_run_id: 'sync-1', source_run_id: `run-${id}`,
+    plan_version_id: 'plan-1', workout_id: 'workout-1', execution_mode: mode,
+    plan_week: { starts_on: '2026-09-23', ends_on: '2026-09-29' },
+    facts: { status: 'above', planned_count: 3, completed_count: 4 },
+    week_summary: summary, today_execution: '今天保留有氧目的，縮短負荷。',
+    workout_guide: { purpose: '建立有氧', expected_feel: '跑完有餘裕', if_too_hard: '放慢', if_too_easy: '不要加速' },
+  }
+}
+
 function mockAuthenticatedToday({
   userId,
   todayData,
@@ -82,6 +94,59 @@ describe('Johnny product shell', () => {
     )
   })
   afterEach(() => { vi.useRealTimers() })
+
+  it('shows one current advice alongside a separate pending recommendation', async () => {
+    mockAuthenticatedToday({
+      userId: 'advice-user',
+      todayData: { scheduled_workouts: [], recovery: {}, unavailable_signals: [], daily_advice: advicePayload() },
+      recommendations: [{
+        id: 'pending-change', title: '調整明天課表', rationale: '恢復較慢', priority: 'medium', status: 'pending',
+        evidence: [], proposed_action: { type: 'no_plan_change', reason: '等待確認' },
+      }],
+    })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="today-daily-advice"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('本週多跑了一堂')
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('不太對勁')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).not.toContain('接受調整')
+    expect(wrapper.get('[data-testid="today-daily-advice"]').findAll('[data-testid="recommendation-actions"]')).toHaveLength(0)
+    await wrapper.get('button[data-view="johnny"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="johnny-daily-advice"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="inbox-card-pending-change"] [data-testid="recommendation-actions"]').exists()).toBe(true)
+  })
+
+  it('replaces advice after manual sync finishes without rendering both revisions', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
+    let currentAdvice = advicePayload('old', '舊的本週回顧')
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) return Promise.resolve(okJson({ id: 'advice-user', email: 'runner@example.com', display_name: 'Runner', capabilities: ['today', 'integrations'] }))
+      if (url.includes('/api/v1/today')) return Promise.resolve(okJson({ scheduled_workouts: [], recovery: {}, unavailable_signals: [], daily_advice: currentAdvice }))
+      if (url.endsWith('/api/v1/integrations/connections') && init?.method === 'GET') return Promise.resolve(okJson([garminConnectionData()]))
+      if (url.endsWith('/api/v1/integrations/connections/conn-garmin-1/sync')) return Promise.resolve(okJson(garminConnectionData({ daily_advice_run: { run_id: 'refresh-run', status: 'queued', workflow_name: 'daily_recommendation', poll_url: '/api/v1/agent-runs/refresh-run' } })))
+      if (url.endsWith('/api/v1/agent-runs/refresh-run')) {
+        currentAdvice = advicePayload('new', '同步後更新的本週回顧')
+        return Promise.resolve(okJson({ id: 'refresh-run', status: 'completed', workflow_name: 'daily_recommendation', daily_advice_id: 'new', finished_at: '2026-09-26T05:00:00Z', error_message: null }))
+      }
+      return Promise.resolve(okJson([]))
+    })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('舊的本週回顧')
+    await wrapper.get('button[data-view="data"]').trigger('click')
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="manual-sync"]').trigger('click')
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/v1/agent-runs/refresh-run', expect.anything())
+    await wrapper.get('button[data-view="today"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="today-daily-advice"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('同步後更新的本週回顧')
+    expect(wrapper.text()).not.toContain('舊的本週回顧')
+  })
 
   it('renders the Today adjust decision card with factual evidence', () => {
     const wrapper = mount(App)
