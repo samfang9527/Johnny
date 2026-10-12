@@ -24,10 +24,10 @@ The system SHALL require the Running Companion Agent to access athlete, training
 ### Requirement: Deterministic Analytics Boundary
 The system SHALL compute canonical training load, recovery state, and today context through deterministic domain or application services rather than relying on LLM-generated calculations.
 
-#### Scenario: Daily agent run builds context
+#### Scenario: Daily Advice run builds context
 - **WHEN** a daily recommendation run starts
-- **THEN** the runtime builds today context through the training analytics application handler
-- **AND** the agent prompt or model response references that structured context instead of inventing metric values
+- **THEN** the runtime resolves the owning Plan Version, its seven-day plan block, and committed activity evidence through deterministic services
+- **AND** the model explains validated facts instead of inventing metric values
 
 ### Requirement: Write Tool Safety
 The system SHALL allow the agent to create recommendations, workout adjustment proposals, memory candidates, and active training plans while keeping recommendation approval separate from training-plan generation.
@@ -58,11 +58,11 @@ The system SHALL record each agent run with trigger, workflow name, model provid
 - **AND** it links the queued task to the run through the task payload
 - **AND** clients can poll the run before worker execution starts
 
-#### Scenario: Daily agent run completes
+#### Scenario: Daily Advice run completes
 - **WHEN** a scheduled daily recommendation agent run completes
 - **THEN** the system stores an agent run record
 - **AND** it stores tool calls as ordered run steps
-- **AND** it links any created recommendation to the agent run
+- **AND** it links the current Daily Advice id to the agent run while leaving recommendation id null
 
 #### Scenario: Agent run fails
 - **WHEN** model invocation, tool execution, task payload validation, or workflow dispatch fails
@@ -135,7 +135,7 @@ The system SHALL isolate LLM provider calls behind an application-facing gateway
 #### Scenario: Agent orchestration test uses fake model
 - **WHEN** tests execute a daily recommendation workflow
 - **THEN** they provide a fake model gateway response
-- **AND** the runtime records the same tool-call and recommendation behavior without requiring network access
+- **AND** the runtime records the same structured Daily Advice behavior without requiring network access
 
 ### Requirement: Safety Boundaries For Medical And Injury Topics
 The system SHALL detect pain, injury-adjacent, and medical-style prompts and respond with conservative non-diagnostic guidance.

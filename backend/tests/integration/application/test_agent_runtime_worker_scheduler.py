@@ -156,7 +156,7 @@ def test_schedule_restart_and_timezone_change_keep_one_task_per_local_date(sqlit
 
 def test_scheduled_daily_run_waits_for_sync_gate_then_uses_stored_data_without_connection(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
-    day = date.today()
+    day = datetime.now(timezone.utc).date()
     with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
         _create_context_ready_user(uow.session, "no-connection-user")
         plan = uow.session.get(TrainingPlanModel, "plan-no-connection-user")

@@ -1063,6 +1063,7 @@ async function submitProvider() {
     garminConnection.value = response.data
     providerMessage.value = `${response.data.provider_display_name || 'Garmin'} 已連接`
     if (response.data.daily_advice_run) observeDailyAdviceRun(response.data.daily_advice_run.run_id)
+    else await refreshCalendarPayloads(todayIsoDate.value)
     isProviderDialogOpen.value = false
   } catch (error) {
     if (!handleSessionExpiry(error)) {
@@ -1087,9 +1088,11 @@ async function syncGarminConnection(connection: IntegrationConnectionResponse) {
     garminConnection.value = response.data
     providerMessage.value = response.data.has_partial_failures ? 'Garmin 手動同步完成，部分資料需要處理。' : 'Garmin 手動同步完成'
     if (response.data.daily_advice_run) observeDailyAdviceRun(response.data.daily_advice_run.run_id)
+    else await refreshCalendarPayloads(todayIsoDate.value)
   } catch (error) {
     if (!handleSessionExpiry(error)) {
       providerError.value = error instanceof ApiRequestError && error.status === 409 ? 'Garmin 同步已在進行中，請稍後再試。' : 'Garmin 手動同步失敗。請稍後再試。'
+      await refreshCalendarPayloads(todayIsoDate.value)
     }
   } finally {
     providerBusy.value = ''

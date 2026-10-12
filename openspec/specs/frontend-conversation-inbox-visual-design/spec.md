@@ -1,5 +1,5 @@
 ## Purpose
-Define the Chinese-first visual and interaction requirements for Johnny's Conversation and Agent Inbox frontend surfaces.
+Define the Chinese-first visual and interaction requirements for Johnny's Conversation and pending Recommendation surfaces.
 
 ## Requirements
 
@@ -41,12 +41,12 @@ The system SHALL render Johnny responses with structured evidence and proposed a
 - **WHEN** a Johnny response includes proposed actions
 - **THEN** the UI shows action cards with stable recommendation action labels where the action changes a training decision
 
-### Requirement: Agent Inbox decision queue
-The system SHALL render `Agent 收件匣` as a proactive recommendation decision queue separate from Conversation.
+### Requirement: Johnny decision queue
+The system SHALL render `Johnny` as a pending Recommendation decision queue separate from Daily Advice and Conversation.
 
 #### Scenario: User views pending recommendations
 - **WHEN** pending recommendations exist
-- **THEN** the inbox shows each recommendation with priority, summary, evidence, status, expiration when present, and available actions
+- **THEN** Johnny shows each Recommendation with priority, summary, evidence, status, expiration when present, and available approval actions
 
 #### Scenario: User views historical recommendations
 - **WHEN** accepted, rejected, edited, expired, or applied recommendations exist
@@ -54,7 +54,12 @@ The system SHALL render `Agent 收件匣` as a proactive recommendation decision
 
 #### Scenario: Inbox is empty
 - **WHEN** no proactive recommendations exist
-- **THEN** the UI shows a Chinese-first empty state explaining that Johnny will place future proactive suggestions in `Agent 收件匣`
+- **THEN** the UI shows a Chinese-first empty state explaining that future plan-change proposals will appear here
+
+#### Scenario: Daily Advice appears beside the decision queue
+- **WHEN** current Daily Advice exists for the athlete-local date
+- **THEN** Johnny may show the same single current advice near the weekly review
+- **AND** it does not enter the pending queue or expose accept/reject actions
 
 ### Requirement: Linked recommendation discussion
 The system SHALL let users discuss a recommendation from Today or Agent Inbox while preserving the recommendation context.
@@ -68,6 +73,6 @@ The system SHALL let users discuss a recommendation from Today or Agent Inbox wh
 The system SHALL keep recommendation actions consistent across Today, Agent Inbox, and Conversation proposed-action cards.
 
 #### Scenario: Recommendation actions appear outside Today
-- **WHEN** recommendation actions appear in `Agent 收件匣` or `對話`
+- **WHEN** recommendation actions appear in `Johnny` or a future `對話` proposed-action card
 - **THEN** the actions use the same labels, busy behavior, disabled behavior, and focus-visible treatment as Today
 - **AND** destructive or rejection actions remain visually distinct without relying on color alone

@@ -21,8 +21,8 @@ The system SHALL replace the frontend scaffold with a Chinese-first Johnny produ
 #### Scenario: User opens the frontend shell
 
 - **WHEN** the user opens the frontend app
-- **THEN** the app shows Johnny product navigation with `今日`, `課表`, `Agent 收件匣`, `對話`, and `資料來源`
-- **AND** the shell uses the `DESIGN.md` dark training cockpit palette, typography roles, and focus-visible states
+- **THEN** the app shows Johnny product navigation with `今日`, `計畫`, `Johnny`, `運動員`, and `資料`
+- **AND** the shell uses the `DESIGN.md` light mint start-line palette, typography roles, and focus-visible states
 
 ### Requirement: Today decision cockpit
 
@@ -31,13 +31,13 @@ The system SHALL render Today as a decision cockpit that prioritizes race contex
 #### Scenario: User views Today with full context
 
 - **WHEN** Today context is available from the API
-- **THEN** the user sees race countdown, recovery signals, today's workout, recommendation summary, evidence, unavailable signals when present, and action controls in Chinese-first copy
+- **THEN** the user sees race countdown, recovery signals, today's unchanged workout, current Daily Advice when present, separate pending proposals, evidence, and unavailable signals in Chinese-first copy
 
 #### Scenario: User views Today with sparse data
 
 - **WHEN** Today context is missing recovery, activity, or health signals
 - **THEN** the UI shows a clear sparse-data state that identifies missing signals
-- **AND** the UI provides a path to `資料來源` for binding data providers
+- **AND** the UI provides a path to `資料` for binding data providers
 
 #### Scenario: Showing a compact structured workout summary
 
@@ -52,9 +52,26 @@ The system SHALL render Today as a decision cockpit that prioritizes race contex
 - **WHEN** the user opens workout details
 - **THEN** a view-only modal shows the ordered steps, nested repeat blocks, target zones, computed target snapshots, and optional coach note
 
+### Requirement: Current Daily Advice
+The system SHALL show one current Daily Advice for the athlete-local date on Today, with all three Traditional Chinese sections reachable without an approval action.
+
+#### Scenario: Advice is ready
+- **WHEN** Today includes a ready Daily Advice
+- **THEN** the UI shows its plan-week execution summary, today's workout execution advice, workout guide, generation time, and source freshness
+- **AND** the Today Decision follows its validated execution mode without implying that advice changes the planned workout
+
+#### Scenario: Advice is pending or stale
+- **WHEN** Daily Advice is pending, failed, or stale after a failed refresh
+- **THEN** the UI shows the current state and any earlier successful text with its original generation time and a freshness warning
+- **AND** the Today Decision does not contradict the uncertain advice
+
+#### Scenario: Manual sync replaces advice
+- **WHEN** a manual Garmin sync returns a Daily Advice run and that run completes
+- **THEN** Today refreshes and shows only the new current advice
+
 ### Requirement: Recommendation decision strip
 
-The system SHALL display recommendation decisions using the `decision strip` pattern from `DESIGN.md`.
+The system SHALL display separate approval-backed Recommendation decisions using the `decision strip` pattern from `DESIGN.md`. Daily Advice has no accept or reject controls.
 
 #### Scenario: Pending recommendation is displayed
 
@@ -91,11 +108,11 @@ The system SHALL display planned workouts in a calendar-oriented schedule that r
 
 ### Requirement: Data source binding entry point
 
-The system SHALL provide a first-class `資料來源` surface for supported provider binding and sync-status guidance.
+The system SHALL provide a first-class `資料` surface for supported provider binding and sync-status guidance.
 
 #### Scenario: User opens data sources
 
-- **WHEN** the user opens `資料來源`
+- **WHEN** the user opens `資料`
 - **THEN** the UI shows provider cards for Garmin, Apple Health, Strava, and future providers with connection status, signal coverage, and a `連接資料來源` action where supported
 
 #### Scenario: User binds a supported provider

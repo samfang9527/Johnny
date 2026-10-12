@@ -21,6 +21,9 @@
   - `我可以` with primary action `開始跑步`
   - `不太對勁` with primary action `接受調整`
   - `先收一下` with primary action `記錄休息`
+- When a ready Daily Advice exists, Today Decision follows its validated `follow_plan`, `ease_off`, `rest`, or `completed` mode. Advice is read-only: `ease_off`, `rest`, and `completed` link to the advice without an acceptance action. Pending or stale advice uses a conservative fallback.
+- Today and Johnny may show the same current Daily Advice for the athlete-local date, with all three sections, generation time, and freshness. They never show two revisions together. Pending approval-backed Recommendations remain separate in Johnny and retain their actions.
+- Manual Garmin sync completion may return a Daily Advice run. The frontend observes that run and refreshes Today when it completes; a failed refresh retains prior advice with stale status.
 - Today Decision evidence shows the top current training/recovery signals plus one subtle Athlete Memory insight when relevant. It does not expose Athlete Memory as a browsable data object.
 - `今日` mobile layout uses a centered vertical flow. Desktop uses the main Today decision column plus a right-side context rail for race, plan, signal coverage, and pending recommendation context.
 - `今日` includes a weekly activity rhythm chart below the decision card.

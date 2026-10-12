@@ -1,14 +1,15 @@
 ## Purpose
-Define recommendation approval behavior for Johnny so training recommendations can be reviewed, discussed, accepted, rejected, or edited with explicit user control and durable history.
+Define approval behavior for proposed training-plan changes. Daily Advice is a separate read-only coaching result and does not enter this lifecycle.
 
 ## Requirements
 
 ### Requirement: Evidence-Backed Recommendation
 The system SHALL store each training recommendation with structured evidence, a proposed action, lifecycle status, and user ownership. Generated training-plan activation is handled by the training-plan generation workflow, not recommendation approval.
 
-#### Scenario: Creating daily recommendation
-- **WHEN** a daily recommendation is created from Today context containing a planned workout and recovery evidence
+#### Scenario: Creating a separate plan-change proposal
+- **WHEN** Johnny proposes changing a planned workout using structured evidence
 - **THEN** the system stores title, rationale, recommendation type, priority, structured evidence values, proposed action, owner user, and `pending` status
+- **AND** no Daily Advice is created from that proposal
 
 #### Scenario: Reject malformed evidence
 - **WHEN** a recommendation is created with evidence items missing required `source`, `metric`, or `value` fields
@@ -74,13 +75,21 @@ The system SHALL allow recommendation history to be retrieved for a user with pa
 - **WHEN** recommendation history is listed for a user
 - **THEN** recommendations owned by other users are not returned
 
-### Requirement: Deterministic Daily Recommendation Service
-The system SHALL provide a daily recommendation service shell that can create recommendations from deterministic Today context without LLM-generated text.
+### Requirement: Deterministic Plan-Change Proposal Service
+The system MAY create a separate approval-backed workout proposal from deterministic Today context without making Daily Advice itself a Recommendation.
 
 #### Scenario: Recovery warning from Today context
 - **WHEN** Today context indicates a planned workout and conservative recovery label `rest`
-- **THEN** the service creates a pending workout-adjustment or recovery-warning recommendation with structured evidence from the Today context
+- **THEN** the proposal service may create a pending workout-adjustment or recovery-warning Recommendation with structured evidence from the Today context
 
 #### Scenario: No recommendation when context is insufficient
 - **WHEN** Today context lacks actionable plan or recovery evidence
 - **THEN** the system does not create a plan-changing recommendation
+
+### Requirement: Daily Advice remains outside approval
+Daily Advice SHALL NOT require acceptance or rejection and SHALL NOT mutate the canonical workout.
+
+#### Scenario: Advice and proposal coexist
+- **WHEN** a current Daily Advice and a separate pending workout-adjustment Recommendation exist
+- **THEN** the advice is read on Today without decision controls
+- **AND** the Recommendation retains its accept, reject, edit, and history workflow

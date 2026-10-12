@@ -121,12 +121,20 @@ describe('Johnny product shell', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
     let currentAdvice = advicePayload('old', '舊的本週回顧')
+    let syncCalls = 0
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/api/v1/me')) return Promise.resolve(okJson({ id: 'advice-user', email: 'runner@example.com', display_name: 'Runner', capabilities: ['today', 'integrations'] }))
       if (url.includes('/api/v1/today')) return Promise.resolve(okJson({ scheduled_workouts: [], recovery: {}, unavailable_signals: [], daily_advice: currentAdvice }))
       if (url.endsWith('/api/v1/integrations/connections') && init?.method === 'GET') return Promise.resolve(okJson([garminConnectionData()]))
-      if (url.endsWith('/api/v1/integrations/connections/conn-garmin-1/sync')) return Promise.resolve(okJson(garminConnectionData({ daily_advice_run: { run_id: 'refresh-run', status: 'queued', workflow_name: 'daily_recommendation', poll_url: '/api/v1/agent-runs/refresh-run' } })))
+      if (url.endsWith('/api/v1/integrations/connections/conn-garmin-1/sync')) {
+        syncCalls += 1
+        if (syncCalls > 1) {
+          currentAdvice = { ...currentAdvice, state: 'sync_failed', data_freshness: 'stale' }
+          return Promise.resolve(okJson(garminConnectionData({ daily_advice_run: null, sync_status: 'failed' })))
+        }
+        return Promise.resolve(okJson(garminConnectionData({ daily_advice_run: { run_id: 'refresh-run', status: 'queued', workflow_name: 'daily_recommendation', poll_url: '/api/v1/agent-runs/refresh-run' } })))
+      }
       if (url.endsWith('/api/v1/agent-runs/refresh-run')) {
         currentAdvice = advicePayload('new', '同步後更新的本週回顧')
         return Promise.resolve(okJson({ id: 'refresh-run', status: 'completed', workflow_name: 'daily_recommendation', daily_advice_id: 'new', finished_at: '2026-09-26T05:00:00Z', error_message: null }))
@@ -146,6 +154,13 @@ describe('Johnny product shell', () => {
     expect(wrapper.findAll('[data-testid="today-daily-advice"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('同步後更新的本週回顧')
     expect(wrapper.text()).not.toContain('舊的本週回顧')
+
+    await wrapper.get('button[data-view="data"]').trigger('click')
+    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="manual-sync"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('button[data-view="today"]').trigger('click')
+    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('同步後更新的本週回顧')
+    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('先前建議')
   })
 
   it('renders the Today adjust decision card with factual evidence', () => {

@@ -1,9 +1,10 @@
 # Johnny
 
-Johnny is an AI running companion web app. The MVP proves the loop:
+Johnny is an AI running companion web app. The MVP has a daily coaching loop and a separate approval path for proposed plan changes:
 
 ```text
-Training data -> Analytics -> AI recommendation -> User approval -> Training adjustment -> Notification
+Training data -> Analytics -> Daily Advice -> Athlete executes the existing workout
+Separate plan-change proposal -> Athlete approval -> Training adjustment
 ```
 
 ## Stack
@@ -30,7 +31,7 @@ cp backend/.env.example backend/.env
 
 The API loads `backend/.env` when present, while shell environment variables still take precedence.
 
-OpenAI is the first production LLM provider for the Running Companion Agent. To enable OpenAI-backed agent execution locally, keep `LLM_PROVIDER=openai`, set `LLM_MODEL` to the model you want Johnny to use, and provide either `OPENAI_API_KEY` or `LLM_API_KEY` in your shell or uncommitted `backend/.env`.
+OpenAI is the first production LLM provider for the Running Companion Agent and Daily Advice. To enable OpenAI-backed agent execution locally, keep `LLM_PROVIDER=openai`, set `LLM_MODEL` to the model you want Johnny to use, and provide either `OPENAI_API_KEY` or `LLM_API_KEY` in your shell or uncommitted `backend/.env`. Without an API key, queued runs use the deterministic local model.
 
 LLM inputs and outputs are treated as untrusted. Johnny exposes only workflow-allowed tools, sends dynamic context as data rather than elevated instructions, validates OpenAI function-call arguments against strict schemas, and performs server-side policy checks before executing any model-requested tool.
 
@@ -152,6 +153,23 @@ advice after 04:00 local time only when a Plan Version owns the date. On startup
 checks immediately, so a restart after 04:00 catches up for the current local date.
 The queue keeps one scheduled task per athlete and local date, even after a completed
 task or a timezone change. The worker syncs activities before generating advice.
+
+Daily Advice summarizes the owning Plan Version's seven-day block, recommends how to
+execute today's existing workout, and explains its purpose and expected feel. It is
+read-only: it does not edit the planned workout or create a pending Recommendation.
+`GET /api/v1/today?anchor_date=YYYY-MM-DD` returns the one current advice for that
+athlete and local date. A successful manual Garmin sync queues a refresh; a successful
+newer run replaces the visible advice while run history remains available. The
+frontend observes the returned run and refreshes Today. A separate proposed plan
+adjustment remains a Recommendation that requires athlete approval.
+
+If no activity connection is active, Johnny uses already stored activities and marks
+advice data coverage limited. An activity sync failure or required reauthentication
+blocks fresh advice and leaves earlier text visible with its original generation time,
+`stale` freshness, and a failure state. A health-only sync failure may still generate
+advice from newly synced activities, marked `limited` because recovery data is missing.
+If an advice run finds no Plan Version owning the date, Today reports a no-plan state
+rather than inventing a workout. Check the athlete's Data view for connection and sync errors.
 
 Monitor both processes for restarts and errors, and monitor `agent_tasks` for growing
 queued or failed work. The current Terraform template provisions only the API service;

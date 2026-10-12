@@ -228,7 +228,7 @@ The system SHALL persist local async agent work in an `agent_tasks` table with A
 
 #### Scenario: Duplicate scheduled task blocked
 
-- **GIVEN** a queued or completed scheduled daily recommendation task exists for a user and anchor date
+- **GIVEN** a queued or completed scheduled Daily Advice task exists for a user and athlete-local date
 - **WHEN** the scheduler attempts to enqueue the same idempotency key again
 - **THEN** the database-backed queue prevents a duplicate task
 

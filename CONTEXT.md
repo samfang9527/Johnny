@@ -41,8 +41,20 @@ Johnny's deterministic display name for a workout, derived from its structured w
 _Avoid_: LLM workout title, catchy workout name
 
 **Today Decision**:
-Johnny's daily recommendation framing for whether the athlete should run, adjust the planned workout, or rest based on the active projection and current recovery evidence.
+Johnny's daily framing for whether the athlete should run, execute the planned workout more conservatively, rest, or recognize a completed session. When current Daily Advice is ready it follows the validated execution mode; pending or stale advice receives a conservative fallback. It does not itself approve a plan change.
 _Avoid_: Daily status, readiness score, workout verdict
+
+**Daily Advice**:
+One current read-only coaching result for an athlete-local date. It records plan-week execution facts, today's execution guidance, and the workout's purpose, expected feel, and safe adjustments. A successful refresh replaces the visible content; a failed refresh retains earlier text with a stale state. It never changes a canonical workout or requires approval.
+_Avoid_: Pending recommendation, plan adjustment, second workout
+
+**Plan Week**:
+The owning Plan Version's seven-day block beginning at its start date plus whole seven-day intervals, truncated at the version end date. It is not a calendar Monday–Sunday week.
+_Avoid_: Calendar week, rolling seven days
+
+**Recommendation**:
+A separate evidence-backed proposal, including a possible workout adjustment, that retains owner-scoped accept, reject, edit, and history behavior. Daily Advice does not create one automatically.
+_Avoid_: Daily Advice, automatic plan change
 
 **Signal Coverage**:
 Johnny's view of which connected activity, recovery, health, and preference signals are available enough to support coaching recommendations.
