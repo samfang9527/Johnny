@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import os
 from secrets import compare_digest
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
@@ -19,6 +20,9 @@ from src.api.schemas.integrations import (
     ProviderWebhookRequest,
     SyncSummaryResponse,
 )
+from src.api.schemas.agent_runs import QueuedAgentRunResponse
+from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.daily_advice_sync import queue_after_completed_sync
 from src.application.integrations import (
     AdminImportGarminTokenCommand,
     AdminImportGarminTokenHandler,
@@ -41,12 +45,17 @@ from src.application.integrations import (
 )
 from src.domain.integrations_notifications import IntegrationConnectionRef, ProviderFetchResult, SyncAlreadyRunningError, SyncSummary
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
+from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
+from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
+from src.infrastructure.database.daily_advice_repository import SqlAlchemyDailyAdviceRepository
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
+from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.integrations.garminconnect_adapter import GarminConnectLoginAdapter, GarminConnectResourceAdapter
 from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health
 from src.infrastructure.security.integration_credentials import CredentialCipher, load_garmin_credential_cipher
+from src.infrastructure.llm.settings import resolve_queued_daily_advice_provider
 
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -147,13 +156,18 @@ def connect_garmin(
             resource_adapter=resource_adapter,
         )
         connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
+        daily_advice_run = _queue_daily_advice_after_sync(
+            session, repository=repository, user_id=current_user.id, connection=connection,
+        )
     except ProviderAccountAlreadyConnectedError as exc:
         raise ApiConflictError(str(exc)) from exc
+    except SyncAlreadyRunningError as exc:
+        raise ApiConflictError("Garmin sync is already running") from exc
     except GarminIntegrationConfigurationError as exc:
         raise ApiUnavailableError("Garmin integration is not configured") from exc
     except GarminAuthenticationError as exc:
         raise ApiUnauthorizedError("Garmin credentials could not be verified") from exc
-    return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary))
+    return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary, daily_advice_run=daily_advice_run))
 
 
 @router.delete("/connections/{connection_id}", response_model=DataEnvelope[IntegrationConnectionResponse])
@@ -181,6 +195,7 @@ def admin_import_garmin_token(
     session: SessionDependency,
     admin_token: str | None = Header(default=None, alias="X-Johnny-Admin-Token"),
     cipher: CredentialCipher = Depends(get_garmin_credential_cipher),
+    resource_adapter: GarminResourceAdapter = Depends(get_garmin_resource_adapter),
 ) -> DataEnvelope[IntegrationConnectionResponse]:
     ensure_current_user(session, current_user)
     _require_admin_token(admin_token)
@@ -197,9 +212,19 @@ def admin_import_garmin_token(
                 session_payload=payload.session_payload,
             )
         )
+        sync_summary = _run_garmin_sync(
+            repository=repository, session=session, user_id=current_user.id,
+            connection_id=connection.id, resource_adapter=resource_adapter,
+        )
+        connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
+        daily_advice_run = _queue_daily_advice_after_sync(
+            session, repository=repository, user_id=current_user.id, connection=connection,
+        )
     except ValueError as exc:
         raise ApiNotFoundError("integration connection not found") from exc
-    return DataEnvelope(data=_connection_response(connection))
+    except SyncAlreadyRunningError as exc:
+        raise ApiConflictError("Garmin sync is already running") from exc
+    return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary, daily_advice_run=daily_advice_run))
 
 
 @router.post("/connections/{connection_id}/sync", response_model=DataEnvelope[IntegrationConnectionResponse])
@@ -227,7 +252,11 @@ def sync_connection(
             connection_id=connection.id,
             resource_adapter=resource_adapter,
         )
-        return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary))
+        connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
+        daily_advice_run = _queue_daily_advice_after_sync(
+            session, repository=repository, user_id=current_user.id, connection=connection,
+        )
+        return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary, daily_advice_run=daily_advice_run))
     try:
         sync_run = repository.start_sync_run(connection.id)
         session.commit()
@@ -241,6 +270,11 @@ def sync_connection(
         )
     except GarminIntegrationConfigurationError as exc:
         repository.fail_sync_run(sync_run.id, "Garmin integration is not configured")
+        refreshed = repository.get_connection_for_user(current_user.id, connection.id)
+        if refreshed is not None:
+            _queue_daily_advice_after_sync(
+                session, repository=repository, user_id=current_user.id, connection=refreshed,
+            )
         session.commit()
         raise ApiUnavailableError("Garmin integration is not configured") from exc
     except SyncAlreadyRunningError as exc:
@@ -249,7 +283,10 @@ def sync_connection(
         connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
         return DataEnvelope(data=_connection_response(connection, sync_summary=exc.running_sync_run.summary))
     connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
-    return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary))
+    daily_advice_run = _queue_daily_advice_after_sync(
+        session, repository=repository, user_id=current_user.id, connection=connection,
+    )
+    return DataEnvelope(data=_connection_response(connection, sync_summary=sync_summary, daily_advice_run=daily_advice_run))
 
 
 @router.post("/webhooks/{provider}/{connection_id}")
@@ -339,6 +376,7 @@ def _connection_response(
     connection: IntegrationConnectionRef,
     *,
     sync_summary=None,  # noqa: ANN001
+    daily_advice_run: QueuedAgentRunResponse | None = None,
 ) -> IntegrationConnectionResponse:
     return IntegrationConnectionResponse(
         id=connection.id,
@@ -357,6 +395,39 @@ def _connection_response(
         has_partial_failures=_has_partial_failures(sync_summary),
         sync_warning=_sync_warning(connection, sync_summary),
         sync_summary=SyncSummaryResponse(**sync_summary.to_payload()) if sync_summary is not None else None,
+        daily_advice_run=daily_advice_run,
+    )
+
+
+def _queue_daily_advice_after_sync(
+    session: Session, *, repository: SqlAlchemyIntegrationRepository,
+    user_id: str, connection: IntegrationConnectionRef,
+) -> QueuedAgentRunResponse | None:
+    sync_run = repository.get_latest_sync_run_for_connection(connection.id)
+    if sync_run is None or sync_run.status == "started":
+        return None
+    profile = SqlAlchemyAthleteRaceRepository(session).get_profile_for_user(user_id)
+    timezone_name = profile.timezone if profile else "UTC"
+    anchor_date = datetime.now(timezone.utc).astimezone(ZoneInfo(timezone_name)).date()
+    queued = queue_after_completed_sync(
+        user_id=user_id, anchor_date=anchor_date, sync_run=sync_run, connection=connection,
+        training_plans=SqlAlchemyTrainingPlanRepository(session),
+        advice=SqlAlchemyDailyAdviceRepository(session),
+        queue_runs=lambda: _daily_advice_queue_handler(session),
+    )
+    if queued is None:
+        return None
+    return QueuedAgentRunResponse(
+        run_id=queued.run.id, status=queued.run.status,
+        workflow_name=queued.run.workflow_name, poll_url=queued.poll_url,
+    )
+
+
+def _daily_advice_queue_handler(session: Session) -> QueueAgentRunHandler:
+    provider, model = resolve_queued_daily_advice_provider()
+    return QueueAgentRunHandler(
+        runs=SqlAlchemyAgentRunRepository(session), queue=SqlAlchemyAgentTaskQueue(session),
+        prompt_version="running-companion-v1", provider=provider, model=model,
     )
 
 

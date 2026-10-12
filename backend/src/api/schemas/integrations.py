@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.api.schemas.agent_runs import QueuedAgentRunResponse
+
 
 class IntegrationConnectionRequest(BaseModel):
     provider: str = Field(min_length=1)
@@ -33,6 +35,7 @@ class IntegrationConnectionResponse(BaseModel):
     has_partial_failures: bool = False
     sync_warning: str | None = None
     sync_summary: SyncSummaryResponse | None = None
+    daily_advice_run: QueuedAgentRunResponse | None = None
 
 
 class GarminConnectRequest(BaseModel):

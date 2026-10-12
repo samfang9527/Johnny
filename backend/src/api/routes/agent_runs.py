@@ -42,6 +42,7 @@ def queue_daily_recommendation(
         trigger_type="manual",
         idempotency_key=idempotency_key,
         payload={"anchor_date": anchor_date.isoformat(), "force": payload.force},
+        task_type="daily_advice.sync",
     )
     return DataEnvelope(data=_queued_response(result))
 

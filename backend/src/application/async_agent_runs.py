@@ -56,6 +56,8 @@ class QueueAgentRunHandler:
         payload: dict[str, Any],
         force: bool = False,
         requeue_terminal: bool = False,
+        task_type: str = "agent.workflow",
+        reuse_terminal: bool = False,
     ) -> QueuedAgentRun:
         if force and requeue_terminal:
             raise ValueError("force and requeue_terminal cannot be combined")
@@ -66,6 +68,7 @@ class QueueAgentRunHandler:
                 trigger_type=trigger_type,
                 idempotency_key=idempotency_key,
                 payload=payload,
+                task_type=task_type,
             )
 
         effective_key = idempotency_key if not force else f"{idempotency_key}:force:{uuid4()}"
@@ -75,7 +78,7 @@ class QueueAgentRunHandler:
             if existing_task is not None:
                 run_id = existing_task.payload.get("run_id")
                 existing_run = self._runs.get_run_for_user(user_id, str(run_id) if run_id else None)
-                if existing_run is not None and _task_can_be_reused(existing_task.status):
+                if existing_run is not None and (reuse_terminal or _task_can_be_reused(existing_task.status)):
                     return QueuedAgentRun(
                         run=existing_run,
                         task=existing_task,
@@ -98,7 +101,7 @@ class QueueAgentRunHandler:
             )
             task = self._queue.enqueue(
                 TaskEnvelope(
-                    task_type="agent.workflow",
+                    task_type=task_type,
                     payload={"run_id": candidate_run.id, "workflow_name": workflow_name, "input": dict(payload)},
                     correlation_id=candidate_run.id,
                     idempotency_key=effective_key,
@@ -111,7 +114,7 @@ class QueueAgentRunHandler:
                     task=task,
                     poll_url=_poll_url(canonical_run.id),
                 )
-            if _task_can_be_reused(task.status):
+            if reuse_terminal or _task_can_be_reused(task.status):
                 canonical_run = self._run_for_task(user_id, task)
                 return QueuedAgentRun(
                     run=canonical_run,
@@ -130,6 +133,7 @@ class QueueAgentRunHandler:
         trigger_type: str,
         idempotency_key: str,
         payload: dict[str, Any],
+        task_type: str,
     ) -> QueuedAgentRun:
         candidate_run = AgentRun.queue(
             id=str(uuid4()),
@@ -145,7 +149,7 @@ class QueueAgentRunHandler:
         )
         task = self._queue.enqueue_or_requeue_terminal(
             TaskEnvelope(
-                task_type="agent.workflow",
+                task_type=task_type,
                 payload={"run_id": candidate_run.id, "workflow_name": workflow_name, "input": dict(payload)},
                 correlation_id=candidate_run.id,
                 idempotency_key=idempotency_key,

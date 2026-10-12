@@ -16,7 +16,7 @@ from src.application.interfaces.integrations_notifications import (
 )
 from src.application.interfaces.athlete_race_store import AthleteProfileStore
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics, DomainValidationError as ActivityHealthValidationError
-from src.domain.integrations_notifications import IntegrationConnectionRef, IntegrationCredential, OutboxEvent, SyncSummary
+from src.domain.integrations_notifications import IntegrationConnectionRef, IntegrationCredential, OutboxEvent, SyncAlreadyRunningError, SyncSummary
 
 
 logger = logging.getLogger(__name__)
@@ -266,6 +266,9 @@ class ConnectGarminAccountHandler:
             password=command.password,
             region=command.region,
         )
+        existing = self._integrations.get_connection_by_provider_account(GARMIN_PROVIDER, profile.provider_account_id)
+        if existing is not None and existing.user_id == command.user_id and existing.sync_status == "running":
+            raise SyncAlreadyRunningError()
         encrypted_payload = self._cipher.encrypt(profile.session_payload)
         connection = ConnectSyncProviderHandler(integrations=self._integrations).handle(
             ConnectSyncProviderCommand(
@@ -326,6 +329,8 @@ class AdminImportGarminTokenHandler:
         connection = self._integrations.get_connection_for_user(command.user_id, command.connection_id)
         if connection is None or connection.provider != GARMIN_PROVIDER:
             raise ValueError("integration connection not found")
+        if connection.sync_status == "running":
+            raise SyncAlreadyRunningError()
         encrypted_payload = self._cipher.encrypt(command.session_payload)
         self._credentials.upsert_credential(
             IntegrationCredential.create(

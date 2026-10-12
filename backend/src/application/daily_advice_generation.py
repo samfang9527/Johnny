@@ -136,6 +136,7 @@ class GenerateDailyAdviceHandler:
     def handle(
         self, *, user_id: str, anchor_date: date, run: AgentRun,
         version: RefreshVersion, source_sync_run_id: str | None,
+        limited_recovery: bool = False,
     ) -> AgentRun:
         if run.user_id != user_id or run.workflow_name != "daily_recommendation" or run.id != version.run_id:
             raise ValueError("daily advice run identity is invalid")
@@ -160,6 +161,8 @@ class GenerateDailyAdviceHandler:
             )
             workout = next((item for item in plan.workouts if item.scheduled_for == anchor_date), None)
             recovery = self._today_context.handle(user_id=user_id, anchor_date=anchor_date).recovery.to_payload()
+            if limited_recovery:
+                recovery = {**recovery, "readiness_label": "unknown", "limited_recovery": True}
             sections = self._generator.generate(
                 user_id=user_id, facts=facts, workout=workout, recovery=recovery, gateway=capture,
             )
@@ -178,14 +181,17 @@ class GenerateDailyAdviceHandler:
                 workout_id=workout.id if workout else None, week_start=facts.week_start, week_end=facts.week_end,
                 execution_mode=mode, facts=facts, sections=sections, generated_at=self._now(),
                 source_sync_run_id=source_sync_run_id, source_run_id=run.id, state="ready",
-                data_freshness="fresh" if source_sync_run_id else "limited",
+                data_freshness="fresh" if source_sync_run_id and not limited_recovery else "limited",
             ))
             if not saved:
                 raise ValueError("daily advice refresh was superseded")
             current = self._advice.get_for_user_date(user_id, anchor_date)
             if current is None or current.id is None:
                 raise ValueError("published daily advice is missing")
-            completed = replace(run, metadata={**run.metadata, "daily_advice_id": current.id},
+            completed = replace(run, metadata={
+                **run.metadata, "daily_advice_id": current.id,
+                **({"limited_recovery": True} if limited_recovery else {}),
+            },
                                 provider=response.provider or run.provider, model=response.model or run.model)
             return self._runs.complete_run(completed.complete(
                 output_summary=sections.today_execution, token_usage=response.token_usage,

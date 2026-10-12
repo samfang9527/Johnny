@@ -19,28 +19,37 @@ from sqlalchemy.orm import Session
 from src.api.dependencies import build_request_companion_agent
 from src.application.async_agent_runs import QueueAgentRunHandler
 from src.application.daily_advice_generation import GenerateDailyAdviceHandler
+from src.application.daily_advice_sync import activity_sync_usable, recovery_data_limited
 from src.application.training_analytics import BuildTodayContextHandler
+from src.application.integrations import GarminInitialSyncCommand, GarminInitialSyncHandler
 from src.application.interfaces.task_queue import TaskEnvelope
 from src.application.training_plan_regeneration import TrainingPlanRegenerationService
 from src.domain.agent_runtime import AgentRun
 from src.domain.daily_advice import RefreshVersion
+from src.domain.integrations_notifications import SyncAlreadyRunningError
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.daily_advice_repository import SqlAlchemyDailyAdviceRepository
+from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
+from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
 from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, UserModel
 from src.infrastructure.database.session import create_database_engine, create_session_factory, get_database_url
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
 from src.infrastructure.llm.openai_gateway import OpenAIModelGateway
 from src.infrastructure.llm.settings import load_llm_settings, load_openai_settings_for_queued_model, resolve_queued_daily_advice_provider, resolve_queued_training_plan_provider
+from src.infrastructure.integrations.garminconnect_adapter import GarminConnectResourceAdapter
+from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health
+from src.infrastructure.security.integration_credentials import load_garmin_credential_cipher
 from src.infrastructure.logging.logger_config import setup_logging
 
 
 DEFAULT_CLAIM_TIMEOUT = timedelta(minutes=5)
 DEFAULT_RETRY_DELAY = timedelta(seconds=30)
 TRAINING_PLAN_DAILY_CHECK_TASK_TYPE = "training-plan.daily-check"
+DAILY_ADVICE_SYNC_TASK_TYPE = "daily_advice.sync"
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +64,7 @@ def schedule_once(session: Session, *, anchor_date: date | None = None) -> int:
             trigger_type="scheduled",
             idempotency_key=f"daily_recommendation:{user.id}:{anchor.isoformat()}",
             payload={"anchor_date": anchor.isoformat(), "force": False},
+            task_type="daily_advice.sync",
         )
     SqlAlchemyAgentTaskQueue(session).enqueue(
         TaskEnvelope(
@@ -94,6 +104,9 @@ def work_one(session: Session, *, now: datetime | None = None) -> bool:
     )
     try:
         _process_task(session, claimed.id)
+        if claimed.task_type == DAILY_ADVICE_SYNC_TASK_TYPE:
+            # Imported activities and the generation task become visible together.
+            session.commit()
     except Exception as exc:
         logger.error(
             "worker task raised task_id=%s task_type=%s run_id=%s error_type=%s duration_ms=%s",
@@ -155,6 +168,7 @@ def smoke(
             trigger_type="manual",
             idempotency_key=f"smoke:daily:{user_id}:{date.today().isoformat()}",
             payload={"anchor_date": date.today().isoformat(), "force": True},
+            task_type=DAILY_ADVICE_SYNC_TASK_TYPE,
         )
     if workflow in {"training_plan_generation", "all"}:
         (_training_plan_queue_handler(session) if live_openai else _queue_handler(session)).queue_run(
@@ -302,6 +316,9 @@ def _process_task(session: Session, task_id: str) -> None:
     if task.task_type == TRAINING_PLAN_DAILY_CHECK_TASK_TYPE:
         _process_training_plan_daily_check(session, task)
         return
+    if task.task_type == DAILY_ADVICE_SYNC_TASK_TYPE:
+        _process_daily_advice_sync(session, task)
+        return
     if task.task_type != "agent.workflow":
         queue.fail(
             task_id,
@@ -401,6 +418,144 @@ def _process_task(session: Session, task_id: str) -> None:
             now=_utc_now(),
             retry_delay=DEFAULT_RETRY_DELAY,
         )
+
+
+def _enqueue_daily_advice_generation(
+    session: Session, *, run: AgentRun, anchor_date: date,
+    source_sync_run_id: str | None, limited_recovery: bool,
+    observed_at: datetime,
+) -> None:
+    SqlAlchemyAgentTaskQueue(session).enqueue(TaskEnvelope(
+        task_type="agent.workflow",
+        payload={
+            "run_id": run.id, "workflow_name": "daily_recommendation",
+            "input": {
+                "anchor_date": anchor_date.isoformat(),
+                "source_sync_run_id": source_sync_run_id,
+                "limited_recovery": limited_recovery,
+                "refresh_observed_at": observed_at.isoformat(),
+            },
+        },
+        correlation_id=run.id,
+        idempotency_key=f"daily_advice.generate:{run.id}",
+    ))
+
+
+def _build_garmin_sync_adapter(session: Session, integrations: SqlAlchemyIntegrationRepository):
+    return GarminConnectResourceAdapter(credentials=integrations, cipher=load_garmin_credential_cipher())
+
+
+def _process_daily_advice_sync(session: Session, task: AgentTaskModel) -> None:
+    queue = SqlAlchemyAgentTaskQueue(session)
+    payload = task.payload or {}
+    run_id = payload.get("run_id")
+    raw_anchor = (payload.get("input") or {}).get("anchor_date")
+    try:
+        anchor_date = date.fromisoformat(raw_anchor)
+    except (TypeError, ValueError):
+        queue.fail(task.id, error_type="MalformedTaskPayload", error_message="daily advice sync needs an anchor date",
+                   retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+        return
+    run_model = session.get(AgentRunModel, run_id) if run_id else None
+    if run_model is None:
+        queue.fail(task.id, error_type="MalformedTaskPayload", error_message="daily advice sync needs an agent run",
+                   retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+        return
+    runs = SqlAlchemyAgentRunRepository(session)
+    run = runs.get_run_for_user(run_model.user_id, run_id)
+    if run is None:
+        queue.fail(task.id, error_type="MalformedTaskPayload", error_message="daily advice sync run owner is invalid",
+                   retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+        return
+    integrations = SqlAlchemyIntegrationRepository(session)
+    connections = [item for item in integrations.list_active_connections_for_user(run.user_id)
+                   if item.provider == "garmin_connect"]
+    if not connections:
+        _enqueue_daily_advice_generation(
+            session, run=run, anchor_date=anchor_date, source_sync_run_id=None,
+            limited_recovery=True, observed_at=_utc_now(),
+        )
+        queue.complete(task.id, now=_utc_now())
+        return
+    connection = connections[0]
+    if connection.sync_status == "running":
+        _defer_daily_advice_sync(session, task.id)
+        return
+    if connection.credential_status == "requires_reauth":
+        _fail_daily_advice_sync(session, run=run, anchor_date=anchor_date,
+                                source_sync_run_id=None, error_type="GarminRequiresReauth")
+        queue.fail(task.id, error_type="GarminRequiresReauth", error_message="Garmin connection requires reauth",
+                   retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+        return
+    sync_run_id = None
+    try:
+        try:
+            sync_run = integrations.start_sync_run(connection.id)
+        except SyncAlreadyRunningError:
+            _defer_daily_advice_sync(session, task.id)
+            return
+        sync_run_id = sync_run.id
+        # Publish the running lease before a network request so another caller cannot start a sync.
+        session.commit()
+        adapter = _build_garmin_sync_adapter(session, integrations)
+        summary = GarminInitialSyncHandler(
+            integrations=integrations, activities=SqlAlchemyActivityRepository(session),
+            outbox=SqlAlchemyOutboxRepository(session), garmin=adapter,
+            athlete_profiles=SqlAlchemyAthleteRaceRepository(session),
+            normalize_activity=lambda user_id, connection_id, activity: normalize_garmin_activity(
+                user_id=user_id, provider_connection_id=connection_id, payload=activity,
+            ),
+            normalize_health=lambda user_id, health: normalize_garmin_daily_health(
+                user_id=user_id, payload=health,
+            ),
+        ).handle(GarminInitialSyncCommand(
+            user_id=run.user_id, connection_id=connection.id, as_of=_utc_now(), sync_run_id=sync_run_id,
+        ))
+        sync_run = integrations.get_latest_sync_run_for_connection(connection.id)
+        refreshed = integrations.get_connection_for_user(run.user_id, connection.id)
+        if sync_run is None or refreshed is None or not activity_sync_usable(
+            summary, sync_run.status, refreshed.credential_status,
+        ):
+            _fail_daily_advice_sync(session, run=run, anchor_date=anchor_date,
+                                    source_sync_run_id=sync_run_id, error_type="ActivitySyncFailed")
+            queue.fail(task.id, error_type="ActivitySyncFailed", error_message="Garmin activities were not refreshed",
+                       retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+            return
+        _enqueue_daily_advice_generation(
+            session, run=run, anchor_date=anchor_date, source_sync_run_id=sync_run_id,
+            limited_recovery=recovery_data_limited(summary), observed_at=sync_run.finished_at or _utc_now(),
+        )
+        queue.complete(task.id, now=_utc_now())
+    except Exception as exc:
+        running = integrations.get_running_sync_run_for_connection(connection.id)
+        if running is not None:
+            integrations.fail_sync_run(running.id, "Garmin sync failed")
+            sync_run_id = running.id
+        _fail_daily_advice_sync(session, run=run, anchor_date=anchor_date,
+                                source_sync_run_id=sync_run_id, error_type=type(exc).__name__)
+        queue.fail(task.id, error_type=type(exc).__name__, error_message=str(exc),
+                   retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+
+
+def _defer_daily_advice_sync(session: Session, task_id: str) -> None:
+    model = session.get(AgentTaskModel, task_id)
+    model.status = "queued"
+    model.claimed_at = None
+    model.available_at = _utc_now() + DEFAULT_RETRY_DELAY
+    session.flush()
+
+
+def _fail_daily_advice_sync(
+    session: Session, *, run: AgentRun, anchor_date: date,
+    source_sync_run_id: str | None, error_type: str,
+) -> None:
+    advice = SqlAlchemyDailyAdviceRepository(session)
+    version = RefreshVersion(observed_at=_utc_now(), run_id=run.id)
+    if advice.begin_refresh(run.user_id, anchor_date, version, source_sync_run_id):
+        advice.mark_failed(run.user_id, anchor_date, version, "sync_failed")
+    SqlAlchemyAgentRunRepository(session).fail_run(run.fail(
+        error_type=error_type, error_message="activity synchronization did not provide usable data",
+    ))
 
 
 def _process_training_plan_daily_check(session: Session, task: AgentTaskModel) -> None:
@@ -526,8 +681,13 @@ def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, work
         )
         return handler.handle(
             user_id=run.user_id, anchor_date=anchor_date, run=run,
-            version=RefreshVersion(observed_at=_utc_now(), run_id=run.id),
+            version=RefreshVersion(
+                observed_at=(datetime.fromisoformat(workflow_input["refresh_observed_at"])
+                             if workflow_input.get("refresh_observed_at") else _utc_now()),
+                run_id=run.id,
+            ),
             source_sync_run_id=workflow_input.get("source_sync_run_id"),
+            limited_recovery=workflow_input.get("limited_recovery") is True,
         )
     agent = build_request_companion_agent(session, provider=run.provider, model=run.model)
     if workflow_name == "training_plan_generation":
