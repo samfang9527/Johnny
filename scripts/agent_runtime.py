@@ -18,16 +18,23 @@ from sqlalchemy.orm import Session
 
 from src.api.dependencies import build_request_companion_agent
 from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.daily_advice_generation import GenerateDailyAdviceHandler
+from src.application.training_analytics import BuildTodayContextHandler
 from src.application.interfaces.task_queue import TaskEnvelope
 from src.application.training_plan_regeneration import TrainingPlanRegenerationService
 from src.domain.agent_runtime import AgentRun
+from src.domain.daily_advice import RefreshVersion
+from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
+from src.infrastructure.database.daily_advice_repository import SqlAlchemyDailyAdviceRepository
 from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, UserModel
 from src.infrastructure.database.session import create_database_engine, create_session_factory, get_database_url
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
-from src.infrastructure.llm.settings import load_llm_settings, resolve_queued_training_plan_provider
+from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
+from src.infrastructure.llm.openai_gateway import OpenAIModelGateway
+from src.infrastructure.llm.settings import load_llm_settings, load_openai_settings_for_queued_model, resolve_queued_daily_advice_provider, resolve_queued_training_plan_provider
 from src.infrastructure.logging.logger_config import setup_logging
 
 
@@ -40,7 +47,7 @@ logger = logging.getLogger(__name__)
 def schedule_once(session: Session, *, anchor_date: date | None = None) -> int:
     anchor = anchor_date or date.today()
     before = _task_count(session)
-    handler = _queue_handler(session)
+    handler = _daily_advice_queue_handler(session)
     for user in _eligible_daily_users(session):
         handler.queue_run(
             user_id=user.id,
@@ -140,7 +147,7 @@ def smoke(
         )
         return 0 if run.status == "completed" else 1
 
-    handler = _queue_handler(session)
+    handler = _daily_advice_queue_handler(session)
     if workflow in {"daily_recommendation", "all"}:
         handler.queue_run(
             user_id=user_id,
@@ -150,7 +157,7 @@ def smoke(
             payload={"anchor_date": date.today().isoformat(), "force": True},
         )
     if workflow in {"training_plan_generation", "all"}:
-        (_training_plan_queue_handler(session) if live_openai else handler).queue_run(
+        (_training_plan_queue_handler(session) if live_openai else _queue_handler(session)).queue_run(
             user_id=user_id,
             workflow_name="training_plan_generation",
             trigger_type="manual",
@@ -248,6 +255,15 @@ def _training_plan_queue_handler(session: Session) -> QueueAgentRunHandler:
         prompt_version="running-companion-v1",
         provider=provider,
         model=model,
+    )
+
+
+def _daily_advice_queue_handler(session: Session) -> QueueAgentRunHandler:
+    provider, model = resolve_queued_daily_advice_provider()
+    return QueueAgentRunHandler(
+        runs=SqlAlchemyAgentRunRepository(session),
+        queue=SqlAlchemyAgentTaskQueue(session),
+        prompt_version="running-companion-v1", provider=provider, model=model,
     )
 
 
@@ -486,11 +502,34 @@ def _refresh_scheduled_training_plan_context(
 
 
 def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, workflow_input: dict) -> AgentRun:
-    agent = build_request_companion_agent(session, provider=run.provider, model=run.model)
     if workflow_name == "daily_recommendation":
         anchor = workflow_input.get("anchor_date")
         anchor_date = date.fromisoformat(anchor) if isinstance(anchor, str) else date.today()
-        return agent.run_daily_recommendation(user_id=run.user_id, anchor_date=anchor_date, existing_run=run)
+        activities = SqlAlchemyActivityRepository(session)
+        plans = SqlAlchemyTrainingPlanRepository(session)
+        profiles = SqlAlchemyAthleteRaceRepository(session)
+        gateway = (
+            OpenAIModelGateway(
+                model=run.model or "",
+                api_key=load_openai_settings_for_queued_model(run.model or "").api_key,
+            ) if run.provider == "openai" else LocalCompanionModelGateway()
+        )
+        handler = GenerateDailyAdviceHandler(
+            training_plans=plans, training_data=activities,
+            today_context=BuildTodayContextHandler(training_data=activities, training_plans=plans),
+            advice=SqlAlchemyDailyAdviceRepository(session), runs=SqlAlchemyAgentRunRepository(session),
+            gateway=gateway,
+            timezone_for_user=lambda user_id: (
+                profile.timezone if (profile := profiles.get_profile_for_user(user_id)) else "UTC"
+            ),
+            prompt_version=run.prompt_version,
+        )
+        return handler.handle(
+            user_id=run.user_id, anchor_date=anchor_date, run=run,
+            version=RefreshVersion(observed_at=_utc_now(), run_id=run.id),
+            source_sync_run_id=workflow_input.get("source_sync_run_id"),
+        )
+    agent = build_request_companion_agent(session, provider=run.provider, model=run.model)
     if workflow_name == "training_plan_generation":
         starts_on = _optional_date(workflow_input.get("starts_on"))
         ends_on = _optional_date(workflow_input.get("ends_on"))

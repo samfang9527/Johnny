@@ -12,15 +12,26 @@ class LocalCompanionModelGateway:
 
     def complete(self, request: ModelRequest) -> ModelResponse:
         if request.workflow_name == "daily_recommendation":
+            context = request.context or {}
+            mode = context.get("execution_mode", "follow_plan")
+            workout = context.get("workout") or {}
+            purpose = workout.get("purpose") or "促進恢復，為後續訓練保留體力"
+            feel = "完成後應感到輕鬆、仍有餘力" if mode not in {"rest", "completed"} else "休息後應逐漸恢復精神與體力"
             return ModelResponse(
-                content="Johnny created a conservative local training recommendation.",
+                content="Johnny 已整理今日訓練建議。",
                 tool_calls=(
                     ToolCallRequest(
-                        tool_name="createRecommendation",
-                        arguments=_recommendation_arguments(
-                            title="Review today's training context",
-                            rationale="Local companion mode reviewed the available context. Connect OpenAI for model-backed analysis.",
-                        ),
+                        tool_name="composeDailyAdvice",
+                        arguments={
+                            "week_summary": context["canonical_week_summary"],
+                            "today_execution": context["canonical_today_execution"],
+                            "workout_guide": {
+                                "purpose": purpose,
+                                "expected_feel": feel,
+                                "if_too_hard": "若感到吃力，降低配速或縮短時間；若有疼痛則停止。",
+                                "if_too_easy": "若感到輕鬆，先維持原定強度，保留餘力給後續課表。",
+                            },
+                        },
                     ),
                 ),
                 token_usage=TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0),

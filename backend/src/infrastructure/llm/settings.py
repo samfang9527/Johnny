@@ -30,6 +30,11 @@ def resolve_queued_training_plan_provider() -> tuple[str, str]:
     return "openai", model
 
 
+def resolve_queued_daily_advice_provider() -> tuple[str, str]:
+    """Freeze the configured model when a daily advice run is queued."""
+    return resolve_queued_training_plan_provider()
+
+
 def load_openai_settings_for_queued_model(model: str) -> LlmSettings:
     persisted_model = model.strip() if model else None
     if not persisted_model:

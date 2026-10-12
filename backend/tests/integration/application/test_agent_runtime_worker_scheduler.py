@@ -15,21 +15,26 @@ if str(PROJECT_ROOT) not in sys.path:
 import scripts.agent_runtime as agent_runtime
 from scripts.agent_runtime import main, schedule_once, work_drain
 from src.application.async_agent_runs import QueueAgentRunHandler
+from src.domain.agent_runtime import ModelResponse, ToolCallRequest
+from src.domain.daily_advice import AdviceSections, DailyAdvice, RefreshVersion, WeekExecution, WorkoutGuide
 from src.application.training_plan_regeneration import BackgroundProjectionCandidate, RegenerationStrategy
 from src.api.dependencies import get_session
 from src.application.interfaces.task_queue import TaskEnvelope
 from src.api.dependencies import CurrentUser, ensure_current_user
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
+from src.infrastructure.database.daily_advice_repository import SqlAlchemyDailyAdviceRepository
 from src.infrastructure.database.models import (
     AgentRunModel,
     AgentTaskModel,
     ActivityModel,
     Base,
+    DailyAdviceModel,
     RaceModel,
     RecommendationModel,
     TrainingPlanModel,
     UserModel,
+    WorkoutModel,
 )
 from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
 from src.main import create_app
@@ -572,6 +577,11 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
         _create_context_ready_user(uow.session, "worker-user")
+        uow.session.add(WorkoutModel(
+            id="worker-original-workout", training_plan_id="plan-worker-user",
+            scheduled_for=date(2027, 1, 28), workout_type="easy_run",
+            planned_duration_minutes=40, status="planned", details={"purpose": "建立有氧基礎"},
+        ))
         handler_runs = SqlAlchemyAgentRunRepository(uow.session)
         queue = SqlAlchemyAgentTaskQueue(uow.session)
         handler = QueueAgentRunHandler(
@@ -607,6 +617,9 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
             )
         )
         recommendation_count = len(uow.session.scalars(select(RecommendationModel)).all())
+        advice = uow.session.scalar(select(DailyAdviceModel).where(DailyAdviceModel.user_id == "worker-user"))
+        original_workout = uow.session.get(WorkoutModel, "worker-original-workout")
+        daily_steps = handler_runs.list_steps_for_run(daily.run.id)
         uow.commit()
 
     assert processed == 2
@@ -618,13 +631,76 @@ def test_work_drain_processes_daily_and_training_plan_generation_tasks(sqlite_se
         {"phase": "maintenance", "starts_on": "2027-01-01", "ends_on": "2027-01-28"}
     ]
     assert {workout.details["phase"] for workout in generated_plan.workouts} == {"maintenance"}
-    assert recommendation_count == 1
+    assert recommendation_count == 0
+    assert advice is not None
+    assert advice.state == "ready"
+    assert advice.week_summary and advice.today_execution and advice.workout_guide
+    assert advice.workout_id == "worker-original-workout"
+    assert (original_workout.planned_duration_minutes, original_workout.status) == (40, "planned")
+    assert daily_run.recommendation_id is None
+    assert daily_run.metadata["daily_advice_id"] == advice.id
+    assert daily_run.total_tokens == 0
+    assert [(step.name, step.status) for step in daily_steps] == [("composeDailyAdvice", "completed")]
     assert "worker task claimed task_id=" in caplog.text
     assert f"worker workflow started run_id={training.run.id} workflow=training_plan_generation provider=local" in caplog.text
     assert f"worker workflow finished run_id={training.run.id} workflow=training_plan_generation status=completed" in caplog.text
     assert "worker task finished task_id=" in caplog.text
     assert "duration_ms=" in caplog.text
     assert "private-runner-note" not in caplog.text
+
+
+def test_invalid_daily_model_output_fails_refresh_and_preserves_previous_advice(sqlite_session_factory, monkeypatch) -> None:
+    class InvalidGateway:
+        def complete(self, request):
+            assert request.tools == ("composeDailyAdvice",)
+            return ModelResponse(
+                content="", tool_calls=(ToolCallRequest("composeDailyAdvice", {"week_summary": ""}),),
+                provider="local", model="bad-local",
+            )
+
+    monkeypatch.setattr(agent_runtime, "LocalCompanionModelGateway", InvalidGateway)
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    day = date(2027, 1, 28)
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        _create_context_ready_user(uow.session, "invalid-advice-user")
+        advice_store = SqlAlchemyDailyAdviceRepository(uow.session)
+        old_version = RefreshVersion(datetime(2026, 1, 27, tzinfo=timezone.utc), "old-run")
+        assert advice_store.begin_refresh("invalid-advice-user", day, old_version, None)
+        assert advice_store.publish("invalid-advice-user", day, old_version, DailyAdvice(
+            user_id="invalid-advice-user", advice_date=day, plan_version_id="plan-invalid-advice-user",
+            workout_id=None, week_start=date(2027, 1, 22), week_end=day,
+            execution_mode="rest", facts=WeekExecution(
+                week_start=date(2027, 1, 22), week_end=day, status="on_plan",
+                planned_count=0, completed_count=0, missed_count=0, extra_count=0,
+                planned_minutes=None, actual_minutes=0, planned_distance_meters=None,
+                actual_distance_meters=0, today_completed=False,
+            ), sections=AdviceSections(
+                week_summary="先前有效建議", today_execution="今天休息",
+                workout_guide=WorkoutGuide("恢復", "輕鬆", "休息", "維持休息"),
+            ), generated_at=datetime(2027, 1, 27, tzinfo=timezone.utc),
+            source_sync_run_id=None, source_run_id="old-run", state="ready", data_freshness="limited",
+        ))
+        queued = QueueAgentRunHandler(
+            runs=SqlAlchemyAgentRunRepository(uow.session), queue=SqlAlchemyAgentTaskQueue(uow.session),
+            prompt_version="running-companion-v1", provider="local", model="deterministic-local-companion",
+        ).queue_run(
+            user_id="invalid-advice-user", workflow_name="daily_recommendation", trigger_type="manual",
+            idempotency_key="invalid-daily-refresh", payload={"anchor_date": day.isoformat()},
+        )
+        assert work_drain(uow.session) == 1
+        current = advice_store.get_for_user_date("invalid-advice-user", day)
+        run_store = SqlAlchemyAgentRunRepository(uow.session)
+        run = run_store.get_run_for_user("invalid-advice-user", queued.run.id)
+        steps = run_store.list_steps_for_run(queued.run.id)
+        uow.commit()
+
+    assert run.status == "failed"
+    assert run.recommendation_id is None
+    assert current.state == "generation_failed"
+    assert current.data_freshness == "stale"
+    assert current.sections.week_summary == "先前有效建議"
+    assert current.source_run_id == "old-run"
+    assert [(step.name, step.status) for step in steps] == [("composeDailyAdvice", "failed")]
 
 
 def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_session_factory) -> None:
@@ -815,9 +891,10 @@ def test_smoke_flow_queues_with_http_drains_worker_and_polls_completion(monkeypa
     plans = client.get("/api/v1/training-plans", headers=headers).json()["data"]
 
     assert processed == 2
-    assert daily_run["status"] == "completed"
+    assert daily_run["status"] == "failed"
+    assert daily_run["error_type"] == "NoTrainingPlan"
     assert training_run["status"] == "completed"
-    assert len(recommendations) == 1
+    assert len(recommendations) == 0
     assert any(plan["name"] == "Johnny 訓練計畫" and plan["status"] == "active" for plan in plans)
 
 

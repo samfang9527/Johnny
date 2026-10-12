@@ -738,7 +738,7 @@ def test_regeneration_queue_pins_provider_and_reuses_run_after_environment_chang
         assert (run.provider, run.model) == ("openai", "test-model")
 
 
-def test_raw_training_plan_queue_selects_openai_without_changing_daily_provider(monkeypatch) -> None:
+def test_raw_training_plan_and_daily_advice_queues_select_configured_openai(monkeypatch) -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -759,7 +759,7 @@ def test_raw_training_plan_queue_selects_openai_without_changing_daily_provider(
     training_run = client.get(training.json()["data"]["poll_url"], headers=headers).json()["data"]
     daily_run = client.get(daily.json()["data"]["poll_url"], headers=headers).json()["data"]
     assert (training_run["provider"], training_run["model"]) == ("openai", "test-model")
-    assert (daily_run["provider"], daily_run["model"]) == ("local", "deterministic-local-companion")
+    assert (daily_run["provider"], daily_run["model"]) == ("openai", "test-model")
 
 
 def test_training_plan_regeneration_options_returns_exhausted_quota_payload() -> None:

@@ -19,7 +19,7 @@ from src.application.async_agent_runs import QueueAgentRunHandler
 from src.domain.agent_runtime import AgentRun, AgentRunStep
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
-from src.infrastructure.llm.settings import resolve_queued_training_plan_provider
+from src.infrastructure.llm.settings import resolve_queued_daily_advice_provider, resolve_queued_training_plan_provider
 
 
 router = APIRouter(prefix="/agent-runs", tags=["agent-runs"])
@@ -36,7 +36,7 @@ def queue_daily_recommendation(
     idempotency_key = f"daily_recommendation:{current_user.id}:{anchor_date.isoformat()}"
     if payload.force:
         idempotency_key = f"{idempotency_key}:force:{uuid4()}"
-    result = _queue_handler(session).queue_run(
+    result = _queue_handler(session, daily_advice=True).queue_run(
         user_id=current_user.id,
         workflow_name="daily_recommendation",
         trigger_type="manual",
@@ -108,11 +108,13 @@ def list_agent_run_steps(
     return list_envelope([_step_response(step) for step in steps[offset : offset + page_query_limit(limit)]], limit=limit, offset=offset)
 
 
-def _queue_handler(session, *, training_plan: bool = False) -> QueueAgentRunHandler:
-    provider, model = (
-        resolve_queued_training_plan_provider()
-        if training_plan else ("local", "deterministic-local-companion")
-    )
+def _queue_handler(session, *, training_plan: bool = False, daily_advice: bool = False) -> QueueAgentRunHandler:
+    if training_plan:
+        provider, model = resolve_queued_training_plan_provider()
+    elif daily_advice:
+        provider, model = resolve_queued_daily_advice_provider()
+    else:
+        provider, model = "local", "deterministic-local-companion"
     return QueueAgentRunHandler(
         runs=SqlAlchemyAgentRunRepository(session),
         queue=SqlAlchemyAgentTaskQueue(session),

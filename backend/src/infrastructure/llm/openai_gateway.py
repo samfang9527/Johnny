@@ -138,6 +138,7 @@ def _tool_description(tool_name: str) -> str:
         "getRecentActivities": "Read user-scoped recent activity history within a date window.",
         "getRecoveryState": "Read deterministic recovery state for a user-scoped date.",
         "getTrainingMetrics": "Read deterministic training-load metrics for a user-scoped date.",
+        "composeDailyAdvice": "Compose read-only daily advice sections from trusted plan-week facts. Never change a workout or create a recommendation.",
         "createTrainingPlan": "Create an active training plan for the user. Supersedes active plans for the same race.",
         "createRecommendation": "Create a pending recommendation for user approval. Does not apply plan changes.",
         "proposeWorkoutAdjustment": "Create a pending workout-adjustment proposal for user approval. Does not apply plan changes.",
@@ -171,6 +172,22 @@ def _tool_schema(tool_name: str) -> dict[str, Any]:
         ),
         "getRecoveryState": _date_schema(),
         "getTrainingMetrics": _date_schema(),
+        "composeDailyAdvice": _object_schema(
+            properties={
+                "week_summary": {"type": "string"},
+                "today_execution": {"type": "string"},
+                "workout_guide": _object_schema(
+                    properties={
+                        "purpose": {"type": "string"},
+                        "expected_feel": {"type": "string"},
+                        "if_too_hard": {"type": "string"},
+                        "if_too_easy": {"type": "string"},
+                    },
+                    required=["purpose", "expected_feel", "if_too_hard", "if_too_easy"],
+                ),
+            },
+            required=["week_summary", "today_execution", "workout_guide"],
+        ),
         "createTrainingPlan": _object_schema(
             properties={
                 "name": {"type": "string"},

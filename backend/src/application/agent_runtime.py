@@ -44,7 +44,6 @@ READ_TOOL_NAMES = frozenset(
         "getTrainingMetrics",
     }
 )
-DAILY_WRITE_TOOL_NAMES = frozenset({"createRecommendation", "proposeWorkoutAdjustment"})
 CONVERSATION_WRITE_TOOL_NAMES = frozenset({"createRecommendation", "storeMemoryCandidate"})
 TRAINING_PLAN_GENERATION_WRITE_TOOL_NAMES = frozenset({"createTrainingPlan"})
 
@@ -80,33 +79,6 @@ class RunningCompanionAgent:
         self._provider = provider
         self._model = model
         self._transaction_factory = transaction_factory or nullcontext
-
-    def run_daily_recommendation(
-        self,
-        *,
-        user_id: str,
-        anchor_date: date,
-        existing_run: AgentRun | None = None,
-    ) -> AgentRun:
-        run = self._start_run(
-            user_id=user_id,
-            trigger_type="scheduled",
-            workflow_name="daily_recommendation",
-            input_summary=f"Daily recommendation for {anchor_date.isoformat()}",
-            existing_run=existing_run,
-        )
-        request = ModelRequest(
-            user_id=user_id,
-            workflow_name="daily_recommendation",
-            prompt_version=self._prompt_version,
-            messages=(
-                {"role": "system", "content": "Use available Johnny tools before creating recommendations."},
-                {"role": "user", "content": f"Create today's running recommendation for {anchor_date.isoformat()}."},
-            ),
-            tools=_allowed_registered_tools(self._tools.names(), "daily_recommendation"),
-            context={"anchor_date": anchor_date.isoformat()},
-        )
-        return self._run_model_workflow(run=run, request=request, user_id=user_id, allowed_tools=set(request.tools))
 
     def run_conversation(self, *, user_id: str, message: str) -> AgentRun:
         safety = SafetyDecision.classify(message)
@@ -1089,9 +1061,7 @@ def _sum_optional_int(left: int | None, right: int | None) -> int | None:
 
 
 def _follow_up_write_tools(workflow_name: str, allowed_tools: set[str]) -> tuple[str, ...]:
-    if workflow_name == "daily_recommendation":
-        candidates = DAILY_WRITE_TOOL_NAMES
-    elif workflow_name == "coach_conversation":
+    if workflow_name == "coach_conversation":
         candidates = {"createRecommendation"}
     elif workflow_name == "training_plan_generation":
         candidates = frozenset()
@@ -1102,9 +1072,7 @@ def _follow_up_write_tools(workflow_name: str, allowed_tools: set[str]) -> tuple
 
 def _allowed_registered_tools(tool_names: tuple[str, ...], workflow_name: str) -> tuple[str, ...]:
     registered = set(tool_names)
-    if workflow_name == "daily_recommendation":
-        allowed = READ_TOOL_NAMES | DAILY_WRITE_TOOL_NAMES
-    elif workflow_name == "coach_conversation":
+    if workflow_name == "coach_conversation":
         allowed = READ_TOOL_NAMES | CONVERSATION_WRITE_TOOL_NAMES
     elif workflow_name == "training_plan_generation":
         allowed = READ_TOOL_NAMES | TRAINING_PLAN_GENERATION_WRITE_TOOL_NAMES
