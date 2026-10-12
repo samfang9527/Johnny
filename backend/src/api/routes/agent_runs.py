@@ -156,6 +156,7 @@ def _run_response(run: AgentRun) -> AgentRunResponse:
         error_type=run.error_type,
         error_message=run.error_message,
         recommendation_id=run.recommendation_id,
+        daily_advice_id=run.metadata.get("daily_advice_id"),
     )
 
 
