@@ -145,6 +145,20 @@ make agent-work-loop
 make smoke-agent-local
 ```
 
+For unattended daily advice, keep `make agent-schedule-loop` and `make agent-work-loop`
+running as separately supervised processes against the same database as the API. The
+scheduler checks each athlete's timezone every 60 seconds and queues that date's
+advice after 04:00 local time only when a Plan Version owns the date. On startup it
+checks immediately, so a restart after 04:00 catches up for the current local date.
+The queue keeps one scheduled task per athlete and local date, even after a completed
+task or a timezone change. The worker syncs activities before generating advice.
+
+Monitor both processes for restarts and errors, and monitor `agent_tasks` for growing
+queued or failed work. The current Terraform template provisions only the API service;
+a production rollout must separately provision and supervise the scheduler and worker
+with the same database and LLM configuration. Running only the API will not deliver
+unattended 04:00 advice.
+
 Run the optional live OpenAI smoke after configuring OpenAI settings:
 
 ```bash

@@ -7,6 +7,7 @@ import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = PROJECT_ROOT / "backend"
@@ -21,6 +22,7 @@ from src.application.async_agent_runs import QueueAgentRunHandler
 from src.application.daily_advice_generation import GenerateDailyAdviceHandler
 from src.application.daily_advice_sync import activity_sync_usable, recovery_data_limited
 from src.application.training_analytics import BuildTodayContextHandler
+from src.application.training_analytics import resolve_plan_for_date
 from src.application.integrations import GarminInitialSyncCommand, GarminInitialSyncHandler
 from src.application.interfaces.task_queue import TaskEnvelope
 from src.application.training_plan_regeneration import TrainingPlanRegenerationService
@@ -53,19 +55,32 @@ DAILY_ADVICE_SYNC_TASK_TYPE = "daily_advice.sync"
 logger = logging.getLogger(__name__)
 
 
-def schedule_once(session: Session, *, anchor_date: date | None = None) -> int:
-    anchor = anchor_date or date.today()
+def schedule_once(session: Session, *, now: datetime | None = None) -> int:
+    instant = now or _utc_now()
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("schedule_once requires a timezone-aware instant")
+    instant = instant.astimezone(timezone.utc)
     before = _task_count(session)
     handler = _daily_advice_queue_handler(session)
-    for user in _eligible_daily_users(session):
+    plans = SqlAlchemyTrainingPlanRepository(session)
+    for user, timezone_name in _eligible_daily_users(session):
+        try:
+            local_date = _due_local_date(instant, timezone_name)
+        except ZoneInfoNotFoundError:
+            logger.warning("daily advice schedule skipped invalid timezone user_id=%s timezone=%s", user.id, timezone_name)
+            continue
+        if local_date is None or resolve_plan_for_date(plans, user.id, local_date) is None:
+            continue
         handler.queue_run(
             user_id=user.id,
             workflow_name="daily_recommendation",
             trigger_type="scheduled",
-            idempotency_key=f"daily_recommendation:{user.id}:{anchor.isoformat()}",
-            payload={"anchor_date": anchor.isoformat(), "force": False},
-            task_type="daily_advice.sync",
+            idempotency_key=f"daily_recommendation:{user.id}:{local_date.isoformat()}",
+            payload={"anchor_date": local_date.isoformat(), "force": False},
+            task_type=DAILY_ADVICE_SYNC_TASK_TYPE,
+            reuse_terminal=True,
         )
+    anchor = instant.date()
     SqlAlchemyAgentTaskQueue(session).enqueue(
         TaskEnvelope(
             task_type=TRAINING_PLAN_DAILY_CHECK_TASK_TYPE,
@@ -75,6 +90,13 @@ def schedule_once(session: Session, *, anchor_date: date | None = None) -> int:
         )
     )
     return _task_count(session) - before
+
+
+def _due_local_date(now: datetime, timezone_name: str) -> date | None:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("daily advice schedule requires a timezone-aware instant")
+    local = now.astimezone(ZoneInfo(timezone_name))
+    return local.date() if local.hour >= 4 else None
 
 
 def schedule_loop(session_factory, *, max_iterations: int | None = None, interval_seconds: float = 60.0) -> int:
@@ -296,16 +318,17 @@ def _training_plan_regeneration_service(session: Session) -> TrainingPlanRegener
     )
 
 
-def _eligible_daily_users(session: Session) -> list[UserModel]:
-    statement = select(UserModel).where(
+def _eligible_daily_users(session: Session) -> list[tuple[UserModel, str]]:
+    statement = select(UserModel, AthleteProfileModel.timezone).join(
+        AthleteProfileModel, AthleteProfileModel.user_id == UserModel.id,
+    ).where(
         UserModel.status == "active",
-        exists().where(AthleteProfileModel.user_id == UserModel.id),
         exists().where(
             (TrainingPlanModel.user_id == UserModel.id)
             & (TrainingPlanModel.status == "active")
         ),
     )
-    return list(session.scalars(statement))
+    return list(session.execute(statement).all())
 
 
 def _process_task(session: Session, task_id: str) -> None:

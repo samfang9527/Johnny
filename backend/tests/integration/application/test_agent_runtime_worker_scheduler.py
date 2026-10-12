@@ -44,7 +44,7 @@ from src.infrastructure.database.uow import SqlAlchemyUnitOfWork
 from src.main import create_app
 
 
-def _create_context_ready_user(session, user_id: str) -> None:
+def _create_context_ready_user(session, user_id: str, *, timezone_name: str = "UTC") -> None:
     ensure_current_user(session, CurrentUser(id=user_id))
     session.execute(
         TrainingPlanModel.__table__.insert().values(
@@ -60,7 +60,7 @@ def _create_context_ready_user(session, user_id: str) -> None:
         Base.metadata.tables["athlete_profiles"].insert().values(
             id=f"profile-{user_id}",
             user_id=user_id,
-            timezone="UTC",
+            timezone=timezone_name,
             experience_level="intermediate",
             metadata_json={},
         )
@@ -84,8 +84,9 @@ def test_schedule_once_enqueues_today_daily_jobs_for_context_ready_active_users(
             )
         )
 
-        queued = schedule_once(uow.session, anchor_date=date(2027, 1, 28))
-        duplicate = schedule_once(uow.session, anchor_date=date(2027, 1, 28))
+        now = datetime(2027, 1, 28, 4, tzinfo=timezone.utc)
+        queued = schedule_once(uow.session, now=now)
+        duplicate = schedule_once(uow.session, now=now)
         tasks = uow.session.scalars(select(AgentTaskModel)).all()
         uow.commit()
 
@@ -99,6 +100,58 @@ def test_schedule_once_enqueues_today_daily_jobs_for_context_ready_active_users(
     assert {task.payload["input"]["anchor_date"] for task in tasks if task.task_type == "daily_advice.sync"} == {"2027-01-28"}
     assert len(daily_check_tasks) == 1
     assert daily_check_tasks[0].payload == {"anchor_date": "2027-01-28"}
+
+
+def test_schedule_once_uses_each_athletes_local_clock_and_owning_plan(sqlite_session_factory) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        _create_context_ready_user(uow.session, "taipei", timezone_name="Asia/Taipei")
+        _create_context_ready_user(uow.session, "utc")
+        _create_context_ready_user(uow.session, "new-york", timezone_name="America/New_York")
+        _create_context_ready_user(uow.session, "no-owning-plan")
+        uow.session.get(TrainingPlanModel, "plan-new-york").starts_on = date(2027, 1, 28)
+        uow.session.get(TrainingPlanModel, "plan-no-owning-plan").ends_on = date(2027, 1, 27)
+
+        instant = datetime(2027, 1, 28, 3, 59, tzinfo=timezone.utc)
+        assert schedule_once(uow.session, now=instant) == 2  # Taipei and the daily plan check.
+        assert schedule_once(uow.session, now=instant + timedelta(minutes=1)) == 1
+        assert schedule_once(uow.session, now=datetime(2027, 1, 28, 9, tzinfo=timezone.utc)) == 1
+        assert schedule_once(uow.session, now=datetime(2027, 1, 28, 15, 59, tzinfo=timezone.utc)) == 0
+        tasks = list(uow.session.scalars(select(AgentTaskModel).where(AgentTaskModel.task_type == "daily_advice.sync")))
+        uow.commit()
+
+    assert len(tasks) == 3
+    assert {(task.payload["input"]["anchor_date"], task.idempotency_key) for task in tasks} == {
+        ("2027-01-28", "daily_recommendation:taipei:2027-01-28"),
+        ("2027-01-28", "daily_recommendation:utc:2027-01-28"),
+        ("2027-01-28", "daily_recommendation:new-york:2027-01-28"),
+    }
+
+
+def test_schedule_restart_and_timezone_change_keep_one_task_per_local_date(sqlite_session_factory, monkeypatch) -> None:
+    Base.metadata.create_all(sqlite_session_factory.kw["bind"])
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        _create_context_ready_user(uow.session, "traveler", timezone_name="UTC")
+        assert schedule_once(uow.session, now=datetime(2027, 1, 28, 4, tzinfo=timezone.utc)) == 2
+        task = uow.session.scalar(select(AgentTaskModel).where(AgentTaskModel.task_type == "daily_advice.sync"))
+        task.status = "completed"
+        uow.commit()
+
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        profile = uow.session.scalar(select(agent_runtime.AthleteProfileModel).where(agent_runtime.AthleteProfileModel.user_id == "traveler"))
+        profile.timezone = "America/Los_Angeles"
+        assert schedule_once(uow.session, now=datetime(2027, 1, 29, 7, 59, tzinfo=timezone.utc)) == 1  # Next UTC daily check only.
+        assert schedule_once(uow.session, now=datetime(2027, 1, 29, 12, tzinfo=timezone.utc)) == 1
+        assert schedule_once(uow.session, now=datetime(2027, 1, 29, 23, 59, tzinfo=timezone.utc)) == 0
+        tasks = list(uow.session.scalars(select(AgentTaskModel).where(AgentTaskModel.task_type == "daily_advice.sync")))
+        runs = list(uow.session.scalars(select(AgentRunModel).where(AgentRunModel.user_id == "traveler")))
+        uow.commit()
+
+    assert len(tasks) == 2
+    assert {task.payload["input"]["anchor_date"] for task in tasks} == {"2027-01-28", "2027-01-29"}
+    assert {(run.provider, run.model) for run in runs} == {("openai", "test-model")}
 
 
 def test_scheduled_daily_run_waits_for_sync_gate_then_uses_stored_data_without_connection(sqlite_session_factory) -> None:
@@ -115,7 +168,7 @@ def test_scheduled_daily_run_waits_for_sync_gate_then_uses_stored_data_without_c
             activity_type="run", distance_meters=5000, duration_seconds=1800,
             provider_summary={},
         ))
-        assert schedule_once(uow.session, anchor_date=day) == 2
+        assert schedule_once(uow.session, now=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=12)) == 2
         tasks = list(uow.session.scalars(select(AgentTaskModel).where(AgentTaskModel.task_type == "daily_advice.sync")))
         run_id = tasks[0].payload["run_id"]
 
@@ -185,7 +238,7 @@ def test_scheduled_sync_imports_before_generation_and_gates_activity_failures(
         SqlAlchemyIntegrationRepository(uow.session).create_connection(
             user_id="connected-worker", provider="garmin_connect", provider_account_id="connected-garmin",
         )
-        assert schedule_once(uow.session, anchor_date=day) == 2
+        assert schedule_once(uow.session, now=datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=12)) == 2
         assert work_drain(uow.session, max_tasks=1) == 1
         assert uow.session.scalar(select(DailyAdviceModel).where(DailyAdviceModel.user_id == "connected-worker")) is None or fail_activities
         generation = uow.session.scalar(select(AgentTaskModel).where(AgentTaskModel.task_type == "agent.workflow"))
@@ -217,7 +270,7 @@ def test_running_garmin_sync_defers_daily_generation_without_starting_second_syn
             user_id="busy-worker", provider="garmin_connect", provider_account_id="busy-garmin",
         )
         SqlAlchemyIntegrationRepository(uow.session).start_sync_run(connection.id)
-        schedule_once(uow.session, anchor_date=date(2027, 1, 28))
+        schedule_once(uow.session, now=datetime(2027, 1, 28, 4, tzinfo=timezone.utc))
         assert work_drain(uow.session, max_tasks=1) == 1
         sync_task = uow.session.scalar(select(AgentTaskModel).where(AgentTaskModel.task_type == "daily_advice.sync"))
         assert sync_task.status == "queued"
@@ -238,7 +291,7 @@ def test_worker_exposes_running_sync_before_provider_fetch(tmp_path, monkeypatch
         SqlAlchemyIntegrationRepository(session).create_connection(
             user_id="visible-worker", provider="garmin_connect", provider_account_id="visible-garmin",
         )
-        schedule_once(session, anchor_date=date(2027, 1, 28))
+        schedule_once(session, now=datetime(2027, 1, 28, 4, tzinfo=timezone.utc))
         session.commit()
 
     class InspectAdapter(_WorkerGarminAdapter):
@@ -285,7 +338,7 @@ def test_scheduled_reauth_blocks_generation_and_marks_existing_advice_sync_faile
             generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc), source_sync_run_id=None,
             source_run_id="previous-run", state="ready", data_freshness="limited",
         ))
-        schedule_once(uow.session, anchor_date=day)
+        schedule_once(uow.session, now=datetime(2027, 1, 28, 4, tzinfo=timezone.utc))
         assert work_drain(uow.session, max_tasks=1) == 1
         assert uow.session.scalar(select(AgentTaskModel).where(AgentTaskModel.task_type == "agent.workflow")) is None
         advice = uow.session.scalar(select(DailyAdviceModel).where(DailyAdviceModel.user_id == "reauth-worker"))
