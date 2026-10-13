@@ -76,8 +76,12 @@ The system SHALL display separate approval-backed Recommendation decisions using
 #### Scenario: Pending recommendation is displayed
 
 - **WHEN** a pending recommendation appears on Today
-- **THEN** the recommendation visually groups signal, evidence, recommendation, and decision actions
-- **AND** the available actions use the labels `接受調整`, `編輯調整`, `保留原課表`, and `討論原因` where applicable
+- **THEN** Today links to the pending proposal in Johnny
+- **AND** Johnny exposes approval actions including `接受調整` and `保留課表` where applicable
+
+#### Scenario: No advice or pending recommendation is available
+- **WHEN** Today has conservative recovery evidence but no current Daily Advice or pending Recommendation
+- **THEN** its decision action opens the plan rather than implying a proposal can be accepted
 
 #### Scenario: User accepts a recommendation
 

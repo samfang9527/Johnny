@@ -112,9 +112,30 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('不太對勁')
     expect(wrapper.get('[data-testid="today-decision-action"]').text()).not.toContain('接受調整')
     expect(wrapper.get('[data-testid="today-daily-advice"]').findAll('[data-testid="recommendation-actions"]')).toHaveLength(0)
-    await wrapper.get('button[data-view="johnny"]').trigger('click')
+    await wrapper.get('[data-testid="today-decision-action"]').trigger('click')
     expect(wrapper.findAll('[data-testid="johnny-daily-advice"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="johnny-daily-advice"]').text()).toContain('本週多跑了一堂')
     expect(wrapper.find('[data-testid="inbox-card-pending-change"] [data-testid="recommendation-actions"]').exists()).toBe(true)
+  })
+
+  it('does not offer approval or open an empty Johnny queue when advice and proposals are absent', async () => {
+    mockAuthenticatedToday({
+      userId: 'advice-pending-user',
+      todayData: {
+        scheduled_workouts: [{ id: 'today-run', scheduled_for: '2026-09-26', workout_type: 'easy_run', planned_duration_minutes: 40, status: 'planned' }],
+        recovery: { hrv_ms: 42, hrv_delta_percentage: -18 },
+        unavailable_signals: [],
+        daily_advice: null,
+      },
+    })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="today-daily-advice"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toBe('查看課表')
+    await wrapper.get('[data-testid="today-decision-action"]').trigger('click')
+    expect(wrapper.find('[data-testid="johnny-page"]').exists()).toBe(false)
+    expect(wrapper.get('#plan-title').text()).toBe('計畫')
   })
 
   it('replaces advice after manual sync finishes without rendering both revisions', async () => {
@@ -168,7 +189,7 @@ describe('Johnny product shell', () => {
     const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
 
     expect(decisionCard.text()).toContain('不太對勁')
-    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('接受調整')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('查看待決定建議')
     expect(wrapper.findAll('[data-testid="today-evidence-chip"]').length).toBeGreaterThanOrEqual(3)
     expect(decisionCard.text()).toContain('近期訓練負荷偏高')
     expect(wrapper.text()).toContain('依照你過去的恢復模式')
@@ -342,7 +363,7 @@ describe('Johnny product shell', () => {
     const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
     expect(decisionCard.text()).toContain('先收一下')
     expect(decisionCard.text()).toContain('今天不要硬撐，跑鞋先放假。')
-    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('記錄休息')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('查看待決定建議')
   })
 
   it('uses all recovery evidence for Today Decision even when dangerous evidence is not displayed', async () => {
@@ -381,7 +402,7 @@ describe('Johnny product shell', () => {
 
     const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
     expect(decisionCard.text()).toContain('先收一下')
-    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('記錄休息')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('查看課表')
     expect(wrapper.findAll('[data-testid="today-evidence-chip"]')).toHaveLength(3)
   })
 

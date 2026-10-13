@@ -519,13 +519,15 @@ const KILOMETERS_PER_MILE = 1.60934
 function buildTodayDecision(recommendation: RecommendationSummary | null, evidence: EvidenceItem[]): TodayDecision {
   const hasDangerEvidence = evidence.some((item) => item.tone === 'danger')
   const hasWarningEvidence = evidence.some((item) => item.tone === 'warning')
-  const hasWarningRecommendation = recommendation?.priority === 'warning' || recommendation?.priority === 'danger'
+  const pendingRecommendation = recommendation?.status === 'pending' ? recommendation : null
+  const hasWarningRecommendation = pendingRecommendation?.priority === 'warning' || pendingRecommendation?.priority === 'danger'
+  const actionLabel = pendingRecommendation ? '查看待決定建議' : '查看課表'
 
-  if (hasDangerEvidence || recommendation?.priority === 'danger') {
+  if (hasDangerEvidence || pendingRecommendation?.priority === 'danger') {
     return {
       state: 'rest',
       label: '先收一下',
-      actionLabel: '記錄休息',
+      actionLabel,
       tone: 'rest',
       voice: '今天不要硬撐，跑鞋先放假。',
       memoryInsight: '依照你過去的恢復模式，今天建議保守。',
@@ -536,7 +538,7 @@ function buildTodayDecision(recommendation: RecommendationSummary | null, eviden
     return {
       state: 'adjust',
       label: '不太對勁',
-      actionLabel: '接受調整',
+      actionLabel,
       tone: 'adjust',
       voice: '今天先穩住節奏，保留訓練目的就好。',
       memoryInsight: '依照你過去的恢復模式，今天建議保守。',
@@ -947,7 +949,7 @@ function handleTodayDecisionAction() {
     showView('plan')
     return
   }
-  showView('johnny')
+  showView(dailyAdvice.value || recommendation.value?.status === 'pending' ? 'johnny' : 'plan')
 }
 
 async function handleAccept() {
