@@ -204,8 +204,12 @@ button:disabled {
 
 .auth-panel p {
   margin: 0;
-  color: var(--color-muted-chalk);
+  color: var(--color-muted-green);
   line-height: 1.65;
+}
+
+.auth-panel .field-error {
+  color: var(--color-effort-red);
 }
 
 .google-auth-button,

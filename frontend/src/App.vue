@@ -260,7 +260,12 @@ const athleteSettingsBusy = ref(false)
 const athleteMileageDisplayUnit = ref<'metric' | 'imperial'>('metric')
 
 const activeTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label || '今日')
-watch(activeTitle, updateDocumentTitle, { immediate: true })
+const documentTitleLabel = computed(() => {
+  if (shouldRequireAuth() && authStatus.value === 'checking') return '確認登入'
+  if (shouldRequireAuth() && authStatus.value === 'anonymous') return authMode.value === 'signup' ? '建立帳號' : '登入'
+  return activeTitle.value
+})
+watch(documentTitleLabel, updateDocumentTitle, { immediate: true })
 const isAuthenticated = computed(() => authStatus.value === 'authenticated')
 const hasActiveDataProvider = computed(() =>
   Boolean(garminConnection.value && garminConnection.value.status !== 'disconnected' && garminConnection.value.credential_status !== 'deleted'),
@@ -2776,9 +2781,11 @@ function shouldRequireAuth(): boolean {
   <div v-if="authStatus === 'checking' && shouldRequireAuth()" class="app-shell auth-shell">
     <main class="auth-surface">
       <section class="auth-panel" aria-live="polite">
-        <p class="section-label">Johnny</p>
-        <h1>正在確認登入狀態</h1>
-        <p>如果 session 已過期，Johnny 會帶你回到登入頁。</p>
+        <div class="page-heading">
+          <p class="section-label">Johnny</p>
+          <h1>正在確認登入狀態</h1>
+          <p>正在確認你的登入狀態。</p>
+        </div>
       </section>
     </main>
   </div>
@@ -2786,17 +2793,18 @@ function shouldRequireAuth(): boolean {
   <div v-else-if="authStatus === 'anonymous' && shouldRequireAuth()" class="app-shell auth-shell">
     <main class="auth-surface">
       <section class="auth-panel" aria-labelledby="auth-title">
-        <div class="auth-panel__header">
+        <div class="auth-panel__header page-heading">
           <p class="section-label">Running Companion</p>
-          <h1 id="auth-title">登入 Johnny</h1>
+          <h1 id="auth-title">{{ authMode === 'signup' ? '建立 Johnny 帳號' : '登入 Johnny' }}</h1>
           <p>登入後 Johnny 才會讀取你的訓練計畫、資料連接與 Johnny 建議。</p>
         </div>
 
-        <div class="auth-mode-switch" role="tablist" aria-label="登入方式">
+        <div class="auth-mode-switch" role="group" aria-label="帳號方式">
           <button
             type="button"
             data-auth-mode="login"
             :class="{ 'auth-mode-switch__item--active': authMode === 'login' }"
+            :aria-pressed="authMode === 'login'"
             @click="selectAuthMode('login')"
           >
             Email 登入
@@ -2805,6 +2813,7 @@ function shouldRequireAuth(): boolean {
             type="button"
             data-auth-mode="signup"
             :class="{ 'auth-mode-switch__item--active': authMode === 'signup' }"
+            :aria-pressed="authMode === 'signup'"
             @click="selectAuthMode('signup')"
           >
             建立帳號
@@ -2832,9 +2841,9 @@ function shouldRequireAuth(): boolean {
             確認密碼
             <input v-model="authPasswordConfirm" class="auth-form__input" name="authPasswordConfirm" type="password" autocomplete="new-password" :aria-invalid="authError ? 'true' : 'false'" />
           </label>
-          <p v-if="authError" class="field-error" role="alert">{{ authError }}</p>
-          <p v-else-if="authMessage" class="inline-note">{{ authMessage }}</p>
-          <p v-else class="auth-hint">密碼至少 8 個字元，可使用密碼管理器或貼上。</p>
+          <p v-if="authError" id="auth-feedback" class="field-error" role="alert">{{ authError }}</p>
+          <p v-else-if="authMessage" id="auth-feedback" class="inline-note" aria-live="polite">{{ authMessage }}</p>
+          <p v-else id="auth-feedback" class="auth-hint">密碼至少 8 個字元，可使用密碼管理器或貼上。</p>
           <AppButton tone="primary" type="submit" :busy="authBusy">
             {{ authMode === 'signup' ? '建立並進入 Johnny' : '登入 Johnny' }}
           </AppButton>

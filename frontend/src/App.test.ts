@@ -315,6 +315,31 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('input[name="authPassword"]').classes()).toContain('auth-form__input')
   })
 
+  it('keeps login and signup states in the shared visual system', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401, json: () => Promise.resolve({ error: { code: 'unauthorized', message: 'Authentication required', details: [] } }) } as Response)
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    expect(wrapper.find('.auth-panel .page-heading').exists()).toBe(true)
+    expect(document.title).toBe('登入 — Johnny')
+    expect(wrapper.find('[name="displayName"]').exists()).toBe(false)
+    expect(wrapper.find('button[data-auth-mode="login"]').attributes('aria-pressed')).toBe('true')
+    await wrapper.get('button[data-auth-mode="signup"]').trigger('click')
+    expect(wrapper.find('[name="displayName"]').exists()).toBe(true)
+    expect(document.title).toBe('建立帳號 — Johnny')
+    expect(wrapper.find('button[data-auth-mode="signup"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.text()).toContain('使用 Google 登入')
+  })
+
+  it('announces auth errors next to the sign-in action', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401, json: () => Promise.resolve({ error: { code: 'unauthorized', message: 'Authentication required', details: [] } }) } as Response)
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    await wrapper.get('[data-testid="auth-form"]').trigger('submit')
+    const error = wrapper.get('[data-testid="auth-form"] [role="alert"]')
+    expect(error.text()).toContain('請輸入 Email 與密碼')
+    expect(error.element.compareDocumentPosition(wrapper.get('[data-testid="auth-form"] button[type="submit"]').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('shows compact period context without duplicating the decision in a rail', () => {
     const wrapper = mount(App)
     expect(wrapper.get('[data-testid="today-date-strip"]').text()).toContain('2026-09-26')
