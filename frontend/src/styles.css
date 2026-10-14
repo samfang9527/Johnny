@@ -1097,8 +1097,7 @@ button:disabled {
   color: var(--color-muted-chalk);
 }
 
-.signal-pill::after {
-  content: "待補";
+.signal-pill__state {
   font-family: var(--font-data);
   font-size: 0.72rem;
 }
@@ -1125,8 +1124,7 @@ button:disabled {
   background: rgba(131, 183, 165, 0.1);
 }
 
-.signal-pill--covered::after {
-  content: "已就緒";
+.signal-pill--covered .signal-pill__state {
   color: var(--color-primary);
 }
 
@@ -2634,23 +2632,49 @@ button:disabled {
 }
 
 .signal-pill {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   min-height: 4.15rem;
-  border-radius: var(--radius-lg);
-  background: var(--color-mint-surface);
+  border: 0;
+  border-bottom: 1px solid var(--color-line-mint);
+  border-radius: 0;
+  background: transparent;
 }
 
 .signal-pill--covered {
-  border-color: var(--color-lane-green);
   color: var(--color-deep-green);
-  background: color-mix(in srgb, var(--color-soft-mint) 66%, var(--color-card-white));
 }
 
-.signal-pill::after {
+.signal-pill strong,
+.signal-pill small {
+  grid-column: 1;
+}
+
+.signal-pill__state {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
   color: var(--color-muted-green);
 }
 
-.signal-pill--covered::after {
+.signal-pill--covered .signal-pill__state {
   color: var(--color-deep-green);
+}
+
+.signal-coverage__grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 1.5rem;
+}
+
+@media (max-width: 640px) {
+  .signal-coverage__grid { grid-template-columns: 1fr; }
+}
+
+.provider-card__recovery {
+  margin: 0;
+  color: var(--color-deep-green);
+  font-size: 0.88rem;
 }
 
 .athlete-baseline dl div {

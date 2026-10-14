@@ -379,6 +379,16 @@ describe('Johnny product shell', () => {
     expect(signalCoverage.element.compareDocumentPosition(providerDetails.element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
+  it('labels each signal as available or missing with its source', async () => {
+    const wrapper = mount(App, { props: { initialView: 'data' } })
+    const rows = wrapper.findAll('[data-signal-row]')
+    expect(rows).toHaveLength(6)
+    for (const row of rows) {
+      expect(row.find('[data-signal-source]').text().length).toBeGreaterThan(0)
+      expect(row.text()).toMatch(/已取得|待補/)
+    }
+  })
+
   it('derives signal coverage from canonical backend signals', async () => {
     mockAuthenticatedToday({
       userId: 'user-auth-signal-coverage',
@@ -2107,6 +2117,7 @@ describe('Johnny product shell', () => {
 
     const garminCard = wrapper.get('[data-testid="provider-card-garmin_connect"]')
     expect(garminCard.text()).toContain('部分資料同步失敗')
+    expect(garminCard.text()).toContain('再次手動同步')
     expect(garminCard.text()).toContain('HRV 暫時無法同步')
     expect(garminCard.text()).toContain('活動：取得 4，新增 2，重複 2')
     expect(garminCard.text()).toContain('HRV：取得 0，新增 0，失敗 1')

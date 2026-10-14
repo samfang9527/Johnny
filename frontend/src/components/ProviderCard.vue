@@ -81,6 +81,8 @@ function selectProvider() {
     <div v-if="connection && resourceRows.length" class="provider-card__sync-summary">
       <p v-if="connection.has_partial_failures" class="provider-card__warning">部分資料同步失敗</p>
       <p v-if="connection.sync_warning" class="provider-card__warning">{{ connection.sync_warning }}</p>
+      <p v-if="requiresReauth" class="provider-card__recovery">請重新連接 Garmin，更新登入資料後再同步。</p>
+      <p v-else-if="connection.has_partial_failures || connection.sync_status === 'failed'" class="provider-card__recovery">檢查失敗的資料後，可再次手動同步。</p>
       <ul>
         <li v-for="row in resourceRows" :key="row">{{ row }}</li>
       </ul>

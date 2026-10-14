@@ -3699,9 +3699,10 @@ function shouldRequireAuth(): boolean {
           <span class="card-kicker">Signal Coverage</span>
           <h3 id="signal-coverage-title">Johnny 已有 {{ coveredSignalCount }}/{{ signalCoverage.length }} 個訓練訊號</h3>
           <div class="signal-coverage__grid">
-            <span v-for="item in signalCoverage" :key="item.id" class="signal-pill" :class="{ 'signal-pill--covered': item.covered }">
+            <span v-for="item in signalCoverage" :key="item.id" class="signal-pill" :class="{ 'signal-pill--covered': item.covered }" data-signal-row>
               <strong>{{ item.label }}</strong>
-              <small>{{ item.source }}</small>
+              <small data-signal-source>{{ item.source }}</small>
+              <span class="signal-pill__state">{{ item.covered ? '已取得' : '待補' }}</span>
             </span>
           </div>
         </section>
