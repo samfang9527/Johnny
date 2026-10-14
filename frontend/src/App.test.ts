@@ -1194,12 +1194,27 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('接下來課表')
   })
 
+  it('leads Plan with phase, week, and next workout before secondary race controls', async () => {
+    const wrapper = mount(App, { props: { initialView: 'plan' } })
+    const page = wrapper.get('.plan-page')
+    const summary = page.get('[data-testid="plan-summary"]')
+    const journey = page.get('[data-testid="plan-training-journey"]')
+    const schedule = page.get('.schedule-section')
+    const secondary = page.get('[data-testid="plan-secondary"]')
+
+    expect(summary.text()).toContain('Build')
+    expect(summary.text()).toContain('Easy Run')
+    expect(summary.element.compareDocumentPosition(journey.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(journey.element.compareDocumentPosition(schedule.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(schedule.element.compareDocumentPosition(secondary.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('opens Plan with journey phases, race goals, and workout context', async () => {
     const wrapper = mount(App)
 
     await wrapper.get('button[data-view="plan"]').trigger('click')
 
-    expect(wrapper.text()).toContain('Training journey')
+    expect(wrapper.get('[data-testid="plan-summary"]').text()).toContain('目前階段')
     expect(wrapper.text()).not.toContain('Race journey')
     expect(wrapper.get('[data-testid="plan-training-journey"]').text()).toContain('Build')
     expect(wrapper.text()).toContain('Taipei Half Tune-up')
@@ -1689,7 +1704,7 @@ describe('Johnny product shell', () => {
     expect(document.activeElement).toBe(closeButton.element)
   })
 
-  it('starts regeneration, keeps the current plan visible, and shows its in-progress state', async () => {
+  it('keeps active schedule visible during regeneration', async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/api/v1/training-plans/regeneration-options')) {
@@ -1742,6 +1757,8 @@ describe('Johnny product shell', () => {
     )
     expect(wrapper.text()).toContain('正在重新產生訓練計畫')
     expect(wrapper.text()).toContain('Easy Run')
+    expect(wrapper.get('[data-testid="training-plan-regeneration-in-flight"]').text()).toContain('目前課表會繼續保留')
+    expect(wrapper.get('[data-testid="plan-summary"]').text()).toContain('Easy Run')
     expect(wrapper.find('[data-testid="training-plan-regeneration-sheet"]').exists()).toBe(false)
   })
 

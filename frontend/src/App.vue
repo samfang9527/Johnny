@@ -412,6 +412,7 @@ const todayEvidenceChips = computed(() => [...recoveryEvidence.value]
 const nextWorkout = computed(() => [...displayWorkouts.value]
   .filter((workout) => workout.scheduledFor && workout.scheduledFor > todayIsoDate.value)
   .sort((a, b) => a.scheduledFor!.localeCompare(b.scheduledFor!))[0] ?? null)
+const planLeadWorkout = computed(() => visibleScheduleWorkouts.value[0] ?? (shouldRequireAuth() ? nextWorkout.value : displayWorkouts.value[0] ?? null))
 const currentPlanPhase = computed(() => journeyPhases.value.find((phase) => phase.status === 'current') ?? (recoveryWindow.value ? {
   label: '恢復週 · Recovery Window', summary: `上一份計畫已結束，安排七天恢復。第 ${recoveryWindow.value.day} / 7 天`,
 } : { label: journeyPhases.value.length ? '計畫尚未開始' : '尚無有效訓練計畫', summary: journeyPhases.value.length ? '接下來的訓練階段已排定。' : '請重新產生計畫，安排接下來的訓練。' }))
@@ -3027,40 +3028,24 @@ function shouldRequireAuth(): boolean {
       </section>
 
       <section v-else-if="activeView === 'plan'" class="page-stack plan-page" aria-labelledby="plan-title">
-        <div class="page-heading page-heading--with-action">
+        <div class="page-heading">
           <div>
-            <span>Training journey</span>
             <h2 id="plan-title">計畫</h2>
             <p v-if="raceFormError" class="field-error" role="alert">{{ raceFormError }}</p>
             <p v-else-if="raceFormMessage" class="inline-note" role="status">{{ raceFormMessage }}</p>
           </div>
-          <div class="app-dialog__actions">
-            <AppButton tone="neutral" type="button" data-testid="open-plan-regeneration-sheet" @click="openPlanRegenerationSheet">重新產生計畫</AppButton>
-            <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
-          </div>
         </div>
+
+        <section class="plan-summary" data-testid="plan-summary" aria-label="目前計畫摘要">
+          <div><span>目前階段</span><strong>{{ recoveryWindow ? '恢復週' : currentPlanPhase.label }}</strong></div>
+          <div><span>Plan Week</span><strong>{{ scheduleWeekStart && visibleScheduleEnd ? `${formatDateLabel(scheduleWeekStart)}–${formatDateLabel(visibleScheduleEnd)}` : '本週安排' }}</strong></div>
+          <div><span>下一堂課</span><strong>{{ planLeadWorkout?.type || '尚未排定' }}</strong><small v-if="planLeadWorkout">{{ planLeadWorkout.scheduledFor || planLeadWorkout.dateLabel }}</small></div>
+        </section>
 
         <article v-if="inFlightPlanRegeneration" class="state-panel" data-testid="training-plan-regeneration-in-flight" aria-live="polite">
           <p class="section-label">計畫更新中</p>
           <h3>正在重新產生訓練計畫</h3>
           <p>目前課表會繼續保留，完成後才會顯示新的安排。</p>
-        </article>
-
-        <article v-if="planPhases.length" class="surface-card" data-testid="plan-phase-timeline" aria-label="訓練計畫階段">
-          <div class="section-heading">
-            <div>
-              <p class="section-label">訓練階段</p>
-              <h3>目前計畫節奏</h3>
-            </div>
-            <StatusBadge tone="info">{{ planPhases.length }} 個階段</StatusBadge>
-          </div>
-          <div class="decision-strip decision-strip--compact" role="list">
-            <div v-for="segment in planPhases" :key="`${segment.phase}-${segment.dateRange}`" role="listitem">
-              <p class="section-label">{{ segment.label }}</p>
-              <strong>{{ segment.focus }}</strong>
-              <p>{{ segment.dateRange }}</p>
-            </div>
-          </div>
         </article>
 
         <section class="surface-card plan-journey plan-training-journey" data-testid="plan-training-journey" aria-label="訓練旅程">
@@ -3092,21 +3077,6 @@ function shouldRequireAuth(): boolean {
               </div>
             </article>
           </div>
-          <template v-if="upcomingRaceEntries.length">
-            <article v-for="race in upcomingRaceEntries" :key="race.id" class="plan-race-goal">
-              <div class="plan-race-goal__identity"><strong>{{ race.name }}</strong><span>{{ race.distance }} · {{ race.goal }}</span></div>
-              <div class="app-dialog__actions plan-race-goal__actions">
-                <AppButton data-testid="edit-race" :aria-label="`編輯 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="editRaceEntry(race, $event)">編輯</AppButton>
-                <AppButton data-testid="delete-race" :aria-label="`刪除 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="requestDeleteRace(race)">刪除</AppButton>
-              </div>
-              <p class="plan-race-goal__course">{{ raceCourseDetails(race) }}</p>
-              <div v-if="activePlan?.race_id === race.id && activePlan.preparation_assessment" class="plan-race-goal__assessment" role="status" data-testid="preparation-assessment">
-                <StatusBadge :tone="activePlan.preparation_assessment.status === 'gap' ? 'warning' : activePlan.preparation_assessment.status === 'on_track' ? 'success' : 'info'">{{ preparationStatusLabel(activePlan.preparation_assessment.status) }}</StatusBadge>
-                <p>{{ activePlan.preparation_assessment.explanation_zh }}</p>
-              </div>
-            </article>
-          </template>
-          <p v-else>尚未設定目標</p>
         </section>
 
         <p v-if="raceEditLoading" role="status">正在載入賽事…</p>
@@ -3222,6 +3192,49 @@ function shouldRequireAuth(): boolean {
             <p class="section-label">Empty</p>
             <h3>目前沒有已排定課表</h3>
             <p>建立訓練計畫後，Johnny 會在這裡依日期整理接下來的課表。</p>
+          </article>
+        </section>
+
+        <section class="plan-secondary" data-testid="plan-secondary" aria-labelledby="plan-secondary-title">
+          <div class="section-heading">
+            <div>
+              <h3 id="plan-secondary-title">目標與計畫調整</h3>
+              <p>賽事或訓練方向變更後，可重新產生計畫；目前課表會保留到新計畫完成。</p>
+            </div>
+            <div class="app-dialog__actions">
+              <AppButton tone="neutral" type="button" data-testid="open-plan-regeneration-sheet" @click="openPlanRegenerationSheet">重新產生計畫</AppButton>
+              <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
+            </div>
+          </div>
+
+          <div v-if="upcomingRaceEntries.length" class="plan-race-list">
+            <article v-for="race in upcomingRaceEntries" :key="race.id" class="plan-race-goal">
+              <div class="plan-race-goal__identity"><strong>{{ race.name }}</strong><span>{{ race.distance }} · {{ race.goal }}</span></div>
+              <div class="app-dialog__actions plan-race-goal__actions">
+                <AppButton data-testid="edit-race" :aria-label="`編輯 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="editRaceEntry(race, $event)">編輯</AppButton>
+                <AppButton data-testid="delete-race" :aria-label="`刪除 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="requestDeleteRace(race)">刪除</AppButton>
+              </div>
+              <p class="plan-race-goal__course">{{ raceCourseDetails(race) }}</p>
+              <div v-if="activePlan?.race_id === race.id && activePlan.preparation_assessment" class="plan-race-goal__assessment" role="status" data-testid="preparation-assessment">
+                <StatusBadge :tone="activePlan.preparation_assessment.status === 'gap' ? 'warning' : activePlan.preparation_assessment.status === 'on_track' ? 'success' : 'info'">{{ preparationStatusLabel(activePlan.preparation_assessment.status) }}</StatusBadge>
+                <p>{{ activePlan.preparation_assessment.explanation_zh }}</p>
+              </div>
+            </article>
+          </div>
+          <p v-else>尚未設定目標</p>
+
+          <article v-if="planPhases.length" class="plan-phase-details" data-testid="plan-phase-timeline" aria-label="訓練計畫階段">
+            <div class="section-heading">
+              <h4>階段詳情</h4>
+              <StatusBadge tone="info">{{ planPhases.length }} 個階段</StatusBadge>
+            </div>
+            <div class="decision-strip decision-strip--compact" role="list">
+              <div v-for="segment in planPhases" :key="`${segment.phase}-${segment.dateRange}`" role="listitem">
+                <p class="section-label">{{ segment.label }}</p>
+                <strong>{{ segment.focus }}</strong>
+                <p>{{ segment.dateRange }}</p>
+              </div>
+            </div>
           </article>
         </section>
       </section>
