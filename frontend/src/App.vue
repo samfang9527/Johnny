@@ -296,7 +296,7 @@ const athleteBaselineSnapshot = computed<AthleteBaselineSnapshot>(() => ({
   experience: athleteSettings.value.experienceLevel || '未設定',
   injuryStatus: formatInjuryStatusLabel(athleteSettings.value.injuryStatus),
   rhythm: `${athleteSettings.value.preferredTrainingDays.length} 天訓練 · 長跑 ${formatWeekdayLabel(athleteSettings.value.preferredLongRunDay)}`,
-  recentMetrics: recoveryEvidence.value.slice(0, 3).map((item) => `${item.metric} ${item.value}`),
+  recentMetrics: recoveryEvidence.value.slice(0, 3).map((item) => `${item.metric} ${item.value} · ${item.source}`),
 }))
 const unavailableSignalKeys = computed(() => new Set(unavailableSignals.value.map(normalizeSignalKey)))
 const hasRecoverySignal = computed(() => {
@@ -3487,7 +3487,9 @@ function shouldRequireAuth(): boolean {
         </section>
 
         <form class="surface-card athlete-settings-form" data-testid="athlete-settings-form" novalidate @submit.prevent="submitAthleteSettings">
-          <div class="form-grid">
+          <fieldset class="athlete-settings-group">
+            <legend>訓練檔案</legend>
+            <div class="form-grid">
             <label>
               時區
               <select
@@ -3535,6 +3537,12 @@ function shouldRequireAuth(): boolean {
               <span v-if="athleteSettingsFieldErrors.currentWeeklyMileage" id="athlete-mileage-error" class="field-error">{{ athleteSettingsFieldErrors.currentWeeklyMileage }}</span>
             </label>
 
+            </div>
+          </fieldset>
+
+          <fieldset class="athlete-settings-group">
+            <legend>訓練偏好</legend>
+            <div class="form-grid">
             <label>
               每週最多跑步次數
               <input
@@ -3568,43 +3576,6 @@ function shouldRequireAuth(): boolean {
               <span v-if="athleteSettingsFieldErrors.maxHardSessionsPerWeek" id="athlete-max-hard-sessions-error" class="field-error">{{ athleteSettingsFieldErrors.maxHardSessionsPerWeek }}</span>
             </label>
 
-            <fieldset class="athlete-target-settings">
-              <legend>訓練目標</legend>
-            <label>
-              閾值配速來源
-              <select v-model="athleteSettings.thresholdPaceSource" name="thresholdPaceSource">
-                <option value="garmin">Garmin 自動同步</option>
-                <option value="manual">手動設定</option>
-              </select>
-            </label>
-            <label v-if="athleteSettings.thresholdPaceSource === 'manual'">
-              閾值配速（分/公里，可選）
-              <input
-                v-model="athleteSettings.thresholdPace"
-                name="thresholdPace"
-                type="text"
-                inputmode="numeric"
-                placeholder="5:00"
-                autocomplete="off"
-                :aria-invalid="athleteSettingsFieldErrors.thresholdPace ? 'true' : 'false'"
-                aria-describedby="athlete-threshold-pace-error athlete-settings-status"
-              />
-              <span v-if="athleteSettingsFieldErrors.thresholdPace" id="athlete-threshold-pace-error" class="field-error">{{ athleteSettingsFieldErrors.thresholdPace }}</span>
-            </label>
-
-            <div class="athlete-target-status" data-testid="garmin-threshold-status">
-              <strong>Garmin 閾值配速：{{ garminTrainingEvidence.lactate_threshold?.threshold_pace_seconds_per_km ? `${formatPace(garminTrainingEvidence.lactate_threshold.threshold_pace_seconds_per_km)} /km` : '尚無資料' }}</strong>
-              <p>{{ garminEvidenceStatus('lactate_threshold') }}</p>
-              <p v-if="athleteSettings.thresholdPaceSource === 'manual'">課表使用手動配速；選擇 Garmin 並儲存後才會改用同步值。</p>
-            </div>
-            <div class="athlete-target-status" data-testid="garmin-heart-rate-status">
-              <strong>心率區間：{{ garminTrainingEvidence.heart_rate_zones?.sport === 'RUNNING' ? 'Garmin 跑步設定' : garminTrainingEvidence.heart_rate_zones?.sport === 'DEFAULT' ? 'Garmin 一般設定' : '尚無資料' }}</strong>
-              <p>{{ garminEvidenceStatus('heart_rate_zones') }}</p>
-              <p>心率區間由 Garmin 提供，無需填寫靜息或最高心率。</p>
-            </div>
-
-            </fieldset>
-
             <label>
               偏好長跑日
               <select
@@ -3618,7 +3589,7 @@ function shouldRequireAuth(): boolean {
               </select>
               <span v-if="athleteSettingsFieldErrors.preferredLongRunDay" id="athlete-long-run-error" class="field-error">{{ athleteSettingsFieldErrors.preferredLongRunDay }}</span>
             </label>
-          </div>
+            </div>
 
           <fieldset class="choice-fieldset" :aria-invalid="athleteSettingsFieldErrors.preferredTrainingDays ? 'true' : 'false'" aria-describedby="athlete-training-days-error athlete-settings-status">
             <legend>偏好訓練日</legend>
@@ -3628,7 +3599,47 @@ function shouldRequireAuth(): boolean {
             </label>
             <span v-if="athleteSettingsFieldErrors.preferredTrainingDays" id="athlete-training-days-error" class="field-error">{{ athleteSettingsFieldErrors.preferredTrainingDays }}</span>
           </fieldset>
+          </fieldset>
 
+          <fieldset class="athlete-settings-group athlete-target-settings">
+            <legend>訓練目標</legend>
+            <div class="form-grid">
+              <label>
+                閾值配速來源
+                <select v-model="athleteSettings.thresholdPaceSource" name="thresholdPaceSource">
+                  <option value="garmin">Garmin 自動同步</option>
+                  <option value="manual">手動設定</option>
+                </select>
+              </label>
+              <label v-if="athleteSettings.thresholdPaceSource === 'manual'">
+                閾值配速（分/公里，可選）
+                <input
+                  v-model="athleteSettings.thresholdPace"
+                  name="thresholdPace"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="5:00"
+                  autocomplete="off"
+                  :aria-invalid="athleteSettingsFieldErrors.thresholdPace ? 'true' : 'false'"
+                  aria-describedby="athlete-threshold-pace-error athlete-settings-status"
+                />
+                <span v-if="athleteSettingsFieldErrors.thresholdPace" id="athlete-threshold-pace-error" class="field-error">{{ athleteSettingsFieldErrors.thresholdPace }}</span>
+              </label>
+            </div>
+            <div class="athlete-target-status" data-testid="garmin-threshold-status">
+              <strong>Garmin 閾值配速：{{ garminTrainingEvidence.lactate_threshold?.threshold_pace_seconds_per_km ? `${formatPace(garminTrainingEvidence.lactate_threshold.threshold_pace_seconds_per_km)} /km` : '尚無資料' }}</strong>
+              <p>{{ garminEvidenceStatus('lactate_threshold') }}</p>
+              <p v-if="athleteSettings.thresholdPaceSource === 'manual'">課表使用手動配速；選擇 Garmin 並儲存後才會改用同步值。</p>
+            </div>
+            <div class="athlete-target-status" data-testid="garmin-heart-rate-status">
+              <strong>心率區間：{{ garminTrainingEvidence.heart_rate_zones?.sport === 'RUNNING' ? 'Garmin 跑步設定' : garminTrainingEvidence.heart_rate_zones?.sport === 'DEFAULT' ? 'Garmin 一般設定' : '尚無資料' }}</strong>
+              <p>{{ garminEvidenceStatus('heart_rate_zones') }}</p>
+              <p>心率區間由 Garmin 提供，無需填寫靜息或最高心率。</p>
+            </div>
+          </fieldset>
+
+          <fieldset class="athlete-settings-group">
+            <legend>傷痛狀態</legend>
           <div class="form-grid">
             <label>
               傷痛狀態
@@ -3666,6 +3677,7 @@ function shouldRequireAuth(): boolean {
             ></textarea>
             <span v-if="athleteSettingsFieldErrors.injuryNotes" id="athlete-injury-notes-error" class="field-error">{{ athleteSettingsFieldErrors.injuryNotes }}</span>
           </label>
+          </fieldset>
 
           <div class="form-footer athlete-settings-form__footer">
             <p v-if="athleteSettingsError" id="athlete-settings-status" class="field-error" role="alert">{{ athleteSettingsError }}</p>

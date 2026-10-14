@@ -2992,21 +2992,28 @@ button:disabled {
 
 
 /* Training evidence stays grouped with its source controls at every width. */
-.athlete-target-settings {
-  grid-column: 1 / -1;
+.athlete-settings-group {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
   min-width: 0;
   margin: 0;
-  padding: 1rem;
-  border: 1px solid var(--color-line-mint);
-  border-radius: var(--radius-md);
+  padding: 1.25rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--color-line-mint);
 }
-.athlete-target-settings legend {
-  padding-inline: 0.4rem;
+.athlete-settings-group > legend {
+  padding: 0 0.55rem 0 0;
   color: var(--color-deep-green);
   font-weight: 700;
+}
+.athlete-settings-group > .choice-fieldset {
+  min-width: 0;
+}
+.athlete-target-settings {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.athlete-target-settings > .form-grid {
+  grid-column: 1 / -1;
 }
 .athlete-target-status { min-width: 0; color: var(--color-muted-green); overflow-wrap: anywhere; }
 .athlete-target-status strong { color: var(--color-ink-green); }

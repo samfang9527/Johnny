@@ -332,6 +332,23 @@ describe('Johnny product shell', () => {
     expect(wrapper.find('[data-testid="athlete-baseline"]').element.compareDocumentPosition(wrapper.get('[data-testid="athlete-settings-form"]').element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
+  it('groups Athlete fields by training profile, preferences, targets, and injury', () => {
+    const wrapper = mount(App, { props: { initialView: 'athlete' } })
+    const baseline = wrapper.get('[data-testid="athlete-baseline"]')
+    const form = wrapper.get('[data-testid="athlete-settings-form"]')
+    expect(baseline.element.compareDocumentPosition(form.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(form.findAll('.athlete-settings-group > legend').map((legend) => legend.text())).toEqual(['訓練檔案', '訓練偏好', '訓練目標', '傷痛狀態'])
+    expect(form.findAll('button[type="submit"]')).toHaveLength(1)
+  })
+
+  it('shows the source of recent Athlete metrics and keeps save feedback inline', () => {
+    const wrapper = mount(App, { props: { initialView: 'athlete' } })
+    const baseline = wrapper.get('[data-testid="athlete-baseline"]')
+    const form = wrapper.get('[data-testid="athlete-settings-form"]')
+    expect(baseline.text()).toContain('Garmin')
+    expect(form.find('#athlete-settings-status').exists()).toBe(true)
+  })
+
   it('uses a fixed timezone dropdown in Athlete settings', async () => {
     const wrapper = mount(App)
     await flushPromises()
