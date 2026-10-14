@@ -96,6 +96,45 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App)
     expect(wrapper.find('[data-view="conversation"]').exists()).toBe(false)
   })
+
+  it('pairs the Today decision with one workout summary before evidence', () => {
+    const wrapper = mount(App)
+    const board = wrapper.get('[data-testid="today-decision-flow"]')
+    const summaries = board.findAll('[data-today-workout-summary]')
+    expect(summaries).toHaveLength(1)
+    expect(board.get('[data-testid="today-decision-card"]').element.compareDocumentPosition(summaries[0].element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(summaries[0].element.compareDocumentPosition(board.get('[data-testid="today-evidence"]').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('labels the Today action by its actual destination', async () => {
+    const base = { scheduled_workouts: [{ id: 'today-run', scheduled_for: '2026-09-26', workout_type: 'easy_run', purpose: '維持有氧節奏', status: 'planned', steps: [{ type: 'work', duration_seconds: 1800 }] }], recovery: { readiness_label: 'ready' } }
+    mockAuthenticatedToday({ userId: 'runner', todayData: base })
+    const withDetails = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    const detailAction = withDetails.get('[data-testid="today-decision-action"]')
+    expect(detailAction.text()).toBe('查看課表細節')
+    await detailAction.trigger('click')
+    expect(withDetails.find('[data-testid="workout-detail-modal"]').exists()).toBe(true)
+    withDetails.unmount()
+
+    mockAuthenticatedToday({ userId: 'runner', todayData: { ...base, scheduled_workouts: [{ ...base.scheduled_workouts[0], steps: [] }] } })
+    const withoutDetails = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    const planAction = withoutDetails.get('[data-testid="today-decision-action"]')
+    expect(planAction.text()).toBe('查看計畫')
+    await planAction.trigger('click')
+    expect(withoutDetails.get('[data-view="plan"]').attributes('aria-current')).toBe('page')
+  })
+
+  it('shows completed separately from rest without approval controls', async () => {
+    mockAuthenticatedToday({ userId: 'runner', todayData: { scheduled_workouts: [], recovery: {}, daily_advice: advicePayload('completed-advice', '今天已完成', 'completed') } })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    const decision = wrapper.get('[data-testid="today-decision-card"]')
+    expect(decision.attributes('data-decision-state')).toBe('completed')
+    expect(decision.text()).toContain('今天已完成')
+    expect(decision.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
+  })
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
@@ -148,7 +187,7 @@ describe('Johnny product shell', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="today-daily-advice"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toBe('查看課表')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toBe('查看計畫')
     await wrapper.get('[data-testid="today-decision-action"]').trigger('click')
     expect(wrapper.find('[data-testid="johnny-page"]').exists()).toBe(false)
     expect(wrapper.get('#plan-title').text()).toBe('計畫')
@@ -207,7 +246,7 @@ describe('Johnny product shell', () => {
     expect(decisionCard.text()).toContain('不太對勁')
     expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('查看待決定建議')
     expect(wrapper.findAll('[data-testid="today-evidence-chip"]').length).toBeGreaterThanOrEqual(3)
-    expect(decisionCard.text()).toContain('近期訓練負荷偏高')
+    expect(wrapper.get('[data-testid="today-evidence"]').text()).toContain('近期訓練負荷偏高')
     expect(wrapper.text()).toContain('依照你過去的恢復模式')
   })
 
@@ -418,7 +457,7 @@ describe('Johnny product shell', () => {
 
     const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
     expect(decisionCard.text()).toContain('先收一下')
-    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('查看課表')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('查看計畫')
     expect(wrapper.findAll('[data-testid="today-evidence-chip"]')).toHaveLength(3)
   })
 
@@ -705,7 +744,7 @@ describe('Johnny product shell', () => {
     })
     const wrapper = mount(App)
     await flushPromises()
-    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('6:00')
+    expect(wrapper.get('[data-today-workout-summary]').text()).toContain('6:00')
     await wrapper.get('button[data-view="athlete"]').trigger('click')
     expect(wrapper.text()).toContain('5:20')
     expect(wrapper.text()).toContain('保留上次資料')
@@ -714,8 +753,8 @@ describe('Johnny product shell', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('運動員已更新')
     await wrapper.get('button[data-view="today"]').trigger('click')
-    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('6:24')
-    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('Garmin')
+    expect(wrapper.get('[data-today-workout-summary]').text()).toContain('6:24')
+    expect(wrapper.get('[data-today-workout-summary]').text()).toContain('Garmin')
   })
 
   it('does not show the connect-source empty block after a provider is connected', async () => {
@@ -1099,10 +1138,10 @@ describe('Johnny product shell', () => {
     expect(card.find('.unavailable-signals').exists()).toBe(false)
   })
 
-  it('lays out Today with a wider workout card and contextual race card', () => {
+  it('keeps the workout paired with the decision and race context secondary', () => {
     const wrapper = mount(App)
 
-    expect(wrapper.get('.workout-card').classes()).toContain('today-card--primary')
+    expect(wrapper.find('.today-primary-board .workout-card').exists()).toBe(true)
     expect(wrapper.get('.race-card').classes()).toContain('today-card--context')
     expect(wrapper.get('.race-card').text()).toContain('今天的輕鬆跑是為了累積有氧基礎')
     expect(wrapper.get('.workout-card').find('button').exists()).toBe(false)

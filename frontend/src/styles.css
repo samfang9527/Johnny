@@ -322,9 +322,8 @@ button:disabled {
 
 .workout-card {
   display: grid;
+  align-content: start;
   gap: 0.9rem;
-  grid-column: 1 / span 7;
-  grid-row: 2;
 }
 
 .workout-card__actions {
@@ -1817,8 +1816,13 @@ button:disabled {
 }
 
 .today-decision-card--rest {
-  color: var(--color-card-white);
+  color: var(--color-ink-green);
   background: var(--color-rest-blue);
+}
+
+.today-decision-card--completed {
+  color: var(--color-deep-green);
+  background: var(--color-soft-mint);
 }
 
 .today-decision-card .app-button--primary {
@@ -1838,9 +1842,10 @@ button:disabled {
   gap: 0.1rem;
   min-width: 0;
   padding: 0.65rem;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid var(--color-line-mint);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.16);
+  color: var(--color-ink-green);
+  background: var(--color-card-white);
 }
 
 .today-evidence-chip strong,
@@ -1974,6 +1979,58 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
   gap: var(--space-shell-gap);
   align-items: start;
+}
+
+.today-date-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+  border-block: 1px solid var(--color-line-mint);
+  color: var(--color-muted-green);
+  font-size: 0.88rem;
+}
+
+.today-date-strip time {
+  color: var(--color-deep-green);
+  font-family: var(--font-data);
+  font-weight: 700;
+}
+
+.today-primary-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1.06fr) minmax(0, 0.94fr);
+  gap: var(--space-shell-gap);
+}
+
+.today-primary-board > .workout-card {
+  grid-column: auto;
+  grid-row: auto;
+  border-radius: var(--radius-xl);
+  padding: clamp(1.25rem, 3vw, 1.8rem);
+}
+
+.today-primary-board > .workout-card h3 {
+  font-family: var(--font-display);
+  font-size: clamp(1.65rem, 3vw, 2.4rem);
+  line-height: 1.16;
+}
+
+.today-decision-card {
+  align-content: start;
+  min-height: 18rem;
+}
+
+.today-decision-card__freshness {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.today-decision-card > .app-button {
+  justify-self: start;
+  align-self: end;
 }
 
 .today-main-column,
@@ -2717,6 +2774,10 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .today-primary-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .today-grid > .today-context-rail {
     grid-column: 1;
     grid-row: auto;
@@ -2724,6 +2785,10 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
+  .today-date-strip {
+    flex-wrap: wrap;
+  }
+
   .today-evidence-chip-list {
     grid-template-columns: 1fr;
   }

@@ -102,6 +102,21 @@ describe('Stage 7 frontend acceptance', () => {
     expect(todayRequests).toHaveLength(1)
     expect(todayRequests[0]).toContain('date=2026-09-26')
   })
+  it('advances the Today date strip with the athlete-local workout after midnight', async () => {
+    vi.setSystemTime(new Date('2026-09-26T15:59:59Z'))
+    const app = await render([plan('base')], (url) => {
+      if (!url.includes('/api/v1/today')) return undefined
+      const day = url.includes('date=2026-09-27') ? '2026-09-27' : '2026-09-26'
+      return json({ scheduled_workouts: [workout(`run-${day}`, day)], recovery: {} })
+    })
+    await app.get('[data-view="today"]').trigger('click')
+    expect(app.get('[data-testid="today-date-strip"]').text()).toContain('2026-09-26')
+    expect(app.get('[data-today-workout-summary]').text()).toContain('run-2026-09-26')
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushPromises()
+    expect(app.get('[data-testid="today-date-strip"]').text()).toContain('2026-09-27')
+    expect(app.get('[data-today-workout-summary]').text()).toContain('run-2026-09-27')
+  })
   it('updates an open journey after athlete-local midnight', async () => {
     vi.setSystemTime(new Date('2026-09-25T15:59:59Z'))
     const app = await render([plan('base', { metadata: { phase_segments: [
@@ -141,7 +156,7 @@ describe('Stage 7 frontend acceptance', () => {
     expect(app.text()).toContain('projection-B')
     expect(app.text()).not.toContain('projection-A')
     await app.get('[data-view="today"]').trigger('click')
-    expect(app.get('[data-testid="today-decision-card"]').text()).toContain('fresh-2026-09-27')
+    expect(app.get('[data-today-workout-summary]').text()).toContain('fresh-2026-09-27')
   })
   it('does not let an older completion batch replace a newer calendar snapshot', async () => {
     vi.setSystemTime(new Date('2026-09-26T15:59:55Z'))
@@ -186,7 +201,7 @@ describe('Stage 7 frontend acceptance', () => {
     firstToday.resolve(json({ scheduled_workouts: [workout('yesterday-held', '2026-09-26')] }))
     await flushPromises()
     await app.get('[data-view="today"]').trigger('click')
-    expect(app.get('[data-testid="today-decision-card"]').text()).toContain('fresh-2026-09-27')
+    expect(app.get('[data-today-workout-summary]').text()).toContain('fresh-2026-09-27')
     expect(app.text()).not.toContain('yesterday-held')
   })
   it.each([
@@ -218,7 +233,7 @@ describe('Stage 7 frontend acceptance', () => {
     await app.get('[data-view="athlete"]').trigger('click')
     expect((app.get('[name="athleteTimezone"]').element as HTMLSelectElement).value).toBe('Asia/Taipei')
     await app.get('[data-view="today"]').trigger('click')
-    expect(app.get('[data-testid="today-decision-card"]').text()).toContain('fresh-session')
+    expect(app.get('[data-today-workout-summary]').text()).toContain('fresh-session')
     expect(app.text()).not.toContain('obsolete-session')
   })
   it.each(['focus', 'timer'])('exposes degraded midnight Today and retries the failed date on %s', async (trigger) => {
@@ -241,7 +256,7 @@ describe('Stage 7 frontend acceptance', () => {
     if (trigger === 'focus') window.dispatchEvent(new Event('focus'))
     else await vi.advanceTimersByTimeAsync(60_000)
     await flushPromises()
-    expect(app.get('[data-testid="today-decision-card"]').text()).toContain('fresh-2026-09-27')
+    expect(app.get('[data-today-workout-summary]').text()).toContain('fresh-2026-09-27')
     expect(app.find('[role="alert"]').exists()).toBe(false)
   })
   it.each(['timer', 'focus'])('refreshes recovery and authoritative Today/race anchors across local midnight via %s', async (trigger) => {
@@ -265,8 +280,8 @@ describe('Stage 7 frontend acceptance', () => {
     expect(requests.find((url) => url.pathname.endsWith('/today'))?.searchParams.get('anchor_date')).toBe('2026-09-27')
     expect(requests.find((url) => url.pathname.endsWith('/races'))?.searchParams.get('race_date_from')).toBe('2026-09-27')
     await app.get('[data-view="today"]').trigger('click')
-    expect(app.get('[data-testid="today-decision-card"]').text()).toContain('trusted-2026-09-27')
-    expect(app.get('[data-testid="today-decision-card"]').text()).not.toContain('trusted-2026-09-26')
+    expect(app.get('[data-today-workout-summary]').text()).toContain('trusted-2026-09-27')
+    expect(app.get('[data-today-workout-summary]').text()).not.toContain('trusted-2026-09-26')
     vi.mocked(fetch).mockClear()
     window.dispatchEvent(new Event('focus'))
     await flushPromises()
@@ -281,8 +296,8 @@ describe('Stage 7 frontend acceptance', () => {
   it('prefers the authoritative Today workout over a conflicting current plan workout', async () => {
     const app = await render([plan('base', { workouts: [workout('conflicting-plan-today', '2026-09-26')] })], (url) => url.includes('/today') ? json({ scheduled_workouts: [workout('trusted-today', '2026-09-26')] }) : undefined)
     await app.get('[data-view="today"]').trigger('click')
-    expect(app.get('[data-testid="today-decision-card"]').text()).toContain('trusted-today')
-    expect(app.get('[data-testid="today-decision-card"]').text()).not.toContain('conflicting-plan-today')
+    expect(app.get('[data-today-workout-summary]').text()).toContain('trusted-today')
+    expect(app.get('[data-today-workout-summary]').text()).not.toContain('conflicting-plan-today')
   })
   it.each([
     ['2026-09-19T16:00:00Z', true, '第 1 / 7 天'],

@@ -397,7 +397,13 @@ const recoveryFooterText = computed(() => {
 })
 const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
 const dailyAdvice = computed(() => apiDailyAdvice.value?.adviceDate === todayIsoDate.value ? apiDailyAdvice.value : null)
-const todayDecision = computed(() => dailyAdvice.value ? buildAdviceDecision(dailyAdvice.value) : buildTodayDecision(recommendation.value, recoveryEvidence.value))
+const todayDecision = computed<TodayDecision>(() => {
+  const decision = dailyAdvice.value ? buildAdviceDecision(dailyAdvice.value) : buildTodayDecision(recommendation.value, recoveryEvidence.value)
+  if (decision.state === 'run') {
+    return { ...decision, actionLabel: hasWorkoutDetails(todayWorkout.value) ? '查看課表細節' : '查看計畫' }
+  }
+  return { ...decision, actionLabel: dailyAdvice.value ? '查看 Johnny 建議' : recommendation.value?.status === 'pending' ? '查看待決定建議' : '查看計畫' }
+})
 const todayEvidenceChips = computed(() => recoveryEvidence.value.slice(0, 3))
 const currentPlanPhase = computed(() => journeyPhases.value.find((phase) => phase.status === 'current') ?? (recoveryWindow.value ? {
   label: '恢復週 · Recovery Window', summary: `上一份計畫已結束，安排七天恢復。第 ${recoveryWindow.value.day} / 7 天`,
@@ -524,7 +530,7 @@ function buildTodayDecision(recommendation: RecommendationSummary | null, eviden
   const hasWarningEvidence = evidence.some((item) => item.tone === 'warning')
   const pendingRecommendation = recommendation?.status === 'pending' ? recommendation : null
   const hasWarningRecommendation = pendingRecommendation?.priority === 'warning' || pendingRecommendation?.priority === 'danger'
-  const actionLabel = pendingRecommendation ? '查看待決定建議' : '查看課表'
+  const actionLabel = pendingRecommendation ? '查看待決定建議' : '查看計畫'
 
   if (hasDangerEvidence || pendingRecommendation?.priority === 'danger') {
     return {
@@ -551,7 +557,7 @@ function buildTodayDecision(recommendation: RecommendationSummary | null, eviden
   return {
     state: 'run',
     label: '我可以',
-    actionLabel: '開始跑步',
+    actionLabel: '查看計畫',
     tone: 'run',
     voice: '狀態可以，照計畫跑，節奏不要偷加。',
   }
@@ -565,7 +571,7 @@ function buildAdviceDecision(advice: DailyAdvice): TodayDecision {
     }
   }
   if (advice.executionMode === 'completed') {
-    return { state: 'rest', label: '今天已完成', actionLabel: '查看 Johnny 建議', tone: 'rest', voice: advice.todayExecution || '今天的訓練已完成。' }
+    return { state: 'completed', label: '今天已完成', actionLabel: '查看 Johnny 建議', tone: 'completed', voice: advice.todayExecution || '今天的訓練已完成。' }
   }
   if (advice.executionMode === 'rest') {
     return { state: 'rest', label: '先收一下', actionLabel: '查看 Johnny 建議', tone: 'rest', voice: advice.todayExecution || '今天先休息。' }
@@ -573,7 +579,7 @@ function buildAdviceDecision(advice: DailyAdvice): TodayDecision {
   if (advice.executionMode === 'ease_off') {
     return { state: 'adjust', label: '不太對勁', actionLabel: '查看 Johnny 建議', tone: 'adjust', voice: advice.todayExecution || '今天保守執行。' }
   }
-  return { state: 'run', label: '我可以', actionLabel: '開始跑步', tone: 'run', voice: advice.todayExecution || '照計畫執行。' }
+  return { state: 'run', label: '我可以', actionLabel: '查看計畫', tone: 'run', voice: advice.todayExecution || '照計畫執行。' }
 }
 
 function buildRecoveryDecision(
@@ -2857,6 +2863,13 @@ function shouldRequireAuth(): boolean {
           <p>Johnny 會把課表、恢復訊號和建議放在同一個決策脈絡裡。</p>
         </div>
 
+        <div class="today-date-strip today-grid__wide" data-testid="today-date-strip">
+          <time :datetime="todayIsoDate">{{ todayIsoDate }}</time>
+          <span v-if="dailyAdvice?.planWeek">Plan Week · {{ dailyAdvice.planWeek.startsOn }}–{{ dailyAdvice.planWeek.endsOn }}</span>
+          <span v-else-if="activePlan">{{ currentPlanPhase.label }}</span>
+          <span v-else>今日安排</span>
+        </div>
+
         <article v-if="effectiveTodayState === 'loading'" class="state-panel today-grid__wide" aria-live="polite">
           <p class="section-label">Loading</p>
           <h3>正在整理今天的訓練資料</h3>
@@ -2879,31 +2892,52 @@ function shouldRequireAuth(): boolean {
         </article>
 
         <template v-else>
-        <article
-          class="today-decision-card"
-          :class="`today-decision-card--${todayDecision.tone}`"
-          data-testid="today-decision-card"
-        >
-          <div class="today-decision-card__header">
-            <span class="card-kicker">Johnny 今天看起來</span>
-            <strong>{{ todayDecision.label }}</strong>
-          </div>
-          <p>{{ todayDecision.voice }}</p>
-          <div class="today-decision-card__workout">
-            <span>{{ todayWorkout.type }}</span>
-            <strong>{{ todayWorkout.distance || todayWorkout.duration || '今日訓練' }}</strong>
-            <small>{{ workoutTargetSummary(todayWorkout) || todayWorkout.pace || todayWorkout.purpose }}</small>
-          </div>
-          <div class="today-evidence-chip-list" aria-label="今日決策證據">
+        <div class="today-primary-board today-grid__wide">
+          <article
+            class="today-decision-card"
+            :class="`today-decision-card--${todayDecision.tone}`"
+            :data-decision-state="todayDecision.state"
+            data-testid="today-decision-card"
+          >
+            <div class="today-decision-card__header">
+              <span class="card-kicker">Johnny 今天看起來</span>
+              <strong>{{ todayDecision.label }}</strong>
+            </div>
+            <p>{{ todayDecision.voice }}</p>
+            <p v-if="dailyAdvice" class="today-decision-card__freshness">
+              {{ dailyAdvice.dataFreshness === 'stale' ? '先前建議 · 資料可能過時' : dailyAdvice.dataFreshness === 'limited' ? '資料有限 · 依可用紀錄判斷' : '最新建議' }}
+            </p>
+            <p v-if="todayDecision.memoryInsight" class="memory-insight">{{ todayDecision.memoryInsight }}</p>
+            <AppButton tone="primary" data-testid="today-decision-action" @click="handleTodayDecisionAction">{{ todayDecision.actionLabel }}</AppButton>
+          </article>
+
+          <article class="surface-card workout-card" data-today-section="workout" data-today-workout-summary>
+            <p class="section-label">今日課表</p>
+            <h3>{{ todayWorkout.type }}</h3>
+            <p>{{ todayWorkout.purpose }}</p>
+            <p v-if="workoutTargetSummary(todayWorkout)" class="workout-step-summary">{{ workoutTargetSummary(todayWorkout) }}</p>
+            <p v-if="workoutStagePreview(todayWorkout).length" class="workout-step-summary">{{ workoutStagePreview(todayWorkout).map((step) => `${step.label} ${step.load}`).join(' · ') }}</p>
+            <div class="metric-row">
+              <span v-if="todayWorkout.distance">{{ todayWorkout.distance }}</span>
+              <span v-if="todayWorkout.duration">{{ todayWorkout.duration }}</span>
+              <span v-if="todayWorkout.pace">{{ todayWorkout.pace }}</span>
+              <span v-if="todayWorkout.heartRateZone">{{ todayWorkout.heartRateZone }}</span>
+            </div>
+            <div v-if="hasWorkoutDetails(todayWorkout)" class="workout-card__actions">
+              <AppButton tone="neutral" type="button" data-testid="today-workout-detail" @click="openWorkoutDetails(todayWorkout)">查看細節</AppButton>
+            </div>
+          </article>
+        </div>
+
+        <section class="today-evidence today-grid__wide" data-testid="today-evidence" aria-label="今日決策證據">
+          <div class="today-evidence-chip-list">
             <span v-for="item in todayEvidenceChips" :key="`${item.source}-${item.metric}`" class="today-evidence-chip" data-testid="today-evidence-chip">
               <span>{{ item.metric }}</span>
               <strong>{{ item.value }}</strong>
               <small>{{ item.summary }}</small>
             </span>
           </div>
-          <p v-if="todayDecision.memoryInsight" class="memory-insight">{{ todayDecision.memoryInsight }}</p>
-          <AppButton tone="primary" data-testid="today-decision-action" @click="handleTodayDecisionAction">{{ todayDecision.actionLabel }}</AppButton>
-        </article>
+        </section>
 
         <section class="surface-card weekly-activity" data-testid="weekly-activity" aria-labelledby="weekly-activity-title">
           <div class="section-heading-row">
@@ -2956,24 +2990,6 @@ function shouldRequireAuth(): boolean {
             <p>目前待處理建議</p>
           </section>
         </aside>
-
-        <article class="surface-card today-top-card today-card--primary workout-card" data-today-section="workout">
-          <p class="section-label">今日課表</p>
-          <h3>{{ todayWorkout.type }}</h3>
-          <p>{{ todayWorkout.purpose }}</p>
-          <p v-if="workoutStagePreview(todayWorkout).length" class="workout-step-summary">{{ workoutStagePreview(todayWorkout).map((step) => `${step.label} ${step.load}`).join(' · ') }}</p>
-          <div class="metric-row">
-            <span v-if="todayWorkout.distance">{{ todayWorkout.distance }}</span>
-            <span v-if="todayWorkout.duration">{{ todayWorkout.duration }}</span>
-            <span v-if="todayWorkout.pace">{{ todayWorkout.pace }}</span>
-            <span v-if="todayWorkout.heartRateZone">{{ todayWorkout.heartRateZone }}</span>
-          </div>
-          <div v-if="hasWorkoutDetails(todayWorkout)" class="workout-card__actions">
-            <AppButton tone="neutral" type="button" data-testid="today-workout-detail" @click="openWorkoutDetails(todayWorkout)">
-              查看細節
-            </AppButton>
-          </div>
-        </article>
 
         <article
           class="surface-card today-grid__wide recommendation-strip"

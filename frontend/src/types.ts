@@ -302,13 +302,13 @@ export interface RecommendationSummary {
   status: string
 }
 
-export type TodayDecisionState = 'run' | 'adjust' | 'rest'
+export type TodayDecisionState = 'run' | 'adjust' | 'rest' | 'completed'
 
 export interface TodayDecision {
   state: TodayDecisionState
   label: '我可以' | '不太對勁' | '先收一下' | '今天已完成' | '建議更新中'
-  actionLabel: '開始跑步' | '查看 Johnny 建議' | '查看待決定建議' | '查看課表'
-  tone: 'run' | 'adjust' | 'rest'
+  actionLabel: '查看課表細節' | '查看計畫' | '查看 Johnny 建議' | '查看待決定建議'
+  tone: 'run' | 'adjust' | 'rest' | 'completed'
   voice: string
   memoryInsight?: string
 }
