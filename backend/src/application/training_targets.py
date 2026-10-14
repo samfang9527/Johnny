@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from src.domain.running import is_road_pace_evidence
+
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from statistics import median
 from typing import Any
 
 from src.domain.activity_health import CompletedActivity
 from src.domain.athlete_race import AthleteProfile, RaceGoal
-from src.domain.training_plan import WorkoutStep, WorkoutTarget
+from src.domain.training_plan import Workout, WorkoutStep, WorkoutTarget
 
 
 PACE_ZONE_FACTORS = {
@@ -106,8 +108,8 @@ class TargetProfile:
             resting, maximum = None, None
         return cls(
             resting, maximum,
-            _heart_rate_zones(resting, maximum) if resting is not None and maximum is not None else {},
-            str(payload["pace_source"]) if payload.get("pace_source") in {"threshold_pace", "completed_race", "paired_easy_activities", "goal_time"} else None,
+            _valid_zone_ranges(payload.get("heart_rate_zones"), heart_rate=True) if "heart_rate_zones" in payload else (_heart_rate_zones(resting, maximum) if resting is not None and maximum is not None else {}),
+            str(payload["pace_source"]) if payload.get("pace_source") in {"threshold_pace", "garmin_lactate_threshold", "completed_race", "paired_easy_activities", "goal_time"} else None,
             str(payload["pace_confidence"]) if payload.get("pace_confidence") in {"high", "medium", "low"} else None,
             _valid_zone_ranges(payload.get("pace_zones")),
         )
@@ -126,14 +128,25 @@ def build_target_profile_from_payloads(
     if resting is None or maximum is None or maximum <= resting:
         resting, maximum = None, None
     heart_rate_zones = _heart_rate_zones(resting, maximum) if resting is not None and maximum is not None else {}
+    evidence = preferences.get("garmin_training_evidence") or {}
+    garmin_zones = (evidence.get("heart_rate_zones") or {}).get("heart_rate_zones")
+    if isinstance(garmin_zones, dict):
+        heart_rate_zones = _valid_zone_ranges(garmin_zones, heart_rate=True)
+    # Connected accounts use provider zones, never legacy manual HR settings.
+    elif "garmin_training_evidence" in preferences:
+        heart_rate_zones = {}
     anchor = _anchor_date(profile, recent_activity_payloads)
     source: str | None = None
     confidence: str | None = None
     zones: dict[str, tuple[int, int]] = {}
 
     threshold = _positive_int(preferences.get("threshold_pace_seconds_per_km"))
+    threshold_source = "threshold_pace"
+    if threshold is None:
+        threshold = _positive_int((evidence.get("lactate_threshold") or {}).get("threshold_pace_seconds_per_km"))
+        threshold_source = "garmin_lactate_threshold"
     if threshold is not None and 120 <= threshold <= 900:
-        source, confidence = "threshold_pace", "high"
+        source, confidence = threshold_source, "high"
         zones = _zones_from_reference(threshold, "threshold", widening=0)
     else:
         matched_workouts = {
@@ -144,7 +157,7 @@ def build_target_profile_from_payloads(
         completed_races: list[tuple[date, float, int]] = []
         paired_easy: list[float] = []
         for activity in recent_activity_payloads:
-            if not isinstance(activity, dict) or str(activity.get("sport_type") or "").lower() not in {"run", "running", "trail_run", "trail_running", "virtual_run", "treadmill_run"}:
+            if not isinstance(activity, dict) or not is_road_pace_evidence(str(activity.get("sport_type") or "")):
                 continue
             day = _activity_date(activity)
             if day is None or anchor is None or day > anchor or day < anchor - timedelta(days=56):
@@ -249,15 +262,15 @@ def _zones_from_reference(pace: float, reference_zone: str, *, widening: float) 
     }
 
 
-def _valid_zone_ranges(value: Any) -> dict[str, tuple[int, int]]:
+def _valid_zone_ranges(value: Any, *, heart_rate: bool = False) -> dict[str, tuple[int, int]]:
     if not isinstance(value, dict):
         return {}
     ranges = {}
     for zone, pair in value.items():
-        if zone not in PACE_ZONE_FACTORS or not isinstance(pair, list | tuple) or len(pair) != 2:
+        if zone not in (HR_RESERVE_BANDS if heart_rate else PACE_ZONE_FACTORS) or not isinstance(pair, list | tuple) or len(pair) != 2:
             continue
         lower, upper = pair
-        if isinstance(lower, int) and isinstance(upper, int) and 0 < lower <= upper:
+        if type(lower) is int and type(upper) is int and 0 < lower <= upper and (not heart_rate or 30 <= lower <= upper <= 250):
             ranges[zone] = (lower, upper)
     return ranges
 
@@ -451,3 +464,20 @@ def _threshold_pace_from_payload(profile_payload: dict[str, Any] | None) -> floa
         return None
     pace = float(value)
     return pace if pace > 0 else None
+
+
+def refresh_workout_targets(workout: Workout, profile: TargetProfile, *, today: date) -> Workout:
+    """Resolve present-day evidence without editing completed/past prescriptions."""
+    if workout.status != "planned" or workout.scheduled_for < today or workout.workout_type in {"rest", "strength", "cross_training"}:
+        return workout
+    def refresh(step: WorkoutStep) -> WorkoutStep:
+        if step.step_type == "repeat":
+            return replace(step, steps=tuple(refresh(child) for child in step.steps))
+        enriched = _enrich_step_with_target_policy(step, workout_type=workout.workout_type, target_profile=profile, race_rpe=None)
+        # Other evidence-backed pace estimates remain useful when no threshold exists.
+        old = step.target
+        if old and enriched.target and not profile.pace_zones and old.pace_source in {"completed_race", "paired_easy_activities", "goal_time"}:
+            enriched = replace(enriched, target=replace(enriched.target, pace_range_seconds_per_km=old.pace_range_seconds_per_km,
+                pace_source=old.pace_source, confidence=old.confidence))
+        return enriched
+    return replace(workout, steps=tuple(refresh(step) for step in workout.steps), pace_range_seconds_per_km=None, heart_rate_zone=None)

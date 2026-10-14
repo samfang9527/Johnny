@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 GARMIN_PROVIDER = "garmin_connect"
 GARMIN_AUTH_SCHEME = "garminconnect_tokenstore"
 GARMIN_CREDENTIAL_FORMAT = "garminconnect-session-json"
-GARMIN_SYNC_RESOURCES = ("activities", "sleep", "hrv", "resting_heart_rate", "stress", "body_battery")
+GARMIN_TRAINING_RESOURCES = ("heart_rate_zones", "lactate_threshold")
+GARMIN_SYNC_RESOURCES = ("activities", "sleep", "hrv", "resting_heart_rate", "stress", "body_battery", "heart_rate_zones", "lactate_threshold")
 
 
 class ProviderAccountAlreadyConnectedError(ValueError):
@@ -358,6 +359,7 @@ class GarminInitialSyncHandler:
         athlete_profiles: AthleteProfileStore,
         normalize_activity: Callable[[str, str, dict], CompletedActivity],
         normalize_health: Callable[[str, dict], DailyHealthMetrics],
+        normalize_training_evidence: Callable[[str, object], dict | None],
     ) -> None:
         self._integrations = integrations
         self._activities = activities
@@ -366,12 +368,16 @@ class GarminInitialSyncHandler:
         self._athlete_profiles = athlete_profiles
         self._normalize_activity = normalize_activity
         self._normalize_health = normalize_health
+        self._normalize_training_evidence = normalize_training_evidence
 
     def handle(self, command: GarminInitialSyncCommand) -> SyncSummary:
         connection = self._integrations.get_connection_for_user(command.user_id, command.connection_id)
         if connection is None:
             raise ValueError("integration connection not found")
         if connection.credential_status == "requires_reauth":
+            for resource in GARMIN_TRAINING_RESOURCES:
+                self._integrations.update_training_evidence(command.user_id, connection.id, resource, None,
+                    checked_at=datetime.now(timezone.utc), failed=True)
             summary = SyncSummary.empty().record_failed("sync", "Garmin connection requires reauth")
             _log_garmin_sync_failure(
                 "Garmin sync skipped because connection requires reauth",
@@ -393,7 +399,9 @@ class GarminInitialSyncHandler:
         summary = SyncSummary.empty()
         sync_status = "succeeded"
 
+        attempted_resources: set[str] = set()
         for resource_type in GARMIN_SYNC_RESOURCES:
+            attempted_resources.add(resource_type)
             cursor = self._integrations.get_resource_cursor(connection.id, resource_type)
             try:
                 result = self._garmin.fetch_resource(
@@ -482,7 +490,15 @@ class GarminInitialSyncHandler:
                     error=_safe_log_error(exc),
                     level="exception",
                 )
+            finally:
+                if resource_type in {"heart_rate_zones", "lactate_threshold"} and summary.failed_count(resource_type):
+                    self._integrations.update_training_evidence(command.user_id, connection.id, resource_type, None,
+                        checked_at=datetime.now(timezone.utc), failed=True)
 
+        if sync_status == "failed":
+            for resource in set(GARMIN_TRAINING_RESOURCES) - attempted_resources:
+                self._integrations.update_training_evidence(command.user_id, connection.id, resource, None,
+                    checked_at=datetime.now(timezone.utc), failed=True)
         self._integrations.complete_sync_run(sync_run_id, summary, status=sync_status)
         return summary
 
@@ -494,6 +510,13 @@ class GarminInitialSyncHandler:
         items: tuple[dict, ...],
         summary: SyncSummary,
     ) -> SyncSummary:
+        if resource_type in {"heart_rate_zones", "lactate_threshold"}:
+            payload = items[0] if items else {}
+            value = self._normalize_training_evidence(resource_type,
+                payload.get("profiles") if resource_type == "heart_rate_zones" else payload)
+            self._integrations.update_training_evidence(user_id, connection_id, resource_type, value,
+                checked_at=datetime.now(timezone.utc))
+            return summary.record_stored(resource_type) if value is not None else summary
         if resource_type == "activities":
             return self._store_activities(user_id, connection_id, items, summary)
         return self._store_health_resource(user_id, connection_id, resource_type, items, summary)

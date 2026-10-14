@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
+  type SessionReviewSaveResult,
   acceptRecommendation,
   ApiRequestError,
   connectGarminIntegration,
@@ -33,6 +34,7 @@ import AppButton from './components/AppButton.vue'
 import EvidenceList from './components/EvidenceList.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import DailyAdviceCard from './components/DailyAdviceCard.vue'
+import SessionReviews from './components/SessionReviews.vue'
 import ProviderCard from './components/ProviderCard.vue'
 import RaceGoalModal from './components/RaceGoalModal.vue'
 import RecommendationActions from './components/RecommendationActions.vue'
@@ -153,6 +155,7 @@ const recommendationStatus = ref(fixtureRecommendation.status)
 const apiRaceSummary = ref<RaceSummary | null>(null)
 const apiTodayWorkoutPayload = ref<Record<string, unknown> | null>(null)
 const apiDailyAdvice = ref<DailyAdvice | null>(null)
+const sessionReviewsRefreshKey = ref(0)
 const apiTodayWorkout = computed(() => {
   const raw = apiTodayWorkoutPayload.value
   if (!raw) return null
@@ -249,6 +252,7 @@ const authMessage = ref('')
 const authBusy = ref(false)
 const hasBackendHydrated = ref(false)
 const athleteSettings = ref<AthleteSettingsForm>(defaultAthleteSettingsForm())
+const garminTrainingEvidence = ref<NonNullable<AthleteProfileResponse['garmin_training_evidence']>>({})
 const athleteSettingsError = ref('')
 const athleteSettingsFieldErrors = ref<Record<string, string>>({})
 const athleteSettingsMessage = ref('')
@@ -485,8 +489,7 @@ type AthleteSettingsForm = {
   maxRunsPerWeek: string
   maxHardSessionsPerWeek: string
   thresholdPace: string
-  restingHeartRate: string
-  maxHeartRate: string
+  thresholdPaceSource: 'manual' | 'garmin'
   unitPreference: 'metric' | 'imperial'
   injuryStatus: 'none' | 'current' | 'recent' | 'recurring'
   injuryAreas: string[]
@@ -1063,9 +1066,10 @@ async function submitProvider() {
       region: garminRegion.value,
     })
     garminConnection.value = response.data
+    await refreshGarminTrainingEvidence()
     providerMessage.value = `${response.data.provider_display_name || 'Garmin'} 已連接`
+    await refreshCalendarPayloads(todayIsoDate.value)
     if (response.data.daily_advice_run) observeDailyAdviceRun(response.data.daily_advice_run.run_id)
-    else await refreshCalendarPayloads(todayIsoDate.value)
     isProviderDialogOpen.value = false
   } catch (error) {
     if (!handleSessionExpiry(error)) {
@@ -1088,9 +1092,11 @@ async function syncGarminConnection(connection: IntegrationConnectionResponse) {
   try {
     const response = await syncIntegrationConnection(connection.id)
     garminConnection.value = response.data
+    await refreshGarminTrainingEvidence()
+    sessionReviewsRefreshKey.value += 1
     providerMessage.value = response.data.has_partial_failures ? 'Garmin 手動同步完成，部分資料需要處理。' : 'Garmin 手動同步完成'
+    await refreshCalendarPayloads(todayIsoDate.value)
     if (response.data.daily_advice_run) observeDailyAdviceRun(response.data.daily_advice_run.run_id)
-    else await refreshCalendarPayloads(todayIsoDate.value)
   } catch (error) {
     if (!handleSessionExpiry(error)) {
       providerError.value = error instanceof ApiRequestError && error.status === 409 ? 'Garmin 同步已在進行中，請稍後再試。' : 'Garmin 手動同步失敗。請稍後再試。'
@@ -1099,6 +1105,15 @@ async function syncGarminConnection(connection: IntegrationConnectionResponse) {
   } finally {
     providerBusy.value = ''
   }
+}
+
+async function handleSessionReviewChanged(result: SessionReviewSaveResult) {
+  const session = sessionGeneration
+  if (apiDailyAdvice.value) apiDailyAdvice.value = { ...apiDailyAdvice.value, state: 'pending', dataFreshness: 'stale' }
+  await refreshCalendarPayloads(todayIsoDate.value)
+  if (isUnmounted || session !== sessionGeneration) return
+  const refresh = result.refresh_runs?.find(run => run.anchor_date === todayIsoDate.value)
+  if (refresh) observeDailyAdviceRun(refresh.run_id)
 }
 
 function stopDailyAdviceObservation() {
@@ -1154,6 +1169,8 @@ async function confirmDisconnectGarmin(connection: IntegrationConnectionResponse
   try {
     const response = await disconnectIntegrationConnection(connection.id)
     garminConnection.value = response.data
+    garminTrainingEvidence.value = {}
+    await refreshCalendarPayloads(todayIsoDate.value)
     providerMessage.value = 'Garmin 已中斷連接；歷史匯入資料會保留。'
     pendingDisconnectConnectionId.value = ''
   } catch (error) {
@@ -1598,6 +1615,7 @@ function stopPlanRegenerationObservation() {
   racePlanReminder.value = ''
   if (raceSuccessTimer) clearTimeout(raceSuccessTimer)
   sessionGeneration += 1
+  garminTrainingEvidence.value = {}
   trainingReadVersion += 1
   trainingReadPending = false
   planRegenerationObservation += 1
@@ -1849,10 +1867,34 @@ async function hydrateFromBackend() {
   }
 }
 
+async function refreshGarminTrainingEvidence() {
+  const session = sessionGeneration
+  try {
+    const response = await getAthleteProfile()
+    if (isUnmounted || session !== sessionGeneration) return
+    garminTrainingEvidence.value = response.data.garmin_training_evidence ?? {}
+  } catch (error) {
+    if (!isUnmounted && session === sessionGeneration) handleSessionExpiry(error)
+  }
+}
+
+function garminEvidenceStatus(resource: string): string {
+  const reading = garminTrainingEvidence.value[resource]
+  if (!reading?.synced_at) return '尚無可用資料，請至「資料」連接或同步 Garmin。'
+  const status = reading.status === 'stale' ? '同步未更新，保留上次資料' : '已同步'
+  const measured = reading.measured_on ? ` · 測量日期 ${reading.measured_on}` : ''
+  const timestamp = new Date(reading.synced_at)
+  const syncedAt = Number.isNaN(timestamp.getTime()) ? '時間不詳' : new Intl.DateTimeFormat('zh-TW', {
+    dateStyle: 'medium', timeStyle: 'short', timeZone: userTimezone.value,
+  }).format(timestamp)
+  return `${status} · 上次成功同步 ${syncedAt}${measured}`
+}
+
 function applyAthleteProfilePayload(profile: AthleteProfileResponse) {
   if (!profile || Array.isArray(profile)) {
     return
   }
+  garminTrainingEvidence.value = profile.garmin_training_evidence ?? {}
   const timezone = typeof profile.timezone === 'string' && isValidTimezone(profile.timezone) ? profile.timezone : ''
   if (timezone) {
     userTimezone.value = timezone
@@ -1869,8 +1911,7 @@ function applyAthleteProfilePayload(profile: AthleteProfileResponse) {
     maxRunsPerWeek: String(numberValue(profile.max_runs_per_week) ?? 3),
     maxHardSessionsPerWeek: String(numberValue(profile.max_hard_sessions_per_week) ?? 2),
     thresholdPace: thresholdPace && thresholdPace > 0 ? formatPace(thresholdPace) : '',
-    restingHeartRate: profile.resting_heart_rate_bpm == null ? '' : String(profile.resting_heart_rate_bpm),
-    maxHeartRate: profile.max_heart_rate_bpm == null ? '' : String(profile.max_heart_rate_bpm),
+    thresholdPaceSource: thresholdPace ? 'manual' : 'garmin',
     unitPreference,
     injuryStatus: isInjuryStatus(profile.injury_status) ? profile.injury_status : 'none',
     injuryAreas: Array.isArray(profile.injury_areas) ? profile.injury_areas.map(String) : [],
@@ -1889,8 +1930,7 @@ function defaultAthleteSettingsForm(): AthleteSettingsForm {
     maxRunsPerWeek: '3',
     maxHardSessionsPerWeek: '2',
     thresholdPace: '',
-    restingHeartRate: '',
-    maxHeartRate: '',
+    thresholdPaceSource: 'garmin',
     unitPreference: 'metric',
     injuryStatus: 'none',
     injuryAreas: [],
@@ -1965,13 +2005,9 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   const maxRunsPerWeek = Number(form.maxRunsPerWeek)
   const maxHardSessionsPerWeekRaw = String(form.maxHardSessionsPerWeek ?? '').trim()
   const maxHardSessionsPerWeek = Number(maxHardSessionsPerWeekRaw)
-  const thresholdPaceText = form.thresholdPace.trim()
+  const thresholdPaceText = form.thresholdPaceSource === 'manual' ? form.thresholdPace.trim() : ''
   const thresholdPaceMatch = /^(\d{1,2}):([0-5]\d)$/.exec(thresholdPaceText)
   const thresholdPaceSeconds = thresholdPaceMatch ? Number(thresholdPaceMatch[1]) * 60 + Number(thresholdPaceMatch[2]) : null
-  const restingHrText = String(form.restingHeartRate ?? '').trim()
-  const maxHrText = String(form.maxHeartRate ?? '').trim()
-  const restingHr = restingHrText ? Number(restingHrText) : null
-  const maxHr = maxHrText ? Number(maxHrText) : null
   const normalizedDays = form.preferredTrainingDays.map((day) => day.trim().toLowerCase())
   const uniqueDays = new Set(normalizedDays)
   if (!form.timezone.trim() || !isValidTimezone(form.timezone.trim())) {
@@ -1992,14 +2028,6 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
   }
   if (thresholdPaceText && (thresholdPaceSeconds === null || thresholdPaceSeconds < 120 || thresholdPaceSeconds > 900)) {
     setAthleteSettingsError('thresholdPace', '請輸入 2:00 到 15:00 的分/公里配速')
-    return null
-  }
-  if (restingHrText && (!Number.isInteger(restingHr) || restingHr === null || restingHr <= 0)) {
-    setAthleteSettingsError('restingHeartRate', '請輸入有效的正整數心率')
-    return null
-  }
-  if (maxHrText && (!Number.isInteger(maxHr) || maxHr === null || maxHr <= 0 || (restingHr !== null && maxHr <= restingHr))) {
-    setAthleteSettingsError('maxHeartRate', '最高心率必須是正整數，且高於靜息心率')
     return null
   }
   if (uniqueDays.size !== normalizedDays.length) {
@@ -2024,8 +2052,6 @@ function validateAthleteSettings(): AthleteProfileSavePayload | null {
     max_hard_sessions_per_week: maxHardSessionsPerWeek,
     unit_preference: form.unitPreference,
     threshold_pace_seconds_per_km: thresholdPaceSeconds,
-    resting_heart_rate_bpm: restingHr,
-    max_heart_rate_bpm: maxHr,
     injury_status: form.injuryStatus,
     injury_areas: form.injuryAreas.map((area) => area.trim().toLowerCase()),
     injury_notes: form.injuryNotes.trim() || null,
@@ -2051,6 +2077,7 @@ async function submitAthleteSettings() {
     const response = await saveAthleteProfile(payload)
     applyAthleteProfilePayload(response.data)
     athleteSettingsMessage.value = '運動員已更新'
+    await refreshCalendarPayloads(todayIsoDate.value)
   } catch (error) {
     if (!handleSessionExpiry(error)) {
       athleteSettingsError.value = '運動員儲存失敗，請檢查欄位後再試。'
@@ -2488,12 +2515,19 @@ function formatWorkoutStepLoad(step: WorkoutStep): string {
   return parts.join(' / ')
 }
 
+function workoutTargetSummary(workout: WorkoutSummary): string {
+  const flatten = (steps: WorkoutStep[]): WorkoutStep[] => steps.flatMap(step => step.type === 'repeat' ? flatten(step.steps ?? []) : [step])
+  const steps = flatten(workout.steps ?? [])
+  const main = steps.find(step => ['work', 'free_run', 'hill', 'stride'].includes(step.type) && step.target) ?? steps.find(step => step.target)
+  return main ? formatWorkoutTarget(main.target, workout.workoutType === 'hill') : ''
+}
+
 function formatWorkoutTarget(target?: WorkoutTarget | null, hillReference = false): string {
   if (!target) {
     return ''
   }
   const pace = formatPaceRange(target.paceRangeSecondsPerKm)
-  const sourceLabels = { threshold_pace: '閾值配速', completed_race: '已完成賽事', paired_easy_activities: '配對輕鬆跑', goal_time: '目標時間' }
+  const sourceLabels = { garmin_lactate_threshold: 'Garmin 閾值配速', threshold_pace: '閾值配速', completed_race: '已完成賽事', paired_easy_activities: '配對輕鬆跑', goal_time: '目標時間' }
   const confidenceLabels = { high: '高信心', medium: '中信心', low: '低信心' }
   const paceEvidence = pace ? [target.paceSource ? sourceLabels[target.paceSource] : '', target.confidence ? confidenceLabels[target.confidence] : ''].filter(Boolean).join(' · ') : ''
   const paceLabel = pace ? `${hillReference ? '平地參考配速' : '預估配速'} ${pace}` : ''
@@ -2502,9 +2536,9 @@ function formatWorkoutTarget(target?: WorkoutTarget | null, hillReference = fals
   }
   if (target.kind === 'heart_rate') {
     const range = target.heartRateRangeBpm && target.heartRateRangeBpm.length >= 2 ? `${target.heartRateRangeBpm[0]}-${target.heartRateRangeBpm[1]} bpm` : ''
-    return [target.heartRateZone || 'Heart rate', range || (target.rpe != null ? `RPE ${target.rpe}` : ''), paceLabel, paceEvidence].filter(Boolean).join(' · ')
+    return [target.rpe != null ? `RPE ${target.rpe}` : '', range ? `心率 ${range}` : '', paceLabel, !range && !pace ? '配速與心率資料不足' : '', paceEvidence].filter(Boolean).join(' · ')
   }
-  return [target.rpe != null ? `RPE ${target.rpe}` : 'RPE', paceLabel, paceEvidence].filter(Boolean).join(' · ')
+  return [target.rpe != null ? `RPE ${target.rpe}` : 'RPE', paceLabel || '配速與心率資料不足', paceEvidence].filter(Boolean).join(' · ')
 }
 
 function mapRecommendation(raw: Record<string, unknown>): InboxRecommendation | null {
@@ -2857,7 +2891,7 @@ function shouldRequireAuth(): boolean {
           <div class="today-decision-card__workout">
             <span>{{ todayWorkout.type }}</span>
             <strong>{{ todayWorkout.distance || todayWorkout.duration || '今日訓練' }}</strong>
-            <small>{{ todayWorkout.pace || todayWorkout.heartRateZone || todayWorkout.purpose }}</small>
+            <small>{{ workoutTargetSummary(todayWorkout) || todayWorkout.pace || todayWorkout.purpose }}</small>
           </div>
           <div class="today-evidence-chip-list" aria-label="今日決策證據">
             <span v-for="item in todayEvidenceChips" :key="`${item.source}-${item.metric}`" class="today-evidence-chip" data-testid="today-evidence-chip">
@@ -3002,6 +3036,7 @@ function shouldRequireAuth(): boolean {
           <AppButton tone="neutral" @click="showView('johnny')">查看待決定建議</AppButton>
         </article>
         </template>
+        <SessionReviews v-if="currentUser" :key="currentUser.id" :anchor-date="todayIsoDate" :time-zone="userTimezone" :refresh-key="sessionReviewsRefreshKey" class="today-grid__wide" @changed="handleSessionReviewChanged" @error="handleSessionExpiry" />
         <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" class="today-grid__wide" data-testid="today-daily-advice" />
       </section>
 
@@ -3174,6 +3209,7 @@ function shouldRequireAuth(): boolean {
                   <span v-for="(stage, index) in workoutStagePreview(workout)" :key="`${stage.label}-${index}`"><small>{{ stage.label }}</small><strong>{{ stage.load }}</strong></span>
                 </div>
                 <p v-else class="schedule-row__purpose">{{ workout.purpose }}</p>
+                <p v-if="workoutTargetSummary(workout)" class="workout-step-summary">{{ workoutTargetSummary(workout) }}</p>
               </div>
               <div class="schedule-row__meta">
                 <div class="schedule-row__facts">
@@ -3534,7 +3570,16 @@ function shouldRequireAuth(): boolean {
               <span v-if="athleteSettingsFieldErrors.maxHardSessionsPerWeek" id="athlete-max-hard-sessions-error" class="field-error">{{ athleteSettingsFieldErrors.maxHardSessionsPerWeek }}</span>
             </label>
 
+            <fieldset class="athlete-target-settings">
+              <legend>訓練目標</legend>
             <label>
+              閾值配速來源
+              <select v-model="athleteSettings.thresholdPaceSource" name="thresholdPaceSource">
+                <option value="garmin">Garmin 自動同步</option>
+                <option value="manual">手動設定</option>
+              </select>
+            </label>
+            <label v-if="athleteSettings.thresholdPaceSource === 'manual'">
               閾值配速（分/公里，可選）
               <input
                 v-model="athleteSettings.thresholdPace"
@@ -3549,36 +3594,18 @@ function shouldRequireAuth(): boolean {
               <span v-if="athleteSettingsFieldErrors.thresholdPace" id="athlete-threshold-pace-error" class="field-error">{{ athleteSettingsFieldErrors.thresholdPace }}</span>
             </label>
 
-            <label>
-              靜息心率（bpm，可選）
-              <input
-                v-model="athleteSettings.restingHeartRate"
-                name="restingHeartRate"
-                type="number"
-                min="1"
-                step="1"
-                inputmode="numeric"
-                :aria-invalid="athleteSettingsFieldErrors.restingHeartRate ? 'true' : 'false'"
-                aria-describedby="athlete-resting-heart-rate-error athlete-heart-rate-help"
-              />
-              <span v-if="athleteSettingsFieldErrors.restingHeartRate" id="athlete-resting-heart-rate-error" class="field-error">{{ athleteSettingsFieldErrors.restingHeartRate }}</span>
-            </label>
+            <div class="athlete-target-status" data-testid="garmin-threshold-status">
+              <strong>Garmin 閾值配速：{{ garminTrainingEvidence.lactate_threshold?.threshold_pace_seconds_per_km ? `${formatPace(garminTrainingEvidence.lactate_threshold.threshold_pace_seconds_per_km)} /km` : '尚無資料' }}</strong>
+              <p>{{ garminEvidenceStatus('lactate_threshold') }}</p>
+              <p v-if="athleteSettings.thresholdPaceSource === 'manual'">課表使用手動配速；選擇 Garmin 並儲存後才會改用同步值。</p>
+            </div>
+            <div class="athlete-target-status" data-testid="garmin-heart-rate-status">
+              <strong>心率區間：{{ garminTrainingEvidence.heart_rate_zones?.sport === 'RUNNING' ? 'Garmin 跑步設定' : garminTrainingEvidence.heart_rate_zones?.sport === 'DEFAULT' ? 'Garmin 一般設定' : '尚無資料' }}</strong>
+              <p>{{ garminEvidenceStatus('heart_rate_zones') }}</p>
+              <p>心率區間由 Garmin 提供，無需填寫靜息或最高心率。</p>
+            </div>
 
-            <label>
-              最高心率（bpm，可選）
-              <input
-                v-model="athleteSettings.maxHeartRate"
-                name="maxHeartRate"
-                type="number"
-                min="1"
-                step="1"
-                inputmode="numeric"
-                :aria-invalid="athleteSettingsFieldErrors.maxHeartRate ? 'true' : 'false'"
-                aria-describedby="athlete-max-heart-rate-error athlete-heart-rate-help"
-              />
-              <span v-if="athleteSettingsFieldErrors.maxHeartRate" id="athlete-max-heart-rate-error" class="field-error">{{ athleteSettingsFieldErrors.maxHeartRate }}</span>
-            </label>
-            <p id="athlete-heart-rate-help" class="inline-note">兩項都填寫後，Johnny 才會估算心率區間；未填時仍會使用體感強度。</p>
+            </fieldset>
 
             <label>
               偏好長跑日

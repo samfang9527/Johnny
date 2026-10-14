@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select, update
@@ -78,6 +79,30 @@ class SqlAlchemyIntegrationRepository:
             )
         )
         return [_connection_from_model(connection) for connection in connections]
+
+    def get_training_evidence_for_user(self, user_id: str) -> dict:
+        connections = self.list_active_connections_for_user(user_id)
+        connection = next((item for item in connections if item.provider == "garmin_connect"), None)
+        return dict((connection.provider_metadata or {}).get("training_evidence") or {}) if connection else {}
+
+    def update_training_evidence(self, user_id: str, connection_id: str, resource: str,
+                                 value: dict | None, *, checked_at: datetime, failed: bool = False) -> None:
+        connection = self._require_connection(connection_id)
+        if connection.user_id != user_id or connection.provider != "garmin_connect":
+            raise ValueError("integration connection not found")
+        metadata = dict(connection.provider_metadata or {})
+        evidence = dict(metadata.get("training_evidence") or {})
+        previous = dict(evidence.get(resource) or {})
+        timestamp = checked_at.isoformat()
+        if value is not None and not failed:
+            evidence[resource] = {**value, "source": "garmin", "synced_at": timestamp,
+                                  "checked_at": timestamp, "status": "ready"}
+        else:
+            evidence[resource] = {**previous, "checked_at": timestamp,
+                                  "status": "stale" if previous.get("synced_at") else "unavailable"}
+        metadata["training_evidence"] = evidence
+        connection.provider_metadata = metadata
+        self._session.flush()
 
     def replace_active_connections_for_user(self, user_id: str, *, except_connection_id: str | None = None) -> None:
         now = utc_now()

@@ -219,3 +219,32 @@ export function disconnectIntegrationConnection(connectionId: string): Promise<I
 export function submitConversationMessage(content: string): Promise<ConversationMessageResponse> {
   return postJson('/conversations/messages', { content })
 }
+
+export interface SessionReview {
+  id: string
+  local_date: string
+  status: 'automatic' | 'needs_review' | 'confirmed' | 'unplanned'
+  workout_id: string | null
+  activities: Array<{ id: string; started_at: string; sport_type: string; duration_seconds: number; distance_meters: number }>
+  candidates: Array<{ id: string; scheduled_for: string; workout_type: string; purpose: string }>
+  duration_seconds: number
+  distance_meters: number
+}
+
+export interface SessionReviewDecision {
+  activity_ids: string[]
+  groups: Array<{ activity_ids: string[]; workout_id: string | null }>
+}
+
+export function listSessionReviews(anchorDate: string): Promise<{ data: SessionReview[] }> {
+  return getJson(`/activities/session-reviews?anchor_date=${encodeURIComponent(anchorDate)}`)
+}
+
+export interface SessionReviewSaveResult {
+  saved: boolean
+  refresh_runs?: Array<{ run_id: string; poll_url: string; anchor_date: string }>
+}
+
+export function saveSessionReviews(payload: SessionReviewDecision): Promise<{ data: SessionReviewSaveResult }> {
+  return postJson('/activities/session-reviews', payload)
+}

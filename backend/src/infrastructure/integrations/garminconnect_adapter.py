@@ -25,6 +25,10 @@ class GarminClient(Protocol):
     def login(self, tokenstore: str | None = None) -> tuple[str | None, str | None]:
         ...
 
+    def get_heart_rate_zones(self) -> list[dict[str, Any]]: ...
+
+    def get_lactate_threshold(self) -> dict[str, Any]: ...
+
     def get_user_profile(self) -> dict[str, Any]:
         ...
 
@@ -147,6 +151,10 @@ class GarminConnectResourceAdapter:
     ) -> GarminResourceFetchResult:
         start_text = start_date.isoformat()
         end_text = end_date.isoformat()
+        if resource_type == "heart_rate_zones":
+            return GarminResourceFetchResult(items=[{"profiles": api.get_heart_rate_zones()}])
+        if resource_type == "lactate_threshold":
+            return GarminResourceFetchResult(items=[api.get_lactate_threshold()])
         if resource_type == "activities":
             items = api.get_activities_by_date(start_text, end_text, sortorder="asc")
             return GarminResourceFetchResult(items=items, cursor=_date_cursor(start_date, end_date))

@@ -26,6 +26,8 @@ class CompletedActivity:
     elevation_gain_meters: float | None = None
     matched_workout_id: str | None = None
     id: str | None = None
+    session_group_id: str | None = None
+    match_reviewed: bool = False
 
     def __post_init__(self) -> None:
         if not self.user_id:
@@ -66,6 +68,8 @@ class CompletedActivity:
         average_heart_rate: float | None = None,
         elevation_gain_meters: float | None = None,
         matched_workout_id: str | None = None,
+        session_group_id: str | None = None,
+        match_reviewed: bool = False,
         id: str | None = None,
     ) -> CompletedActivity:
         pace = average_pace_seconds_per_km
@@ -85,6 +89,8 @@ class CompletedActivity:
             average_heart_rate=average_heart_rate,
             elevation_gain_meters=elevation_gain_meters,
             matched_workout_id=matched_workout_id,
+            session_group_id=session_group_id,
+            match_reviewed=match_reviewed,
         )
 
     def with_matched_workout(self, workout_id: str | None) -> CompletedActivity:
@@ -97,6 +103,8 @@ class CompletedActivity:
             "average_heart_rate": self.average_heart_rate,
             "elevation_gain_meters": self.elevation_gain_meters,
             "matched_workout_id": self.matched_workout_id,
+            "session_group_id": self.session_group_id,
+            "match_reviewed": self.match_reviewed,
         }
 
 

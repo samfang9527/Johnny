@@ -35,6 +35,9 @@
 - Athlete Memory is Johnny's private working context and must not appear as a standalone navigation item, page, table, or browsable list. It may surface only as contextual explanation copy in recommendations or future conversation.
 - `資料` starts with Signal Coverage: activity, sleep, HRV, resting heart rate, training load, and athlete baseline. Provider connection cards and sync details appear below.
 - `運動員` saves through `PUT /api/v1/athlete/profile`, displays weekly mileage in the selected unit, sends canonical `current_weekly_mileage_km`, exposes only the typed threshold-pace setting from otherwise hidden `training_preferences`, and validates structured injury fields before submit.
+- Training targets use backend-resolved evidence. Athlete settings offer Garmin automatic threshold pace or an optional manual override; a saved manual value keeps precedence until the athlete selects Garmin and saves. Resting/max HR inputs are removed; Garmin running zones (general zones when no valid running profile exists) supply HR ranges.
+- Garmin evidence shows source, last successful sync, threshold measurement date when available, and stale/unavailable status. Failed or empty syncs retain last-good values. Disconnect clears provider evidence from current target resolution while preserving imported history.
+- Today, plan rows, and workout details show RPE plus available estimated pace/HR ranges. Upcoming planned workouts resolve current evidence without plan regeneration; completed and past workouts retain their saved targets. Saving settings, completing sync, or disconnecting refreshes the displayed workouts.
 - `運動員` timezone uses the canonical native select pattern with a fixed common-timezone list; valid existing profile timezones outside the list are preserved as a temporary current option.
 - `計畫` keeps race-goal creation through `POST /api/v1/races`; the create UI accepts kilometers and converts to API `distance_meters`, requires a product priority (`主要目標`, `次要目標`, `暖身賽`), and never sends race status on create.
 - The calendar hydrates from `GET /api/v1/races` for the active six-month window. Workout lists remain supporting execution context.
@@ -59,3 +62,11 @@
 - Race deletion uses `ConfirmDialog`, names the target, and explains that plans and workouts are retained. The owner-scoped race API detaches linked plan versions before removing the race.
 - Saves and deletes disable duplicate submission, retain user input or the confirmation on failure, and refresh race and training displays on success. Adding, moving, editing, cancelling, or deleting any race in the active projection's remaining date range shows a manual regeneration reminder; a saved race is not shown as part of the current workout plan until regeneration succeeds.
 - `useModalFocus` owns focus, Escape, background isolation, and scroll restoration for the race form and shared confirmation dialog, including nested discard confirmations.
+
+### Activity session review
+
+- Running, track running, and trail running share completion and load classification. Trail pace is excluded from road pace evidence.
+- Same-local-day running recordings form a candidate session only when recordings do not overlap and consecutive end-to-start gaps are at most 30 minutes. Active totals exclude gaps; original recordings remain intact.
+- One clear session and one running workout on its date are automatically matched and count as one completed workout. Ambiguous matches ask for review and do not establish a missed workout. Activity volume always counts.
+- Today shows automatic match confirmation cards with original recordings and editable collapsed history. Athletes can confirm, choose a workout, split recordings, or mark them unplanned. Explicit decisions survive sync; a partial or changed-membership group save is rejected and must be reloaded.
+- Saving a decision queues affected Daily Advice refreshes and marks older advice stale immediately. Confirmation is optional for clear automatic matches. The advice card exposes the evidence cutoff timestamp.

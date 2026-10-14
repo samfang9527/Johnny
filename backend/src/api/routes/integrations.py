@@ -53,7 +53,7 @@ from src.infrastructure.database.integration_repository import SqlAlchemyIntegra
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.integrations.garminconnect_adapter import GarminConnectLoginAdapter, GarminConnectResourceAdapter
-from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health
+from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health, normalize_garmin_training_evidence
 from src.infrastructure.security.integration_credentials import CredentialCipher, load_garmin_credential_cipher
 from src.infrastructure.llm.settings import resolve_queued_daily_advice_provider
 
@@ -330,6 +330,7 @@ def _run_garmin_sync(
     sync_run_id: str | None = None,
 ) -> SyncSummary:
     return GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=repository,
         activities=SqlAlchemyActivityRepository(session),
         outbox=SqlAlchemyOutboxRepository(session),

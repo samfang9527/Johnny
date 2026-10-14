@@ -14,7 +14,7 @@ class WorkoutTargetPayload(BaseModel):
     pace_range_seconds_per_km: list[int] | None = None
     heart_rate_range_bpm: list[int] | None = None
     confidence: Literal["high", "medium", "low"] | None = None
-    pace_source: Literal["threshold_pace", "completed_race", "paired_easy_activities", "goal_time"] | None = None
+    pace_source: Literal["threshold_pace", "garmin_lactate_threshold", "completed_race", "paired_easy_activities", "goal_time"] | None = None
 
 
 class WorkoutStepPayload(BaseModel):

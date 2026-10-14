@@ -28,6 +28,11 @@ def execution_mode(facts: WeekExecution, workout: Workout | None, recovery: dict
 
 
 def _canonical_summary(facts: WeekExecution) -> str:
+    if facts.evidence.get("ambiguous_dates"):
+        return (
+            f"本週計畫至今有 {facts.planned_count} 堂跑步，資料中可確認完成 {facts.completed_count} 堂；"
+            "已有活動紀錄，課表配對待你確認，暫不判定漏課。"
+        )
     if facts.status == "insufficient_evidence":
         return (
             f"本週計畫至今有 {facts.planned_count} 堂跑步，資料中可確認完成 {facts.completed_count} 堂；"

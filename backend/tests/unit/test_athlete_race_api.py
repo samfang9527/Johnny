@@ -31,6 +31,7 @@ def test_athlete_profile_routes_save_and_load_current_user_profile() -> None:
     assert response.json()["data"] == {
         "id": response.json()["data"]["id"],
         "user_id": "user-1",
+        "garmin_training_evidence": {},
         "timezone": "Asia/Taipei",
         "experience_level": None,
         "current_weekly_mileage_km": 42.5,

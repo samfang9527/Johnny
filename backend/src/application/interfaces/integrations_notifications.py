@@ -39,6 +39,9 @@ class ProviderActivityStore(Protocol):
 
 
 class IntegrationStore(Protocol):
+    def update_training_evidence(self, user_id: str, connection_id: str, resource: str,
+                                 value: dict | None, *, checked_at: datetime, failed: bool = False) -> None: ...
+
     def get_connection_for_user(self, user_id: str, connection_id: str) -> IntegrationConnectionRef | None:
         ...
 

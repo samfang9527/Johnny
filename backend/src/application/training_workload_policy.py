@@ -9,7 +9,7 @@ from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-RUNNING_SPORTS = frozenset({"run", "running", "trail_run", "trail_running", "virtual_run", "treadmill_run"})
+from src.domain.running import RUNNING_SPORTS
 POLICY_VERSION = "race-workload-v2"
 
 

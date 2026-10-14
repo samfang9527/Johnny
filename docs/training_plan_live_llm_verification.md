@@ -70,7 +70,7 @@ curl -sS -X PUT "$API/api/v1/athlete/profile" \
 ```
 
 預期：`data.user_id` 等於案例 ID，輸入限制完整回傳。記錄 profile JSON 作為預期 skeleton 的依據。
-需要驗證心率區間時，在完整 profile 中加入 `resting_heart_rate_bpm` 與 `max_heart_rate_bpm`（最高須大於靜息）；缺少任一值的案例應以 RPE 為主要 Target。若設定閾值配速，可加入 `threshold_pace_seconds_per_km`，並分別記錄估算配速的來源與信心。
+需要驗證心率區間時，先同步 Garmin 跑步心率區間；沒有有效跑步設定時使用 Garmin 一般設定。運動員設定不再要求靜息或最高心率。閾值配速可使用 Garmin 自動同步或 `threshold_pace_seconds_per_km` 手動覆寫；手動值優先，清除後使用 Garmin 值。驗證 Today、計畫與課表細節皆呈現 RPE 與可用的數值區間，並記錄配速來源與信心。同步失敗應保留上次值並標示過期；已完成課表不因設定更新而改寫。
 賽事案例用下方命令；`RACE_DATE` 必須替換為相對執行日的實際 ISO 日期，勿照抄過期日期：
 
 ```bash
@@ -174,3 +174,9 @@ unset OPENAI_API_KEY LLM_API_KEY LLM_PROVIDER LLM_MODEL DATABASE_URL VERIFY_USER
 
 不強制斷線、不刪 volume、不跑 downgrade 或 `make db-down`。若容器僅供本次流程，保存證據後依專用 PG runbook 以已核對的 CID 清理；若仍供 PG 驗證使用，僅刪本 LLM DB。
 結論分列「真實 LLM 樣本結果」「repair/fallback 安全性」「產品配額」「未驗證事項」，不可合成單一全通過。
+
+## Split activity completion and review
+
+Keep the API and worker on the same code revision; the development API reloads automatically but `agent_runtime.py work-loop` must be restarted after backend edits. Session reviews are available on Today. Run/track/trail recordings on the same athlete-local day, separated by no more than 30 minutes with no overlap, form candidate sessions. Confirm or correct the match, split recordings, or mark the session unplanned; the original provider records are retained. Confirmed decisions are not overwritten on resync.
+
+An ambiguous match must show recorded activity and request review, not claim a missed workout. Numeric load includes all running recordings. Trail pace is not road-running pace evidence. Verify that a correction marks the old advice stale, queues a refresh, and publishes the revised facts after the worker succeeds. A failed model response retains stale advice rather than publishing altered trusted facts.

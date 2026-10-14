@@ -50,4 +50,9 @@ describe('DailyAdviceCard', () => {
     const syncFailed = mount(DailyAdviceCard, { props: { advice: { ...ready, state: 'sync_failed', dataFreshness: 'stale' }, timeZone: 'Asia/Taipei' } })
     expect(syncFailed.text()).toContain('活動同步失敗')
   })
+  it('shows the activity evidence cutoff in the athlete timezone', () => {
+    const wrapper = mount(DailyAdviceCard, { props: { advice: { ...ready, facts: { evidence: { activity_cutoff_at: '2026-09-26T03:00:00Z' } } }, timeZone: 'Asia/Taipei' } })
+    expect(wrapper.text()).toContain('活動資料截至 · 9/26 11:00')
+  })
+
 })

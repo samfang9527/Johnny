@@ -581,8 +581,7 @@ describe('Johnny product shell', () => {
           max_hard_sessions_per_week: 0,
           unit_preference: 'imperial',
           threshold_pace_seconds_per_km: 315,
-          resting_heart_rate_bpm: 56,
-          max_heart_rate_bpm: 189,
+
           injury_status: 'current',
           injury_areas: ['other'],
           injury_notes: 'Left calf watch',
@@ -623,8 +622,9 @@ describe('Johnny product shell', () => {
     expect((wrapper.get('input[name="currentWeeklyMileage"]').element as HTMLInputElement).value).toBe('32.2')
     expect((wrapper.get('input[name="maxHardSessionsPerWeek"]').element as HTMLInputElement).value).toBe('2')
     expect((wrapper.get('input[name="thresholdPace"]').element as HTMLInputElement).value).toBe('5:00')
-    expect((wrapper.get('input[name="restingHeartRate"]').element as HTMLInputElement).value).toBe('55')
-    expect((wrapper.get('input[name="maxHeartRate"]').element as HTMLInputElement).value).toBe('190')
+    expect(wrapper.find('input[name="restingHeartRate"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="maxHeartRate"]').exists()).toBe(false)
+    expect((wrapper.get('select[name="thresholdPaceSource"]').element as HTMLSelectElement).value).toBe('manual')
 
     await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('')
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
@@ -646,11 +646,6 @@ describe('Johnny product shell', () => {
     await wrapper.get('input[name="currentWeeklyMileage"]').setValue('25.0')
     await wrapper.get('input[name="maxHardSessionsPerWeek"]').setValue('0')
     await wrapper.get('input[name="thresholdPace"]').setValue('5:15')
-    await wrapper.get('input[name="restingHeartRate"]').setValue('56')
-    await wrapper.get('input[name="maxHeartRate"]').setValue('50')
-    await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
-    expect(wrapper.get('input[name="maxHeartRate"]').attributes('aria-invalid')).toBe('true')
-    await wrapper.get('input[name="maxHeartRate"]').setValue('189')
     await wrapper.get('select[name="injuryStatus"]').setValue('current')
     await wrapper.get('input[name="injuryArea-other"]').setValue(true)
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
@@ -667,26 +662,44 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('運動員已更新')
   })
 
-  it('clears saved heart-rate settings without requiring a replacement pair', async () => {
+  it('switches a saved manual threshold to Garmin without HR entry', async () => {
+    let saved = false
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/api/v1/athlete/profile') && init?.method === 'GET') {
-        return { ok: true, json: async () => ({ data: { timezone: 'Asia/Taipei', resting_heart_rate_bpm: 55, max_heart_rate_bpm: 190 } }) } as Response
+        return { ok: true, json: async () => ({ data: { timezone: 'Asia/Taipei', threshold_pace_seconds_per_km: 300, garmin_training_evidence: { lactate_threshold: { threshold_pace_seconds_per_km: 320, status: 'stale', measured_on: '2026-10-10', synced_at: '2026-10-11T10:00:00Z' } } } }) } as Response
+      }
+      if (url.includes('/api/v1/today?')) {
+        return okJson({ scheduled_workouts: [{
+          id: 'target-run', scheduled_for: '2026-09-26', workout_type: 'easy_run',
+          status: 'planned', planned_duration_minutes: 30,
+          steps: [{ type: 'free_run', duration_seconds: 1800,
+            target: { kind: 'rpe', rpe: 3, zone: 'easy',
+              pace_range_seconds_per_km: saved ? [384, 432] : [360, 405],
+              pace_source: saved ? 'garmin_lactate_threshold' : 'threshold_pace' } }],
+        }], recovery: {}, unavailable_signals: [] })
       }
       if (url.endsWith('/api/v1/athlete/profile') && init?.method === 'PUT') {
-        expect(JSON.parse(String(init.body))).toMatchObject({ resting_heart_rate_bpm: null, max_heart_rate_bpm: null })
+        saved = true
+        expect(JSON.parse(String(init.body))).toMatchObject({ threshold_pace_seconds_per_km: null })
+        expect(JSON.parse(String(init.body))).not.toHaveProperty('resting_heart_rate_bpm')
         return { ok: true, json: async () => ({ data: { timezone: 'Asia/Taipei', resting_heart_rate_bpm: null, max_heart_rate_bpm: null } }) } as Response
       }
       return { ok: true, json: async () => ({ data: [] }) } as Response
     })
     const wrapper = mount(App)
     await flushPromises()
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('6:00')
     await wrapper.get('button[data-view="athlete"]').trigger('click')
-    await wrapper.get('input[name="restingHeartRate"]').setValue('')
-    await wrapper.get('input[name="maxHeartRate"]').setValue('')
+    expect(wrapper.text()).toContain('5:20')
+    expect(wrapper.text()).toContain('保留上次資料')
+    await wrapper.get('select[name="thresholdPaceSource"]').setValue('garmin')
     await wrapper.get('form[data-testid="athlete-settings-form"]').trigger('submit')
     await flushPromises()
     expect(wrapper.text()).toContain('運動員已更新')
+    await wrapper.get('button[data-view="today"]').trigger('click')
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('6:24')
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('Garmin')
   })
 
   it('does not show the connect-source empty block after a provider is connected', async () => {

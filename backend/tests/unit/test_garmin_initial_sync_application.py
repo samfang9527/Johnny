@@ -12,7 +12,7 @@ from src.application.integrations import (
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.domain.athlete_race import AthleteProfile
 from src.domain.integrations_notifications import IntegrationConnectionRef, SyncRun, SyncSummary
-from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_daily_health
+from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_daily_health, normalize_garmin_training_evidence
 
 
 def test_garmin_initial_sync_imports_each_resource_with_independent_cursors_and_partial_failure() -> None:
@@ -34,6 +34,7 @@ def test_garmin_initial_sync_imports_each_resource_with_independent_cursors_and_
     )
 
     summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=activities,
         outbox=outbox,
@@ -69,6 +70,8 @@ def test_garmin_initial_sync_imports_each_resource_with_independent_cursors_and_
         "hrv": {"date": "2027-01-01"},
         "resting_heart_rate": {"date": "2027-01-01"},
         "stress": {"date": "2027-01-01"},
+        "heart_rate_zones": {},
+        "lactate_threshold": {},
     }
     assert "body_battery" not in integrations.advanced_cursors
     assert [metric.metric_date for metric in activities.health] == [date(2027, 1, 1)] * 4
@@ -86,6 +89,7 @@ def test_garmin_initial_sync_falls_back_to_garmin_profile_timezone_then_utc() ->
         )
 
         GarminInitialSyncHandler(
+            normalize_training_evidence=normalize_garmin_training_evidence,
             integrations=integrations,
             activities=_FakeActivityStore(),
             outbox=_FakeOutboxStore(),
@@ -111,6 +115,7 @@ def test_garmin_initial_sync_records_empty_successful_resource_cursors_and_uses_
     )
 
     summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -144,6 +149,7 @@ def test_garmin_initial_sync_does_not_advance_cursor_for_resource_with_item_fail
     )
 
     summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -188,6 +194,7 @@ def test_garmin_initial_sync_skips_empty_supported_health_metric_records_and_log
     )
 
     summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -225,6 +232,7 @@ def test_garmin_initial_sync_marks_requires_reauth_and_stops_fetching_after_cred
     )
 
     summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -257,6 +265,7 @@ def test_garmin_initial_sync_records_rate_limit_backoff_without_reauth() -> None
     )
 
     summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -285,6 +294,7 @@ def test_garmin_initial_sync_records_rate_limit_backoff_without_reauth() -> None
 def test_garmin_initial_sync_classifies_raw_provider_auth_and_rate_limit_errors() -> None:
     auth_integrations = _FakeIntegrationStore()
     GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=auth_integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -302,6 +312,7 @@ def test_garmin_initial_sync_classifies_raw_provider_auth_and_rate_limit_errors(
 
     rate_integrations = _FakeIntegrationStore()
     rate_summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=rate_integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -340,6 +351,7 @@ def test_garmin_initial_sync_logs_failed_resource_reason_without_sensitive_value
     integrations = _FakeIntegrationStore()
 
     GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -374,6 +386,7 @@ def test_garmin_initial_sync_classifies_temporary_403_block_as_failed_sync_not_r
     integrations = _FakeIntegrationStore()
 
     summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -403,6 +416,7 @@ def test_garmin_initial_sync_does_not_fetch_when_connection_already_requires_rea
     adapter = _FakeGarminResourceAdapter(results={resource: GarminResourceFetchResult() for resource in GARMIN_SYNC_RESOURCES})
 
     summary = GarminInitialSyncHandler(
+        normalize_training_evidence=normalize_garmin_training_evidence,
         integrations=integrations,
         activities=_FakeActivityStore(),
         outbox=_FakeOutboxStore(),
@@ -442,6 +456,9 @@ class _FakeIntegrationStore:
         self.completed_summary: SyncSummary | None = None
         self.completed_status: str | None = None
         self.started_count = 0
+
+    def update_training_evidence(self, *args, **kwargs):
+        pass
 
     def get_connection_for_user(self, user_id: str, connection_id: str) -> IntegrationConnectionRef | None:
         if user_id == self.connection.user_id and connection_id == self.connection.id:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 
 from sqlalchemy import select
@@ -22,13 +23,13 @@ class SqlAlchemyAthleteRaceRepository:
         model.experience_level = profile.experience_level
         model.metadata_json = _profile_metadata(profile)
         self._session.flush()
-        return _profile_from_model(model)
+        return self._with_training_evidence(_profile_from_model(model))
 
     def get_profile_for_user(self, user_id: str) -> AthleteProfile | None:
         model = self._session.scalar(select(AthleteProfileModel).where(AthleteProfileModel.user_id == user_id))
         if model is None:
             return None
-        return _profile_from_model(model)
+        return self._with_training_evidence(_profile_from_model(model))
 
     def list_profiles_for_users(self, user_ids: list[str]) -> list[AthleteProfile]:
         if not user_ids:
@@ -38,7 +39,13 @@ class SqlAlchemyAthleteRaceRepository:
             .where(AthleteProfileModel.user_id.in_(user_ids))
             .order_by(AthleteProfileModel.user_id)
         )
-        return [_profile_from_model(model) for model in self._session.scalars(statement)]
+        return [self._with_training_evidence(_profile_from_model(model)) for model in self._session.scalars(statement)]
+
+    def _with_training_evidence(self, profile: AthleteProfile) -> AthleteProfile:
+        from .integration_repository import SqlAlchemyIntegrationRepository
+        evidence = SqlAlchemyIntegrationRepository(self._session).get_training_evidence_for_user(profile.user_id)
+        preferences = {**profile.preferences.training_preferences, "garmin_training_evidence": evidence}
+        return replace(profile, preferences=replace(profile.preferences, training_preferences=preferences))
 
     def create_race_goal(self, user_id: str, race_goal: RaceGoal) -> RaceGoal:
         _ensure_matching_user_id(user_id, race_goal.user_id)
@@ -176,7 +183,7 @@ def _profile_metadata(profile: AthleteProfile) -> dict:
         "max_runs_per_week": profile.preferences.max_runs_per_week,
         "max_hard_sessions_per_week": profile.preferences.max_hard_sessions_per_week,
         "unit_preference": profile.preferences.unit_preference,
-        "training_preferences": profile.preferences.training_preferences,
+        "training_preferences": {key: value for key, value in profile.preferences.training_preferences.items() if key != "garmin_training_evidence"},
         "injury_status": profile.preferences.injury_status,
         "injury_areas": list(profile.preferences.injury_areas),
         "injury_notes": profile.preferences.injury_notes,

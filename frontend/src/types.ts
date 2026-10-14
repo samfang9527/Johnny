@@ -7,7 +7,18 @@ export interface CurrentUser {
   capabilities: string[]
 }
 
+export interface GarminTrainingReading {
+  status?: 'ready' | 'stale' | 'unavailable'
+  synced_at?: string
+  checked_at?: string
+  measured_on?: string | null
+  sport?: string
+  threshold_pace_seconds_per_km?: number
+  heart_rate_zones?: Record<string, number[]>
+}
+
 export interface AthleteProfileResponse {
+  garmin_training_evidence?: Record<string, GarminTrainingReading>
   timezone?: string | null
   experience_level?: 'beginner' | 'intermediate' | 'advanced' | null
   current_weekly_mileage_km?: number | null
@@ -35,8 +46,6 @@ export interface AthleteProfileSavePayload {
   max_hard_sessions_per_week: number
   unit_preference: 'metric' | 'imperial'
   threshold_pace_seconds_per_km: number | null
-  resting_heart_rate_bpm: number | null
-  max_heart_rate_bpm: number | null
   injury_status: 'none' | 'current' | 'recent' | 'recurring'
   injury_areas: string[]
   injury_notes: string | null
@@ -248,7 +257,7 @@ export interface WorkoutTarget {
   paceRangeSecondsPerKm?: number[] | null
   heartRateRangeBpm?: number[] | null
   confidence?: WorkoutTargetConfidence | null
-  paceSource?: 'threshold_pace' | 'completed_race' | 'paired_easy_activities' | 'goal_time' | null
+  paceSource?: 'threshold_pace' | 'garmin_lactate_threshold' | 'completed_race' | 'paired_easy_activities' | 'goal_time' | null
 }
 
 export interface WorkoutStep {

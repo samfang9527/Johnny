@@ -121,7 +121,12 @@ class SqlAlchemyActivityRepository:
         model.activity_type = activity.sport_type
         model.distance_meters = activity.distance_meters
         model.duration_seconds = activity.duration_seconds
-        model.provider_summary = activity.to_summary()
+        summary = activity.to_summary()
+        if (model.provider_summary or {}).get("match_reviewed"):
+            # Only the review endpoint may change an athlete's explicit decision.
+            summary.update({key: model.provider_summary.get(key) for key in
+                            ("match_reviewed", "session_group_id", "matched_workout_id")})
+        model.provider_summary = summary
         self._session.flush()
         return _activity_from_model(model)
 
@@ -332,6 +337,8 @@ def _activity_from_model(model: ActivityModel) -> CompletedActivity:
         average_heart_rate=summary.get("average_heart_rate"),
         elevation_gain_meters=summary.get("elevation_gain_meters"),
         matched_workout_id=summary.get("matched_workout_id"),
+        session_group_id=summary.get("session_group_id"),
+        match_reviewed=summary.get("match_reviewed", False),
     )
 
 

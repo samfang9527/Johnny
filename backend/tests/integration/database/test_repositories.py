@@ -1165,7 +1165,7 @@ def test_athlete_profile_repository_round_trips_profile_and_preferences(sqlite_s
         assert loaded.preferences.max_runs_per_week == 3
         assert loaded.preferences.max_hard_sessions_per_week == 1
         assert loaded.preferences.unit_preference == "imperial"
-        assert loaded.preferences.training_preferences == {"surface": "trail"}
+        assert loaded.preferences.training_preferences == {"surface": "trail", "garmin_training_evidence": {}}
         assert loaded.preferences.injury_notes == "Avoid aggressive downhill sessions."
         assert [profile.id for profile in bulk_loaded] == [updated.id]
 

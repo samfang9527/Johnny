@@ -126,3 +126,44 @@ def _body_battery_score(payload: dict[str, Any]) -> float | None:
         if isinstance(item, (list, tuple)) and len(item) >= 2 and item[1] is not None:
             return float(item[1])
     return None
+
+
+def normalize_garmin_training_evidence(resource: str, payload: Any) -> dict | None:
+    """Normalize configured running zones or latest lactate speed (Garmin m/s).
+
+    Garmin zone floors are inclusive. Johnny maps recovery/easy/steady/threshold
+    to Z1/Z2/Z3/Z4; marathon uses Z3. Short efforts remain RPE/pace-led.
+    """
+    if resource == "heart_rate_zones":
+        profiles = payload if isinstance(payload, list) else []
+        for sport in ("RUNNING", "DEFAULT"):
+            for profile in profiles:
+                if not isinstance(profile, dict) or profile.get("sport") != sport:
+                    continue
+                floors = [_valid_bpm(profile.get(f"zone{i}Floor")) for i in range(1, 6)]
+                if any(value is None for value in floors) or any(a >= b for a, b in zip(floors, floors[1:])):
+                    continue
+                return {
+                    "sport": sport,
+                    "heart_rate_zones": {
+                        zone: [floors[index], floors[index + 1] - 1]
+                        for zone, index in {"recovery": 0, "easy": 1, "steady": 2, "marathon": 2, "threshold": 3}.items()
+                    },
+                }
+        return None
+    if resource == "lactate_threshold":
+        reading = _as_mapping(_as_mapping(payload).get("speed_and_heart_rate"))
+        speed = reading.get("speed")
+        if isinstance(speed, bool) or not isinstance(speed, (float, int)) or not 1000 / 900 <= speed <= 1000 / 120:
+            return None
+        measured_on = reading.get("calendarDate")
+        try:
+            measured_on = date.fromisoformat(str(measured_on)).isoformat()
+        except ValueError:
+            measured_on = None
+        return {"threshold_pace_seconds_per_km": round(1000 / speed), "measured_on": measured_on}
+    raise ValueError("unsupported Garmin training evidence")
+
+
+def _valid_bpm(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and 30 <= value <= 250 else None

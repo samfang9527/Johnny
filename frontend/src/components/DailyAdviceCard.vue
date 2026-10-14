@@ -18,6 +18,13 @@ const timeLabel = computed(() => {
     return ''
   }
 })
+const activityCutoffLabel = computed(() => {
+  const evidence = props.advice.facts?.evidence
+  if (!evidence || typeof evidence !== 'object') return ''
+  const cutoff = (evidence as Record<string, unknown>).activity_cutoff_at
+  if (typeof cutoff !== 'string' || Number.isNaN(new Date(cutoff).getTime())) return ''
+  return new Intl.DateTimeFormat('zh-TW', { timeZone: props.timeZone, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(cutoff))
+})
 const modeLabels: Record<string, string> = {
   follow_plan: '照計畫執行', ease_off: '保守執行', rest: '今天休息', completed: '今天已完成',
 }
@@ -44,6 +51,7 @@ const stateMessage = computed(() => {
     <p v-if="advice.dataFreshness === 'stale' && hasContent" class="daily-advice-card__notice daily-advice-card__notice--warning">以下是先前建議，資料可能已過時。</p>
     <p v-else-if="advice.dataFreshness === 'limited' && hasContent" class="daily-advice-card__notice">資料有限；建議以目前可用的活動紀錄與課表為準。</p>
     <p v-if="timeLabel" class="daily-advice-card__time">{{ advice.dataFreshness === 'stale' ? '先前產生' : '更新時間' }} · {{ timeLabel }}</p>
+    <p v-if="activityCutoffLabel" class="daily-advice-card__time">活動資料截至 · {{ activityCutoffLabel }}</p>
     <div v-if="hasContent" class="daily-advice-card__sections">
       <section>
         <h4>本週執行回顧</h4>

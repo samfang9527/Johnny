@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from dataclasses import replace
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -20,6 +22,54 @@ from .models import PlanAdjustmentModel, RaceModel, TrainingPlanModel, WorkoutMo
 class SqlAlchemyTrainingPlanRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def _resolve_targets(self, plan: TrainingPlan) -> TrainingPlan:
+        from src.application.training_targets import build_target_profile_from_payloads, refresh_workout_targets
+        from .athlete_race_repository import SqlAlchemyAthleteRaceRepository
+        athlete = SqlAlchemyAthleteRaceRepository(self._session).get_profile_for_user(plan.user_id)
+        if athlete is None or plan.status not in {"active", "superseded", "completed"}:
+            return plan
+        profile = build_target_profile_from_payloads({"training_preferences": athlete.preferences.training_preferences}, None, (), None)
+        try:
+            local_zone = ZoneInfo(athlete.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            local_zone = timezone.utc
+        today = datetime.now(timezone.utc).astimezone(local_zone).date()
+        eligible_until = self._target_refresh_boundary(plan)
+        if eligible_until is None:
+            return plan
+        return replace(plan, workouts=tuple(
+            refresh_workout_targets(workout, profile, today=today)
+            if plan.starts_on <= workout.scheduled_for <= plan.ends_on and workout.scheduled_for < eligible_until
+            else workout
+            for workout in plan.workouts
+        ))
+
+    def _target_refresh_boundary(self, plan: TrainingPlan) -> date | None:
+        """Refresh only dates this plan still owns in the active predecessor chain."""
+        if plan.status == "active":
+            return date.max
+        current = self._session.scalar(
+            select(TrainingPlanModel)
+            .where(TrainingPlanModel.user_id == plan.user_id, TrainingPlanModel.status == "active")
+            .order_by(TrainingPlanModel.starts_on.desc()).limit(1)
+        )
+        boundary = date.max
+        visited: set[str] = set()
+        while current is not None and current.id not in visited:
+            if current.id == plan.id:
+                return boundary
+            visited.add(current.id)
+            boundary = min(boundary, current.starts_on)
+            previous_id = (current.metadata_json or {}).get("previous_plan_id")
+            if not previous_id:
+                break
+            current = self._session.scalar(select(TrainingPlanModel).where(
+                TrainingPlanModel.id == previous_id,
+                TrainingPlanModel.user_id == plan.user_id,
+                TrainingPlanModel.status.in_(("active", "superseded", "completed")),
+            ))
+        return None
 
     def create_plan(
         self,
@@ -71,7 +121,7 @@ class SqlAlchemyTrainingPlanRepository:
         model = self._session.scalar(statement)
         if model is None:
             return None
-        return _plan_from_model(model)
+        return self._resolve_targets(_plan_from_model(model))
 
     def list_active_plans_ending_on_or_before(self, ends_on: date) -> list[TrainingPlan]:
         latest_end_by_user = (
@@ -128,7 +178,7 @@ class SqlAlchemyTrainingPlanRepository:
             if conflict.id != model.id:
                 conflict.status = "superseded"
         self._session.flush()
-        return _plan_from_model(model)
+        return self._resolve_targets(_plan_from_model(model))
 
     def activate_draft_plan(
         self,
@@ -166,7 +216,7 @@ class SqlAlchemyTrainingPlanRepository:
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
         model = self._save_plan_model(user_id, plan)
         self._session.flush()
-        return _plan_from_model(model)
+        return self._resolve_targets(_plan_from_model(model))
 
     def _save_plan_model(self, user_id: str, plan: TrainingPlan) -> TrainingPlanModel:
         _ensure_matching_user_id(user_id, plan.user_id)
@@ -194,7 +244,7 @@ class SqlAlchemyTrainingPlanRepository:
         )
         if model is None:
             return None
-        return _plan_from_model(model)
+        return self._resolve_targets(_plan_from_model(model))
 
     def list_plans_for_user(
         self,
@@ -213,7 +263,7 @@ class SqlAlchemyTrainingPlanRepository:
             statement = statement.offset(offset)
         if limit is not None:
             statement = statement.limit(limit)
-        return [_plan_from_model(model) for model in self._session.scalars(statement)]
+        return [self._resolve_targets(_plan_from_model(model)) for model in self._session.scalars(statement)]
 
     def list_recent_workouts_for_user(self, user_id: str, *, since: date, through: date) -> list[Workout]:
         statement = (

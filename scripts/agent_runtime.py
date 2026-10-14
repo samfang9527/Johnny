@@ -43,7 +43,7 @@ from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
 from src.infrastructure.llm.openai_gateway import OpenAIModelGateway
 from src.infrastructure.llm.settings import load_llm_settings, load_openai_settings_for_queued_model, resolve_queued_daily_advice_provider, resolve_queued_training_plan_provider
 from src.infrastructure.integrations.garminconnect_adapter import GarminConnectResourceAdapter
-from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health
+from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health, normalize_garmin_training_evidence
 from src.infrastructure.security.integration_credentials import load_garmin_credential_cipher
 from src.infrastructure.logging.logger_config import setup_logging
 
@@ -522,6 +522,7 @@ def _process_daily_advice_sync(session: Session, task: AgentTaskModel) -> None:
         session.commit()
         adapter = _build_garmin_sync_adapter(session, integrations)
         summary = GarminInitialSyncHandler(
+            normalize_training_evidence=normalize_garmin_training_evidence,
             integrations=integrations, activities=SqlAlchemyActivityRepository(session),
             outbox=SqlAlchemyOutboxRepository(session), garmin=adapter,
             athlete_profiles=SqlAlchemyAthleteRaceRepository(session),

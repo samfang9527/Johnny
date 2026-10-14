@@ -9,6 +9,7 @@ import uvicorn
 from .api.errors import register_exception_handlers
 from .api.frontend_origins import cors_origins
 from .api.routes.activity_health import activity_router, health_router as health_metrics_router
+from .api.routes.session_reviews import router as session_reviews_router
 from .api.routes.agent_runs import router as agent_runs_router
 from .api.routes.athlete_profile import router as athlete_profile_router
 from .api.routes.auth import router as auth_router
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(auth_router)
     api_v1_router.include_router(athlete_profile_router)
     api_v1_router.include_router(activity_router)
+    api_v1_router.include_router(session_reviews_router)
     api_v1_router.include_router(agent_runs_router)
     api_v1_router.include_router(conversations_router)
     api_v1_router.include_router(health_metrics_router)

@@ -31,7 +31,7 @@ SUPPORTED_PACE_ZONES = frozenset(
     }
 )
 SUPPORTED_TARGET_CONFIDENCE = frozenset({"high", "medium", "low"})
-SUPPORTED_PACE_SOURCES = frozenset({"threshold_pace", "completed_race", "paired_easy_activities", "goal_time"})
+SUPPORTED_PACE_SOURCES = frozenset({"threshold_pace", "garmin_lactate_threshold", "completed_race", "paired_easy_activities", "goal_time"})
 COACH_NOTE_MAX_LENGTH = 500
 STEP_DURATION_TOLERANCE_SECONDS = 300
 STEP_DISTANCE_TOLERANCE_METERS = 500

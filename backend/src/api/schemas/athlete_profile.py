@@ -40,5 +40,6 @@ class AthleteProfileRequest(BaseModel):
 
 
 class AthleteProfileResponse(AthleteProfileRequest):
+    garmin_training_evidence: dict = Field(default_factory=dict)
     id: str | None
     user_id: str

@@ -336,3 +336,25 @@ class _FakeGarminClient:
 
 class _TooManyRequestsError(RuntimeError):
     pass
+
+
+def test_training_evidence_endpoints_are_fetched_once_per_sync_not_per_day():
+    class Client:
+        zone_calls = 0
+        threshold_calls = 0
+
+        def get_heart_rate_zones(self):
+            self.zone_calls += 1
+            return [{'sport': 'RUNNING', 'zone1Floor': 100}]
+
+        def get_lactate_threshold(self):
+            self.threshold_calls += 1
+            return {'speed_and_heart_rate': {'speed': 3.125}}
+
+    api = Client()
+    adapter = GarminConnectResourceAdapter(credentials=None, cipher=None)
+    zones = adapter._fetch_resource(api, 'heart_rate_zones', date(2026, 9, 1), date(2026, 10, 1))
+    threshold = adapter._fetch_resource(api, 'lactate_threshold', date(2026, 9, 1), date(2026, 10, 1))
+    assert zones.items == ({'profiles': [{'sport': 'RUNNING', 'zone1Floor': 100}]},)
+    assert threshold.items == ({'speed_and_heart_rate': {'speed': 3.125}},)
+    assert (api.zone_calls, api.threshold_calls) == (1, 1)

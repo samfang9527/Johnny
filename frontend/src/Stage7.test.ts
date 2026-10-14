@@ -365,6 +365,7 @@ describe('Stage 7 frontend acceptance', () => {
       { ...workout('no-pace', '2026-09-29'), steps: [{ type: 'work', duration_seconds: 1200, target: { kind: 'rpe', rpe: 3 } }] },
       { ...workout('hill-pace', '2026-09-30'), workout_type: 'hill', steps: [{ type: 'hill', duration_seconds: 90, target: { kind: 'rpe', rpe: 8, pace_range_seconds_per_km: [300, 330], pace_source: 'goal_time', confidence: 'low' } }] },
     ] })])
+    expect(app.get('[data-testid="schedule-workout-hr-pace"]').text()).toContain('RPE 3 · 心率 120-140 bpm · 預估配速 6:00-6:30 /km')
     await app.get('[data-testid="workout-detail-rpe-pace"]').trigger('click')
     expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('RPE 6')
     expect(app.get('[data-testid="workout-detail-modal"]').text()).toContain('預估配速 5:18-5:36 /km')
@@ -413,9 +414,9 @@ describe('Stage 7 frontend acceptance', () => {
     expect(schedule.find('[data-testid="schedule-workout-third-week"]').exists()).toBe(false)
   })
   it.each([
-    [null, 8, 'threshold · RPE 8'],
-    [[150, 165], 8, 'threshold · 150-165 bpm'],
-    [null, null, 'threshold'],
+    [null, 8, 'RPE 8 · 配速與心率資料不足'],
+    [[150, 165], 8, 'RPE 8 · 心率 150-165 bpm'],
+    [null, null, '配速與心率資料不足'],
   ])('renders heart-rate range %j with payload RPE %s without inventing effort', async (range, rpe, expected) => {
     const app = await render([plan('maintenance', { workouts: [{
       ...workout('heart-rate', '2026-09-27'),
@@ -424,7 +425,7 @@ describe('Stage 7 frontend acceptance', () => {
     await app.get('[data-testid="workout-detail-heart-rate"]').trigger('click')
     const detail = app.get('[data-testid="workout-detail-modal"]').text()
     expect(detail).toContain(expected)
-    if (range || rpe == null) expect(detail).not.toContain('RPE')
+    if (rpe == null) expect(detail).not.toContain('RPE')
     if (!range) expect(detail).not.toContain('bpm')
   })
   it.each(['completed', 'failed'])('observes long-running %s past the former cap, preserving workouts until terminal', async (terminal) => {

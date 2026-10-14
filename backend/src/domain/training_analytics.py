@@ -10,7 +10,7 @@ from src.domain.training_plan import TrainingPlan, Workout
 
 READINESS_LABELS = frozenset({"unknown", "ready", "caution", "rest"})
 SNAPSHOT_TYPES = frozenset({"training_load", "recovery_context", "today_context"})
-RUN_SPORT_TYPES = frozenset({"run", "running"})
+from src.domain.running import RUNNING_SPORTS as RUN_SPORT_TYPES
 SLEEP_TARGET_MINUTES = 480
 
 
