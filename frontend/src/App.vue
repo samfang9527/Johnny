@@ -417,7 +417,17 @@ const todayEvidenceChips = computed(() => [...recoveryEvidence.value]
 const nextWorkout = computed(() => [...displayWorkouts.value]
   .filter((workout) => workout.scheduledFor && workout.scheduledFor > todayIsoDate.value)
   .sort((a, b) => a.scheduledFor!.localeCompare(b.scheduledFor!))[0] ?? null)
-const planLeadWorkout = computed(() => visibleScheduleWorkouts.value[0] ?? (shouldRequireAuth() ? nextWorkout.value : displayWorkouts.value[0] ?? null))
+function isFinishedWorkout(workout: WorkoutSummary): boolean {
+  return ['completed', 'skipped', 'cancelled', '已完成', '已跳過'].includes(workout.status)
+}
+const planLeadWorkout = computed(() => {
+  const upcoming = displayWorkouts.value
+    .filter((workout) => isIsoDate(workout.scheduledFor)
+      && workout.scheduledFor >= todayIsoDate.value
+      && !isFinishedWorkout(workout))
+    .sort((left, right) => left.scheduledFor!.localeCompare(right.scheduledFor!))
+  return upcoming[0] ?? (shouldRequireAuth() ? null : displayWorkouts.value.find((workout) => !isIsoDate(workout.scheduledFor) && !isFinishedWorkout(workout)) ?? null)
+})
 const currentPlanPhase = computed(() => journeyPhases.value.find((phase) => phase.status === 'current') ?? (recoveryWindow.value ? {
   label: '恢復週 · Recovery Window', summary: `上一份計畫已結束，安排七天恢復。第 ${recoveryWindow.value.day} / 7 天`,
 } : { label: journeyPhases.value.length ? '計畫尚未開始' : '尚無有效訓練計畫', summary: journeyPhases.value.length ? '接下來的訓練階段已排定。' : '請重新產生計畫，安排接下來的訓練。' }))

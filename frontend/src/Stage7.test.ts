@@ -127,6 +127,27 @@ describe('Stage 7 frontend acceptance', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     expect(app.get('.plan-journey__stop--current').text()).toContain('減量期')
   })
+  it('shows the next eligible Plan workout instead of an earlier or completed session', async () => {
+    const app = await render([plan('maintenance', { workouts: [
+      { ...workout('earlier', '2026-09-23'), status: 'completed' },
+      { ...workout('finished-today', '2026-09-26'), status: 'completed' },
+      workout('next-run', '2026-09-27'),
+    ] })])
+    const summary = app.get('[data-testid="plan-summary"]')
+    expect(summary.text()).toContain('2026-09-27')
+    expect(summary.text()).not.toContain('2026-09-23')
+    expect(summary.text()).not.toContain('2026-09-26')
+  })
+  it('advances the Plan next-workout summary at athlete-local midnight', async () => {
+    vi.setSystemTime(new Date('2026-09-26T15:59:59Z'))
+    const app = await render([plan('maintenance', { workouts: [
+      workout('today-run', '2026-09-26'),
+      workout('tomorrow-run', '2026-09-27'),
+    ] })])
+    expect(app.get('[data-testid="plan-summary"]').text()).toContain('2026-09-26')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(app.get('[data-testid="plan-summary"]').text()).toContain('2026-09-27')
+  })
   it('does not restore calendar projection A after completion publishes B, and still refreshes new-day Today', async () => {
     vi.setSystemTime(new Date('2026-09-26T15:59:59Z'))
     const calendarToday = deferredResponse()

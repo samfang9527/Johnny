@@ -2102,6 +2102,21 @@ describe('Johnny product shell', () => {
     expect(garminCard.text()).toContain('手動同步')
   })
 
+  it('shows failed sync recovery even without resource results', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/me')) return Promise.resolve(okJson({ id: 'runner', capabilities: ['integrations'] }))
+      if (url.endsWith('/api/v1/integrations/connections')) return Promise.resolve(okJson([garminConnectionData({ sync_status: 'failed', sync_summary: null, last_sync_error: '同步暫時失敗' })]))
+      return Promise.resolve(okJson([]))
+    })
+    const wrapper = mount(App, { props: { initialView: 'data', requireAuth: true } })
+    await flushPromises()
+    const card = wrapper.get('[data-testid="provider-card-garmin_connect"]')
+    expect(card.text()).toContain('同步失敗')
+    expect(card.text()).toContain('再次手動同步')
+    expect(card.find('button[data-action="manual-sync"]').exists()).toBe(true)
+  })
+
   it('runs manual Garmin sync from the provider card and renders partial failure details', async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)

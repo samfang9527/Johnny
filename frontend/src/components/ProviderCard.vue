@@ -50,6 +50,9 @@ const status = computed((): { label: string; tone: 'info' | 'warning' | 'danger'
   if (isSyncing.value) {
     return { label: '同步中', tone: 'warning' }
   }
+  if (props.connection?.sync_status === 'failed') {
+    return { label: '同步失敗', tone: 'warning' }
+  }
   if (props.connection?.has_partial_failures) {
     return { label: '部分資料同步失敗', tone: 'warning' }
   }
@@ -78,12 +81,12 @@ function selectProvider() {
     <ul class="signal-list">
       <li v-for="signal in provider.coverage" :key="signal">{{ signal }}</li>
     </ul>
-    <div v-if="connection && resourceRows.length" class="provider-card__sync-summary">
+    <div v-if="connection && (resourceRows.length || requiresReauth || connection.has_partial_failures || connection.sync_status === 'failed' || connection.sync_warning)" class="provider-card__sync-summary">
       <p v-if="connection.has_partial_failures" class="provider-card__warning">部分資料同步失敗</p>
       <p v-if="connection.sync_warning" class="provider-card__warning">{{ connection.sync_warning }}</p>
       <p v-if="requiresReauth" class="provider-card__recovery">請重新連接 Garmin，更新登入資料後再同步。</p>
       <p v-else-if="connection.has_partial_failures || connection.sync_status === 'failed'" class="provider-card__recovery">檢查失敗的資料後，可再次手動同步。</p>
-      <ul>
+      <ul v-if="resourceRows.length">
         <li v-for="row in resourceRows" :key="row">{{ row }}</li>
       </ul>
     </div>
