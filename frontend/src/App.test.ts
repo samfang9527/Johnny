@@ -1131,6 +1131,33 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).not.toContain('今天原本有 8 km')
   })
 
+  it('places pending Recommendations before read-only Daily Advice', async () => {
+    mockAuthenticatedToday({
+      userId: 'runner',
+      todayData: { scheduled_workouts: [], recovery: {}, daily_advice: advicePayload() },
+      recommendations: [{ id: 'pending-change', title: '調整明天課表', rationale: '恢復較慢', priority: 'medium', status: 'pending', evidence: [], proposed_action: { type: 'no_plan_change', reason: '等待確認' } }],
+    })
+    const wrapper = mount(App, { props: { requireAuth: true, initialView: 'johnny' } })
+    await flushPromises()
+    const page = wrapper.get('[data-testid="johnny-page"]')
+    const pending = page.get('[data-testid="johnny-pending"]')
+    const advice = page.get('[data-testid="johnny-daily-advice"]')
+    expect(pending.element.compareDocumentPosition(advice.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(pending.findAll('.inbox-card')).toHaveLength(1)
+    expect(advice.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
+  })
+
+  it('shows the proposed change and evidence before approval', () => {
+    const wrapper = mount(App, { props: { initialView: 'johnny' } })
+    const card = wrapper.get('[data-testid="inbox-card-rec-race-taper"]')
+    const proposal = card.get('.decision-strip')
+    const evidence = card.get('.evidence-list')
+    const actions = card.get('[data-testid="recommendation-actions"]')
+    expect(proposal.element.compareDocumentPosition(evidence.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(evidence.element.compareDocumentPosition(actions.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(card.text()).toContain('目前課表不會在你確認前更改')
+  })
+
   it('keeps Johnny weekly review visible when there are no recommendations', () => {
     const wrapper = mount(App, { props: { initialView: 'johnny', inboxItems: [] } })
 

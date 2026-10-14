@@ -3241,12 +3241,9 @@ function shouldRequireAuth(): boolean {
 
       <section v-else-if="activeView === 'johnny'" class="page-stack johnny-page" data-testid="johnny-page" aria-labelledby="johnny-title">
         <div class="page-heading">
-          <p class="section-label">Johnny 建議</p>
           <h2 id="johnny-title">Johnny</h2>
-          <p>今日建議說明課表怎麼執行；需要你確認的課表調整另外列在下方。</p>
+          <p>需要你確認的課表調整先列在這裡；今日執行建議接在後面。</p>
         </div>
-
-        <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" data-testid="johnny-daily-advice" />
 
         <article v-if="props.inboxState === 'loading'" class="state-panel" aria-live="polite">
           <p class="section-label">Loading</p>
@@ -3268,7 +3265,7 @@ function shouldRequireAuth(): boolean {
         </article>
 
         <div v-else class="inbox-layout">
-          <section class="inbox-section" aria-labelledby="inbox-pending-title">
+          <section class="inbox-section" data-testid="johnny-pending" aria-labelledby="inbox-pending-title">
             <div class="section-heading">
               <div>
                 <p class="section-label">Pending</p>
@@ -3302,6 +3299,7 @@ function shouldRequireAuth(): boolean {
                   </div>
                 </div>
                 <EvidenceList :items="item.evidence" />
+                <p class="inbox-card__plan-note">目前課表不會在你確認前更改。</p>
                 <RecommendationActions
                   :busy-action="inboxBusyRecommendationId === item.id ? inboxBusyAction : ''"
                   @accept="handleInboxAccept(item)"
@@ -3337,6 +3335,7 @@ function shouldRequireAuth(): boolean {
             </div>
           </section>
         </div>
+        <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" data-testid="johnny-daily-advice" />
         <section class="surface-card johnny-review" data-testid="johnny-weekly-review" aria-labelledby="johnny-review-title">
           <span class="card-kicker">Weekly review</span>
           <h3 id="johnny-review-title">這週先守住連續性</h3>
