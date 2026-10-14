@@ -80,6 +80,22 @@ function mockAuthenticatedToday({
 }
 
 describe('Johnny product shell', () => {
+  it('shows five public destinations with current-page semantics', async () => {
+    const wrapper = mount(App)
+    const nav = wrapper.get('nav[aria-label="主要導覽"]')
+    const navButtons = nav.findAll('button[data-view]')
+
+    expect(navButtons).toHaveLength(5)
+    expect(nav.get('[data-view="today"]').attributes('aria-current')).toBe('page')
+    await nav.get('[data-view="plan"]').trigger('click')
+    expect(nav.get('[data-view="plan"]').attributes('aria-current')).toBe('page')
+    expect(nav.get('[data-view="today"]').attributes('aria-current')).toBeUndefined()
+  })
+
+  it('keeps Conversation out of public navigation', () => {
+    const wrapper = mount(App)
+    expect(wrapper.find('[data-view="conversation"]').exists()).toBe(false)
+  })
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))

@@ -2834,6 +2834,7 @@ function shouldRequireAuth(): boolean {
             :key="item.key"
             :data-view="item.key"
             :class="{ 'top-nav__item--active': activeView === item.key }"
+            :aria-current="activeView === item.key ? 'page' : undefined"
             class="top-nav__item"
             type="button"
             @click="showView(item.key)"

@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: "Johnny"
-description: "Chinese-first AI running companion interface built around a light mint start-line cockpit, daily Run/Adjust/Rest decisions, athlete baselines, signal coverage, and human-approved recommendations."
+description: "Chinese-first AI running companion interface with a light mint Morning Start Line visual language and a Split Board structure for today's workout decision."
 colors:
   primary: "#0F4A32"
   mint-track: "#EEF9F1"
@@ -122,7 +122,7 @@ components:
 
 ### Creative North Star
 
-Johnny 的新視覺世界是「每天站上起跑線前，身邊有一個懂你的跑步夥伴」。介面預設是 light mint，像清晨跑前打開的訓練 App；真正需要決策的地方使用深綠、琥珀與休息藍，讓 `我可以`、`不太對勁`、`先收一下` 三種狀態一眼可判讀。
+Johnny 的視覺世界是「每天站上起跑線前，身邊有一個懂你的跑步夥伴」。Morning Start Line 使用 light mint 作為清晨訓練 App 的底色；Split Board 把今日決策與實際課表並列，讓跑者先判斷，再看證據與下一步。深綠、琥珀與休息藍分別標示 Run、Adjust 與 Rest；Completed 有獨立的完成語意。
 
 Johnny 不應該像一般 SaaS dashboard，也不應該像聊天機器人。它的第一印象是：今天身體狀態如何、Johnny 建議 Run / Adjust / Rest、證據是什麼、下一步要做什麼。
 
@@ -132,7 +132,7 @@ Johnny 不應該像一般 SaaS dashboard，也不應該像聊天機器人。它�
 
 - **Audience and primary job:** 以繁體中文為主要介面的耐力跑者、馬拉松訓練者與長期訓練中的使用者。主要工作是每天快速理解訓練、恢復、風險與 Johnny 的建議，並決定今天要跑、調整或休息。
 - **Register:** Product-first app experience. 沒有行銷首頁；登入後第一畫面是 `今日`。
-- **Signature:** `start-line cockpit`。Today 以一張高層級決策卡開始，卡片內有 Johnny 的短句、Today Decision、今日課表、2-3 個證據 chip，以及明確 action。
+- **Signature:** `Morning Start Line × Split Board`。Today 以緊湊日期／Plan Week strip 起始，主要版面並列 Today Decision 與今日課表，接著列出 2–3 個關鍵證據與真實目的地的 action。
 - **Interaction loop:** Observe -> Understand -> Reason -> Recommend -> User Decision -> Act -> Learn.
 - **Tone:** Johnny 像懂訓練的跑友：直接、會開一點跑者懂的玩笑，但不幼稚。Rest copy 可以像 `今天不要硬撐，跑鞋先放假。`
 - **Anti-references:** 不做深色 AI chatbot、不做等寬數據牆、不做社群健身打卡牆、不做單調醫療健康儀表板、不做米色筆記本風。
@@ -162,7 +162,7 @@ Display 字體只用於頁面主標題、Today Decision、race countdown、phase
 Copy 原則：
 
 - State labels 可以有個性：`我可以`、`不太對勁`、`先收一下`。
-- Buttons 使用明確動詞：`開始跑步`、`接受調整`、`記錄休息`、`查看證據`、`連接資料來源`。
+- Buttons 使用真實目的地與明確動詞：開啟課表詳情用 `查看課表細節`，前往計畫用 `查看計畫`，前往 Johnny 待決定清單用 `查看待決定建議`。只有 Recommendation 提供 `接受調整`；目前沒有跑步追蹤或記錄休息功能。
 - Memory insight 不直白暴露資料庫感：使用 `依照你過去的恢復模式，今天建議保守。`
 - 錯誤不道歉，直接說明狀況與下一步：`Garmin 連接失敗。請檢查授權狀態後再試一次。`
 
@@ -176,17 +176,17 @@ Copy 原則：
 - `運動員`: Athlete Baseline snapshot first, profile/settings below. Athlete Memory is not a browsable frontend page.
 - `資料`: Signal Coverage first, provider connection details below.
 
-Mobile 使用底部 navigation，label 為 `今日`、`計畫`、`Johnny`、`運動員`、`資料`。Desktop 可使用 compact top/side navigation，但必須保留同一 vocabulary 和 current-page affordance。
+Mobile 使用固定底部 navigation，label 為 `今日`、`計畫`、`Johnny`、`運動員`、`資料`。Desktop 使用 compact side rail。兩者都以文字與形狀標示目前頁面，並為底部安全區留足內容空間。
 
-Today mobile follows a centered vertical flow similar to a training app:
+Today mobile follows the Split Board reading order:
 
-1. Compact brand/session header.
-2. Main Today Decision card.
-3. Weekly activity rhythm chart.
-4. Upcoming training / next plan steps.
-5. Secondary nudges to Johnny recommendations and Data.
+1. Compact date and Plan Week context.
+2. Today Decision, then actual planned workout.
+3. Two or three aligned evidence rows and expandable Daily Advice detail.
+4. Weekly activity rhythm, session reviews, and upcoming training.
+5. Relevant race context and pending Recommendation nudge.
 
-Today desktop uses a main decision column plus a right-side context rail. The left column keeps the mobile flow and remains visually dominant. The right rail can show race countdown, plan phase, signal coverage, and pending recommendation count.
+Today desktop places decision and workout in one primary split. Supporting evidence and next steps align beneath it. Context for race, plan phase, signal coverage, and pending Recommendations appears only when useful and must not duplicate the decision or workout summary.
 
 `計畫` begins with a training journey: base, build, peak, taper, and goal week. Race goals are optional highlights, not a prerequisite for the page to make sense. Weekly schedule sits underneath as execution detail.
 
@@ -208,13 +208,14 @@ Track/race identity should come from lane lines, phase segments, data rhythm, an
 
 ### Today Decision Card
 
-Today Decision card owns the Run / Adjust / Rest moment:
+Today Decision owns the Run / Adjust / Rest / Completed moment:
 
-- `我可以`: deep green card, button `開始跑步`.
-- `不太對勁`: amber card, button `接受調整`.
-- `先收一下`: rest blue card, button `記錄休息`.
+- `我可以`: deep green emphasis, truthful link to workout details or Plan.
+- `不太對勁`: amber emphasis, read-only execution guidance; plan changes remain in Johnny.
+- `先收一下`: rest blue emphasis, with evidence and relevant next step.
+- `今天已完成`: completion treatment distinct from Rest.
 
-The card shows Johnny voice inside the decision moment, not above the page as a generic greeting. It includes the planned workout, action button, top 2-3 evidence chips, and when relevant one subtle memory-derived insight.
+The decision side shows Johnny's voice and one clear next action. The adjacent workout side shows the planned session without repeating it in the decision. Evidence follows the split; Athlete Memory only appears as a relevant, non-browsable insight.
 
 ### Evidence and Signal Coverage
 
