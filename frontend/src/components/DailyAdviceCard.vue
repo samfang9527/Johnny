@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { DailyAdvice } from '../types'
 
-const props = defineProps<{ advice: DailyAdvice; timeZone: string }>()
+const props = withDefaults(defineProps<{ advice: DailyAdvice; timeZone: string; collapsed?: boolean }>(), { collapsed: false })
 
 const hasContent = computed(() => Boolean(props.advice.weekSummary && props.advice.todayExecution && props.advice.workoutGuide))
 const timeLabel = computed(() => {
@@ -48,11 +48,13 @@ const stateMessage = computed(() => {
       <span v-if="advice.planWeek" class="daily-advice-card__week">{{ advice.planWeek.startsOn }}–{{ advice.planWeek.endsOn }}</span>
     </div>
     <p v-if="stateMessage" class="daily-advice-card__notice" :class="{ 'daily-advice-card__notice--warning': advice.state !== 'pending' }" role="status">{{ stateMessage }}</p>
-    <p v-if="advice.dataFreshness === 'stale' && hasContent" class="daily-advice-card__notice daily-advice-card__notice--warning">以下是先前建議，資料可能已過時。</p>
-    <p v-else-if="advice.dataFreshness === 'limited' && hasContent" class="daily-advice-card__notice">資料有限；建議以目前可用的活動紀錄與課表為準。</p>
-    <p v-if="timeLabel" class="daily-advice-card__time">{{ advice.dataFreshness === 'stale' ? '先前產生' : '更新時間' }} · {{ timeLabel }}</p>
-    <p v-if="activityCutoffLabel" class="daily-advice-card__time">活動資料截至 · {{ activityCutoffLabel }}</p>
-    <div v-if="hasContent" class="daily-advice-card__sections">
+    <component :is="collapsed ? 'details' : 'div'" class="daily-advice-card__body">
+      <summary v-if="collapsed">完整建議與產生時間</summary>
+      <p v-if="advice.dataFreshness === 'stale' && hasContent" class="daily-advice-card__notice daily-advice-card__notice--warning">以下是先前建議，資料可能已過時。</p>
+      <p v-else-if="advice.dataFreshness === 'limited' && hasContent" class="daily-advice-card__notice">資料有限；建議以目前可用的活動紀錄與課表為準。</p>
+      <p v-if="timeLabel" class="daily-advice-card__time">{{ advice.dataFreshness === 'stale' ? '先前產生' : '更新時間' }} · {{ timeLabel }}</p>
+      <p v-if="activityCutoffLabel" class="daily-advice-card__time">活動資料截至 · {{ activityCutoffLabel }}</p>
+      <div v-if="hasContent" class="daily-advice-card__sections">
       <section>
         <h4>本週執行回顧</h4>
         <p>{{ advice.weekSummary }}</p>
@@ -70,6 +72,7 @@ const stateMessage = computed(() => {
           <div><dt>如果太輕鬆</dt><dd>{{ advice.workoutGuide?.ifTooEasy }}</dd></div>
         </dl>
       </section>
-    </div>
+      </div>
+    </component>
   </article>
 </template>

@@ -135,6 +135,39 @@ describe('Johnny product shell', () => {
     expect(decision.text()).toContain('今天已完成')
     expect(decision.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
   })
+
+  it('shows at most three prioritized evidence rows without a duplicate recovery summary', () => {
+    const wrapper = mount(App)
+    const today = wrapper.get('[data-testid="today-decision-flow"]')
+    expect(today.findAll('[data-today-evidence]')).toHaveLength(1)
+    expect(today.findAll('[data-testid="today-evidence-row"]').length).toBeGreaterThanOrEqual(2)
+    expect(today.findAll('[data-testid="today-evidence-row"]').length).toBeLessThanOrEqual(3)
+    expect(today.find('[data-testid="today-recovery-card"]').exists()).toBe(false)
+    expect(today.find('[data-testid="today-recommendation-strip"]').exists()).toBe(false)
+  })
+
+  it('shows the earliest future workout even when the plan payload is unsorted', () => {
+    const wrapper = mount(App, { props: { workouts: [
+      { id: 'later', scheduledFor: '2026-09-29', weekday: '二', dateLabel: '9/29', type: '長跑', purpose: '後續安排', status: 'planned' },
+      { id: 'next', scheduledFor: '2026-09-27', weekday: '日', dateLabel: '9/27', type: '輕鬆跑', purpose: '下一堂', status: 'planned' },
+    ] } })
+    const upcoming = wrapper.get('[data-today-section="upcoming"]')
+    expect(upcoming.text()).toContain('2026-09-27')
+    expect(upcoming.text()).not.toContain('2026-09-29')
+  })
+
+  it.each([
+    ['no_plan', '查看計畫', 'plan'],
+    ['sync_failed', '檢查資料', 'data'],
+  ])('routes %s advice to %s', async (state, label, destination) => {
+    mockAuthenticatedToday({ userId: 'runner', todayData: { scheduled_workouts: [], recovery: {}, daily_advice: { ...advicePayload(), state, data_freshness: 'stale' } } })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    const action = wrapper.get('[data-testid="today-decision-action"]')
+    expect(action.text()).toBe(label)
+    await action.trigger('click')
+    expect(wrapper.get(`[data-view="${destination}"]`).attributes('aria-current')).toBe('page')
+  })
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
@@ -245,7 +278,7 @@ describe('Johnny product shell', () => {
 
     expect(decisionCard.text()).toContain('不太對勁')
     expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('查看待決定建議')
-    expect(wrapper.findAll('[data-testid="today-evidence-chip"]').length).toBeGreaterThanOrEqual(3)
+    expect(wrapper.findAll('[data-testid="today-evidence-row"]').length).toBeGreaterThanOrEqual(3)
     expect(wrapper.get('[data-testid="today-evidence"]').text()).toContain('近期訓練負荷偏高')
     expect(wrapper.text()).toContain('依照你過去的恢復模式')
   })
@@ -282,16 +315,11 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('input[name="authPassword"]').classes()).toContain('auth-form__input')
   })
 
-  it('fills the desktop Today context rail with plan and signal context', () => {
+  it('shows compact period context without duplicating the decision in a rail', () => {
     const wrapper = mount(App)
-    const rail = wrapper.get('.today-context-rail')
-
-    expect(rail.text()).toContain('目標賽事')
-    expect(rail.text()).toContain('目前階段')
-    expect(rail.text()).toContain('Build')
-    expect(rail.text()).toContain('Signal Coverage')
-    expect(rail.text()).toContain('Johnny 已有')
-    expect(rail.text()).toContain('Johnny 待決定')
+    expect(wrapper.get('[data-testid="today-date-strip"]').text()).toContain('2026-09-26')
+    expect(wrapper.find('.today-context-rail').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="today-evidence"]').text()).toContain('決策依據')
   })
 
   it('shows Athlete baseline before the settings form', async () => {
@@ -458,7 +486,7 @@ describe('Johnny product shell', () => {
     const decisionCard = wrapper.get('[data-testid="today-decision-card"]')
     expect(decisionCard.text()).toContain('先收一下')
     expect(wrapper.get('[data-testid="today-decision-action"]').text()).toContain('查看計畫')
-    expect(wrapper.findAll('[data-testid="today-evidence-chip"]')).toHaveLength(3)
+    expect(wrapper.findAll('[data-testid="today-evidence-row"]')).toHaveLength(3)
   })
 
   it('routes the Today adjust action into Johnny recommendations', async () => {
@@ -821,29 +849,31 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('目前沒有已排定課表')
   })
 
-  it('keeps recommendation cards out of Today while showing a compact recommendation strip', () => {
+  it('keeps approval cards out of Today while showing a compact pending nudge', () => {
     const wrapper = mount(App)
 
     expect(wrapper.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
-    const strip = wrapper.get('[data-testid="today-recommendation-strip"]')
-    expect(strip.text()).toContain('Johnny 建議')
-    expect(strip.text()).toContain('今天保持輕鬆，不做加速')
-    expect(strip.text()).toContain('建議保守')
-    expect(strip.text()).toContain('查看待決定建議')
+    const nudge = wrapper.get('[data-today-section="inbox"]')
+    expect(nudge.text()).toContain('Johnny 待決定')
+    expect(nudge.text()).toContain('今天保持輕鬆，不做加速')
+    expect(nudge.text()).toContain('查看待決定建議')
   })
 
-  it('orders Today as workout, recommendation, recovery, race, then inbox for narrow layouts', () => {
+  it('orders Today as split, evidence, weekly rhythm, then contextual next steps', () => {
     const wrapper = mount(App)
     const section = wrapper.get('[data-testid="today-decision-flow"]')
-
-    const order = section
-      .findAll('[data-today-section]')
-      .map((element) => element.attributes('data-today-section'))
-
-    expect(order).toEqual(['workout', 'recommendation', 'recovery', 'race', 'inbox'])
+    const primary = section.get('.today-primary-board').element
+    const evidence = section.get('[data-today-evidence]').element
+    const weekly = section.get('[data-testid="weekly-activity"]').element
+    const race = section.get('[data-today-section="race"]').element
+    const inbox = section.get('[data-today-section="inbox"]').element
+    expect(primary.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(evidence.compareDocumentPosition(weekly) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(weekly.compareDocumentPosition(race) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(race.compareDocumentPosition(inbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('shows no-recommendation and insufficient-data states in the Today recommendation strip', async () => {
+  it('omits the pending nudge when there is no Recommendation and explains insufficient data', async () => {
     mockAuthenticatedToday({
       userId: 'user-auth-1',
       todayData: {
@@ -869,9 +899,8 @@ describe('Johnny product shell', () => {
 
     const noRecommendation = mount(App, { props: { requireAuth: true } })
     await flushPromises()
-    const noRecommendationStrip = noRecommendation.get('[data-testid="today-recommendation-strip"]')
-    expect(noRecommendationStrip.text()).toContain('目前可以照課表執行')
-    expect(noRecommendationStrip.text()).toContain('查看 Johnny 建議')
+    expect(noRecommendation.find('[data-today-section="inbox"]').exists()).toBe(false)
+    expect(noRecommendation.get('[data-testid="today-evidence"]').text()).toContain('HRV')
     expect(noRecommendation.text()).not.toContain('readiness_label')
 
     mockAuthenticatedToday({
@@ -885,9 +914,9 @@ describe('Johnny product shell', () => {
 
     const insufficientData = mount(App, { props: { requireAuth: true } })
     await flushPromises()
-    const insufficientDataStrip = insufficientData.get('[data-testid="today-recommendation-strip"]')
-    expect(insufficientDataStrip.text()).toContain('目前資料不足')
-    expect(insufficientDataStrip.text()).not.toContain('連接資料')
+    const insufficientDataEvidence = insufficientData.get('[data-testid="today-evidence"]')
+    expect(insufficientDataEvidence.text()).toContain('目前缺少可用的恢復訊號')
+    expect(insufficientDataEvidence.text()).toContain('檢查資料')
   })
 
   it('shows structured workout steps from Today in a detail modal', async () => {
@@ -990,8 +1019,8 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('Johnny 沒有新的待決定調整')
-    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('1 個訊號待補，包含睡眠資料')
+    expect(wrapper.find('[data-today-section="inbox"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="today-evidence"]').text()).toContain('1 個訊號待補，包含睡眠資料')
   })
 
   it('shows formatted recovery metrics instead of Today facts when a data source is connected', async () => {
@@ -1027,8 +1056,8 @@ describe('Johnny product shell', () => {
 
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
-    const card = wrapper.get('[data-testid="today-recovery-card"]')
-    const chips = card.findAll('[data-testid="recovery-signal-chip"]')
+    const card = wrapper.get('[data-testid="today-evidence"]')
+    const chips = card.findAll('[data-testid="today-evidence-row"]')
 
     expect(chips).toHaveLength(3)
     expect(chips[0].text()).toContain('HRV')
@@ -1075,8 +1104,7 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="today-recommendation-strip"]').text()).toContain('檢查資料')
-    expect(wrapper.get('[data-testid="today-recovery-card"]').text()).toContain('檢查資料')
+    expect(wrapper.get('[data-testid="today-evidence"]').text()).toContain('檢查資料')
     await wrapper.get('[data-testid="today-recovery-source-action"]').trigger('click')
     expect(wrapper.text()).toContain('連接資料')
   })
@@ -1126,13 +1154,12 @@ describe('Johnny product shell', () => {
     expect(mount(App, { props: { todayState: 'empty' } }).text()).toContain('連接資料後')
   })
 
-  it('keeps the Today recovery card compact with fixed action-oriented labels', () => {
+  it('keeps Today evidence compact with fixed action-oriented labels', () => {
     const wrapper = mount(App)
-    const card = wrapper.get('[data-testid="today-recovery-card"]')
+    const card = wrapper.get('[data-testid="today-evidence"]')
 
     expect(card.text()).toContain('建議保守')
-    expect(card.find('[data-testid="today-recovery-summary"]').exists()).toBe(true)
-    expect(card.findAll('[data-testid="recovery-signal-chip"]')).toHaveLength(3)
+    expect(card.findAll('[data-testid="today-evidence-row"]')).toHaveLength(3)
     expect(card.text()).toContain('2 個訊號待補，包含尚未連接靜息心率來源')
     expect(card.find('.evidence-list').exists()).toBe(false)
     expect(card.find('.unavailable-signals').exists()).toBe(false)

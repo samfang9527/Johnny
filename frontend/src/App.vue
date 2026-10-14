@@ -399,12 +399,19 @@ const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.val
 const dailyAdvice = computed(() => apiDailyAdvice.value?.adviceDate === todayIsoDate.value ? apiDailyAdvice.value : null)
 const todayDecision = computed<TodayDecision>(() => {
   const decision = dailyAdvice.value ? buildAdviceDecision(dailyAdvice.value) : buildTodayDecision(recommendation.value, recoveryEvidence.value)
+  if (dailyAdvice.value?.state === 'no_plan') return { ...decision, actionLabel: '查看計畫' }
+  if (dailyAdvice.value?.state === 'sync_failed') return { ...decision, actionLabel: '檢查資料' }
   if (decision.state === 'run') {
     return { ...decision, actionLabel: hasWorkoutDetails(todayWorkout.value) ? '查看課表細節' : '查看計畫' }
   }
   return { ...decision, actionLabel: dailyAdvice.value ? '查看 Johnny 建議' : recommendation.value?.status === 'pending' ? '查看待決定建議' : '查看計畫' }
 })
-const todayEvidenceChips = computed(() => recoveryEvidence.value.slice(0, 3))
+const todayEvidenceChips = computed(() => [...recoveryEvidence.value]
+  .sort((a, b) => ({ danger: 0, warning: 1, info: 2, success: 3 }[a.tone ?? 'info'] - { danger: 0, warning: 1, info: 2, success: 3 }[b.tone ?? 'info']))
+  .slice(0, 3))
+const nextWorkout = computed(() => [...displayWorkouts.value]
+  .filter((workout) => workout.scheduledFor && workout.scheduledFor > todayIsoDate.value)
+  .sort((a, b) => a.scheduledFor!.localeCompare(b.scheduledFor!))[0] ?? null)
 const currentPlanPhase = computed(() => journeyPhases.value.find((phase) => phase.status === 'current') ?? (recoveryWindow.value ? {
   label: '恢復週 · Recovery Window', summary: `上一份計畫已結束，安排七天恢復。第 ${recoveryWindow.value.day} / 7 天`,
 } : { label: journeyPhases.value.length ? '計畫尚未開始' : '尚無有效訓練計畫', summary: journeyPhases.value.length ? '接下來的訓練階段已排定。' : '請重新產生計畫，安排接下來的訓練。' }))
@@ -950,6 +957,14 @@ function showView(view: ViewKey) {
 }
 
 function handleTodayDecisionAction() {
+  if (dailyAdvice.value?.state === 'no_plan') {
+    showView('plan')
+    return
+  }
+  if (dailyAdvice.value?.state === 'sync_failed') {
+    showView('data')
+    return
+  }
   if (todayDecision.value.state === 'run') {
     if (hasWorkoutDetails(todayWorkout.value)) {
       openWorkoutDetails(todayWorkout.value)
@@ -2929,15 +2944,30 @@ function shouldRequireAuth(): boolean {
           </article>
         </div>
 
-        <section class="today-evidence today-grid__wide" data-testid="today-evidence" aria-label="今日決策證據">
-          <div class="today-evidence-chip-list">
-            <span v-for="item in todayEvidenceChips" :key="`${item.source}-${item.metric}`" class="today-evidence-chip" data-testid="today-evidence-chip">
-              <span>{{ item.metric }}</span>
-              <strong>{{ item.value }}</strong>
-              <small>{{ item.summary }}</small>
-            </span>
+        <section class="today-evidence today-grid__wide" data-testid="today-evidence" data-today-evidence aria-labelledby="today-evidence-title">
+          <div class="section-heading-row">
+            <h3 id="today-evidence-title">決策依據</h3>
+            <StatusBadge :tone="recoveryDecision.tone">{{ recoveryDecision.label }}</StatusBadge>
+          </div>
+          <div v-if="todayEvidenceChips.length" class="today-evidence-list">
+            <div v-for="item in todayEvidenceChips" :key="`${item.source}-${item.metric}`" class="today-evidence-row" data-testid="today-evidence-row">
+              <strong>{{ item.metric }}</strong>
+              <span>{{ item.value }}</span>
+              <span>{{ item.summary }}</span>
+              <small>{{ item.source }}</small>
+            </div>
+          </div>
+          <div v-else class="today-evidence-empty">
+            <p>目前缺少可用的恢復訊號；先依課表與身體感受保守執行。{{ signalCoverageSummary }}</p>
+            <AppButton tone="neutral" @click="showView('data')">檢查資料</AppButton>
+          </div>
+          <div v-if="recoveryFooterText || dataSourceNeedsAttention" class="today-evidence-footer">
+            <span>{{ recoveryFooterText }}</span>
+            <AppButton v-if="dataSourceNeedsAttention" data-testid="today-recovery-source-action" tone="neutral" @click="showView('data')">檢查資料</AppButton>
           </div>
         </section>
+
+        <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" collapsed class="today-grid__wide" data-testid="today-daily-advice" />
 
         <section class="surface-card weekly-activity" data-testid="weekly-activity" aria-labelledby="weekly-activity-title">
           <div class="section-heading-row">
@@ -2968,75 +2998,17 @@ function shouldRequireAuth(): boolean {
           </div>
         </section>
 
-        <aside class="today-context-rail" aria-label="今日脈絡">
-          <section class="surface-card">
-            <span class="card-kicker">目標賽事</span>
-            <strong>{{ raceSummary.name }}</strong>
-            <p>{{ raceSummary.daysRemaining }} 天後 · {{ raceSummary.goal }}</p>
-          </section>
-          <section class="surface-card">
-            <span class="card-kicker">目前階段</span>
-            <strong>{{ currentPlanPhase.label }}</strong>
-            <p>{{ currentPlanPhase.summary }}</p>
-          </section>
-          <section class="surface-card">
-            <span class="card-kicker">Signal Coverage</span>
-            <strong>{{ coveredSignalCount }}/{{ signalCoverage.length }}</strong>
-            <p>{{ signalCoverageSummary }}</p>
-          </section>
-          <section class="surface-card">
-            <span class="card-kicker">Johnny 待決定</span>
-            <strong>{{ pendingInboxItems.length }}</strong>
-            <p>目前待處理建議</p>
-          </section>
-        </aside>
+        <SessionReviews v-if="currentUser" :key="currentUser.id" :anchor-date="todayIsoDate" :time-zone="userTimezone" :refresh-key="sessionReviewsRefreshKey" class="today-grid__wide" @changed="handleSessionReviewChanged" @error="handleSessionExpiry" />
 
-        <article
-          class="surface-card today-grid__wide recommendation-strip"
-          data-testid="today-recommendation-strip"
-          data-today-section="recommendation"
-        >
+        <article v-if="nextWorkout" class="surface-card today-upcoming today-grid__wide" data-today-section="upcoming">
           <div>
-            <p class="section-label">Johnny 建議</p>
-            <h3>{{ todayRecommendationStrip.summary }}</h3>
+            <h3>下一堂課</h3>
+            <p>{{ nextWorkout.scheduledFor }} · {{ nextWorkout.type }}</p>
           </div>
-          <div class="recommendation-strip__meta">
-            <StatusBadge :tone="recoveryDecision.tone">{{ recoveryDecision.label }}</StatusBadge>
-            <AppButton
-              v-if="todayRecommendationStrip.actionLabel && todayRecommendationStrip.actionView"
-              :tone="todayRecommendationStrip.actionTone"
-              @click="showView(todayRecommendationStrip.actionView)"
-            >
-              {{ todayRecommendationStrip.actionLabel }}
-            </AppButton>
-          </div>
+          <AppButton tone="neutral" @click="showView('plan')">查看計畫</AppButton>
         </article>
 
-        <article class="surface-card today-grid__wide evidence-card" data-testid="today-recovery-card" data-today-section="recovery">
-          <div class="section-heading">
-            <div>
-              <p class="section-label">恢復證據</p>
-              <h3>關鍵恢復指標</h3>
-            </div>
-            <StatusBadge :tone="recoveryDecision.tone">{{ recoveryDecision.label }}</StatusBadge>
-          </div>
-          <p class="recovery-summary" data-testid="today-recovery-summary">主要訊號用來判斷今天是否照課表、保守或休息。</p>
-          <div class="recovery-signal-grid" aria-label="恢復關鍵訊號">
-            <div v-for="item in recoveryEvidence.slice(0, 3)" :key="`${item.source}-${item.metric}`" class="recovery-signal-chip" data-testid="recovery-signal-chip">
-              <span>{{ item.metric }}</span>
-              <strong>{{ item.value }}</strong>
-              <small>{{ item.summary }}</small>
-            </div>
-          </div>
-          <div class="compact-card-footer">
-            <span v-if="recoveryFooterText">{{ recoveryFooterText }}</span>
-            <AppButton v-if="dataSourceNeedsAttention" data-testid="today-recovery-source-action" tone="neutral" @click="showView('data')">
-              檢查資料
-            </AppButton>
-          </div>
-        </article>
-
-        <article class="surface-card today-top-card today-card--context race-card" data-today-section="race">
+        <article v-if="raceSummary.raceDate" class="surface-card today-card--context race-card" data-today-section="race">
           <p class="section-label">下一場比賽</p>
           <h3>{{ raceSummary.name }}</h3>
           <p class="race-card__count">{{ raceSummary.daysRemaining }} 天</p>
@@ -3044,17 +3016,14 @@ function shouldRequireAuth(): boolean {
           <p class="race-card__rationale">{{ raceTrainingRationale }}</p>
         </article>
 
-        <article class="surface-card today-grid__wide inbox-nudge" data-today-section="inbox">
+        <article v-if="pendingInboxItems.length" class="surface-card today-grid__wide inbox-nudge" data-today-section="inbox">
           <div>
-            <p class="section-label">Johnny 建議</p>
-            <h3>所有需要確認的調整集中處理</h3>
-            <p>所有需要你確認的調整都會集中在 Johnny 建議。</p>
+            <h3>Johnny 待決定 · {{ pendingInboxItems.length }} 項</h3>
+            <p>{{ todayRecommendationStrip.summary }}</p>
           </div>
           <AppButton tone="neutral" @click="showView('johnny')">查看待決定建議</AppButton>
         </article>
         </template>
-        <SessionReviews v-if="currentUser" :key="currentUser.id" :anchor-date="todayIsoDate" :time-zone="userTimezone" :refresh-key="sessionReviewsRefreshKey" class="today-grid__wide" @changed="handleSessionReviewChanged" @error="handleSessionExpiry" />
-        <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" class="today-grid__wide" data-testid="today-daily-advice" />
       </section>
 
       <section v-else-if="activeView === 'plan'" class="page-stack plan-page" aria-labelledby="plan-title">

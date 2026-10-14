@@ -1831,27 +1831,68 @@ button:disabled {
   background: rgba(255, 255, 255, 0.82);
 }
 
-.today-evidence-chip-list {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.5rem;
-}
-
-.today-evidence-chip {
-  display: grid;
-  gap: 0.1rem;
-  min-width: 0;
-  padding: 0.65rem;
+.today-evidence {
+  padding: 1.2rem 1.4rem;
   border: 1px solid var(--color-line-mint);
-  border-radius: var(--radius-md);
-  color: var(--color-ink-green);
+  border-radius: var(--radius-lg);
   background: var(--color-card-white);
 }
 
-.today-evidence-chip strong,
-.today-evidence-chip small,
-.today-evidence-chip span {
+.today-evidence h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+}
+
+.today-evidence-list {
+  margin-top: 0.8rem;
+}
+
+.today-evidence-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) minmax(5rem, auto) minmax(8rem, 2fr) minmax(4rem, auto);
+  align-items: baseline;
+  gap: 0.55rem 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--color-line-mint);
+}
+
+.today-evidence-row > * {
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.today-evidence-row > :nth-child(2) {
+  color: var(--color-deep-green);
+  font-family: var(--font-data);
+  font-weight: 700;
+}
+
+.today-evidence-row small,
+.today-evidence-row > :nth-child(3),
+.today-evidence-footer {
+  color: var(--color-muted-green);
+}
+
+.today-evidence-footer,
+.today-evidence-empty,
+.today-upcoming {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.today-evidence-footer {
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--color-line-mint);
+  font-size: 0.86rem;
+}
+
+.today-evidence-empty p,
+.today-upcoming p {
+  margin: 0;
 }
 
 .weekly-activity__bars,
@@ -2789,8 +2830,13 @@ button:disabled {
     flex-wrap: wrap;
   }
 
-  .today-evidence-chip-list {
-    grid-template-columns: 1fr;
+  .today-evidence-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .today-evidence-row > :nth-child(3),
+  .today-evidence-row small {
+    grid-column: 1 / -1;
   }
 }
 
@@ -2863,6 +2909,8 @@ button:disabled {
 .daily-advice-card__guide div { display: grid; grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr); gap: 0.4rem 0.8rem; }
 .daily-advice-card__guide dt { color: var(--color-muted-green); }
 .daily-advice-card__guide dd { margin: 0; overflow-wrap: anywhere; }
+.daily-advice-card__body > summary { cursor: pointer; padding: 0.75rem 0; color: var(--color-deep-green); font-weight: 700; }
+.daily-advice-card__body[open] > summary { border-bottom: 1px solid var(--color-line-mint); }
 @media (max-width: 380px) {
   .daily-advice-card__guide div { grid-template-columns: 1fr; gap: 0; }
 }

@@ -307,7 +307,7 @@ export type TodayDecisionState = 'run' | 'adjust' | 'rest' | 'completed'
 export interface TodayDecision {
   state: TodayDecisionState
   label: '我可以' | '不太對勁' | '先收一下' | '今天已完成' | '建議更新中'
-  actionLabel: '查看課表細節' | '查看計畫' | '查看 Johnny 建議' | '查看待決定建議'
+  actionLabel: '查看課表細節' | '查看計畫' | '查看 Johnny 建議' | '查看待決定建議' | '檢查資料'
   tone: 'run' | 'adjust' | 'rest' | 'completed'
   voice: string
   memoryInsight?: string

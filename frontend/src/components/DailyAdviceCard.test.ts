@@ -55,4 +55,14 @@ describe('DailyAdviceCard', () => {
     expect(wrapper.text()).toContain('活動資料截至 · 9/26 11:00')
   })
 
+  it('keeps stale advice and its original time in an expandable reading detail on Today', () => {
+    const wrapper = mount(DailyAdviceCard, { props: { advice: { ...ready, state: 'generation_failed', dataFreshness: 'stale' }, timeZone: 'Asia/Taipei', collapsed: true } })
+    const detail = wrapper.get('details')
+    expect(detail.attributes('open')).toBeUndefined()
+    expect(detail.get('summary').text()).toContain('完整建議')
+    expect(detail.text()).toContain('先前產生 · 9/26')
+    expect(detail.text()).toContain(ready.weekSummary)
+    expect(wrapper.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
+  })
+
 })
