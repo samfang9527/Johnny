@@ -17,7 +17,7 @@ from src.domain.integrations_notifications import SyncSummary
 from src.domain.daily_advice import RefreshVersion
 from src.infrastructure.database.daily_advice_repository import SqlAlchemyDailyAdviceRepository
 from src.infrastructure.database.models import DailyAdviceModel, SyncRunModel, IntegrationConnectionModel
-from src.infrastructure.database.session_review_repository import SqlAlchemySessionReviewRepository, SessionReviewConflict, session_payload
+from src.infrastructure.database.session_review_repository import SqlAlchemySessionReviewRepository, SessionReviewConflict, REVIEW_WINDOW_DAYS, session_payload
 
 router = APIRouter(prefix='/activities/session-reviews', tags=['activities'])
 
@@ -35,7 +35,12 @@ class ReviewDecision(BaseModel):
 @router.get('')
 def list_reviews(current_user: CurrentUserDependency, session: SessionDependency, anchor_date: date):
     repository = SqlAlchemySessionReviewRepository(session)
-    return DataEnvelope(data=[session_payload(s) for s in repository.list_sessions(current_user.id, anchor_date-timedelta(days=27), anchor_date)])
+    first_day, today = repository.review_window(current_user.id)
+    start = max(first_day, anchor_date-timedelta(days=REVIEW_WINDOW_DAYS-1))
+    end = min(today, anchor_date)
+    if start > end:
+        return DataEnvelope(data=[])
+    return DataEnvelope(data=[session_payload(s) for s in repository.list_sessions(current_user.id, start, end)])
 
 
 @router.post('')

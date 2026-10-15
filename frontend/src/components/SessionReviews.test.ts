@@ -64,6 +64,20 @@ describe('SessionReviews', () => {
     await click(wrapper, '修正配對')
     expect(wrapper.find('select').exists()).toBe(true)
   })
+  it('only offers pairing controls for the latest seven athlete-local dates', async () => {
+    const withinWindow = { ...review, id: 'seventh', local_date: '2026-10-08', status: 'confirmed' as const }
+    const expired = { ...review, id: 'expired', local_date: '2026-10-07', status: 'confirmed' as const }
+    vi.mocked(listSessionReviews).mockResolvedValue({ data: [expired, withinWindow] })
+    const wrapper = mount(SessionReviews, { props: { anchorDate: '2026-10-14', timeZone: 'Asia/Taipei' } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.text()).toContain('最近 7 天')
+    expect(wrapper.findAll('.session-reviews__item')).toHaveLength(1)
+    expect(wrapper.text()).toContain('2026-10-08')
+    expect(wrapper.text()).not.toContain('2026-10-07')
+    await click(wrapper, '修正配對')
+    expect(wrapper.find('select').exists()).toBe(true)
+  })
   it('preserves the editor and shows recoverable save failures', async () => {
     vi.mocked(saveSessionReviews).mockRejectedValue(new Error('offline'))
     const wrapper = await render()

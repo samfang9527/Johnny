@@ -100,3 +100,31 @@ def test_repeated_review_does_not_turn_complete_sync_into_limited_recovery():
     task=next(t for t in tasks if t.payload.get('run_id')==run)
     assert task.payload['input']['limited_recovery'] is False
     scope.close()
+
+
+def test_review_window_includes_seventh_local_date_and_rejects_older_changes():
+    client, headers, today, _, _ = setup()
+    today_date = date.fromisoformat(today)
+    seventh_day = (today_date - timedelta(days=6)).isoformat()
+    expired_day = (today_date - timedelta(days=7)).isoformat()
+    ids = {}
+    for day in (seventh_day, expired_day):
+        response = client.post('/api/v1/activities', headers=headers, json={
+            'source': 'manual', 'started_at': f'{day}T12:00:00Z',
+            'sport_type': 'running', 'distance_meters': 1000, 'duration_seconds': 600,
+        })
+        assert response.status_code == 200, response.text
+        ids[day] = response.json()['data']['id']
+
+    url = '/api/v1/activities/session-reviews'
+    visible = client.get(url, headers=headers, params={'anchor_date': today}).json()['data']
+    assert seventh_day in {item['local_date'] for item in visible}
+    assert expired_day not in {item['local_date'] for item in visible}
+    assert client.get(url, headers=headers, params={'anchor_date': expired_day}).json()['data'] == []
+
+    def unplanned_decision(day):
+        return {'activity_ids': [ids[day]], 'groups': [{'activity_ids': [ids[day]], 'workout_id': None}]}
+
+    assert client.post(url, headers=headers, json=unplanned_decision(seventh_day)).status_code == 200
+    expired = client.post(url, headers=headers, json=unplanned_decision(expired_day))
+    assert expired.status_code == 409

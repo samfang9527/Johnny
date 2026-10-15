@@ -20,6 +20,9 @@ class SessionReviewConflict(ValueError):
     pass
 
 
+REVIEW_WINDOW_DAYS = 7
+
+
 class SqlAlchemySessionReviewRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -34,6 +37,10 @@ class SqlAlchemySessionReviewRepository:
         except (ZoneInfoNotFoundError, ValueError):
             return 'UTC'
         return name
+
+    def review_window(self, user_id: str) -> tuple[date, date]:
+        today = datetime.now(timezone.utc).astimezone(ZoneInfo(self.timezone_for(user_id))).date()
+        return today - timedelta(days=REVIEW_WINDOW_DAYS - 1), today
 
     def list_sessions(self, user_id: str, start: date, end: date):
         name = self.timezone_for(user_id)
@@ -63,6 +70,9 @@ class SqlAlchemySessionReviewRepository:
         if len(dates) != 1 or any(not is_running(m.activity_type) for m in models):
             raise DomainValidationError('review recordings must be running activities on one local day')
         day = next(iter(dates))
+        first_day, last_day = self.review_window(user_id)
+        if not first_day <= day <= last_day:
+            raise SessionReviewConflict('activity pairing can only be changed within the latest seven local dates')
         sessions = self.list_sessions(user_id, day, day)
         selected = set(activity_ids)
         for candidate in sessions:

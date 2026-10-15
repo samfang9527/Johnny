@@ -70,4 +70,5 @@
 - Same-local-day running recordings form a candidate session only when recordings do not overlap and consecutive end-to-start gaps are at most 30 minutes. Active totals exclude gaps; original recordings remain intact.
 - One clear session and one running workout on its date are automatically matched and count as one completed workout. Ambiguous matches ask for review and do not establish a missed workout. Activity volume always counts.
 - Today shows automatic match confirmation cards with original recordings and editable collapsed history. Athletes can confirm, choose a workout, split recordings, or mark them unplanned. Explicit decisions survive sync; a partial or changed-membership group save is rejected and must be reloaded.
+- Today and the session review API allow pairing decisions only for the athlete's latest seven local dates, including today. Older decisions remain saved but cannot be changed.
 - Saving a decision queues affected Daily Advice refreshes and marks older advice stale immediately. Confirmation is optional for clear automatic matches. The advice card exposes the evidence cutoff timestamp.

@@ -15,9 +15,15 @@ const editingId = ref('')
 const groups = ref<SessionReviewDecision['groups']>([])
 let generation = 0
 let disposed = false
+const editableReviews = computed(() => {
+  const firstDay = new Date(`${props.anchorDate}T00:00:00Z`)
+  firstDay.setUTCDate(firstDay.getUTCDate() - 6)
+  const firstDate = firstDay.toISOString().slice(0, 10)
+  return reviews.value.filter(item => firstDate <= item.local_date && item.local_date <= props.anchorDate)
+})
 const buckets = computed(() => [
-  { history: false, items: reviews.value.filter(item => ['automatic', 'needs_review'].includes(item.status)) },
-  { history: true, items: reviews.value.filter(item => ['confirmed', 'unplanned'].includes(item.status)) },
+  { history: false, items: editableReviews.value.filter(item => ['automatic', 'needs_review'].includes(item.status)) },
+  { history: true, items: editableReviews.value.filter(item => ['confirmed', 'unplanned'].includes(item.status)) },
 ])
 
 async function load() {
@@ -100,6 +106,7 @@ function workoutLabel(review: SessionReview) {
 <template>
   <section class="surface-card session-reviews" aria-label="活動與課表確認" :aria-busy="loading || Boolean(busyId)">
     <div class="section-heading"><div><p class="section-label">跑後確認</p><h3>活動與課表</h3></div></div>
+    <p class="inline-note">只可確認或修正最近 7 天的活動（含今天）。</p>
     <p v-if="loading" role="status">正在載入活動紀錄…</p>
     <div v-if="loadError"><p class="field-error" role="alert">{{ loadError }}</p><AppButton :busy="loading" @click="load">重新載入</AppButton></div>
     <p v-if="message" role="status">{{ message }}</p>
