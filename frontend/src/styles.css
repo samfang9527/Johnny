@@ -1,35 +1,38 @@
 :root {
-  --color-mint-track: #eef9f1;
-  --color-mint-surface: #f8fcf8;
-  --color-card-white: #ffffff;
-  --color-deep-green: #0f4a32;
-  --color-lane-green: #2d7a58;
-  --color-soft-mint: #bfe8d2;
-  --color-split-amber: #d89422;
-  --color-rest-blue: #6c9ecf;
-  --color-effort-red: #b85a50;
-  --color-ink-green: #14382a;
-  --color-muted-green: #5f7b6b;
-  --color-line-mint: #d9ecdd;
+  color-scheme: dark;
+  --color-mint-track: #17291e;
+  --color-mint-surface: #1d3525;
+  --color-card-white: #203727;
+  --color-deep-green: #bde8c9;
+  --color-lane-green: #a0d3ad;
+  --color-soft-mint: #315f3f;
+  --color-split-amber: #efbc76;
+  --color-rest-blue: #a9cce1;
+  --color-effort-red: #e49286;
+  --color-ink-green: #eaf5ed;
+  --color-muted-green: #b5d2bd;
+  --color-line-mint: #47664e;
+  --color-rail-mint: #bde8c9;
+  --color-rail-ink: #163c29;
   --color-primary: var(--color-deep-green);
   --color-track-night: var(--color-mint-track);
-  --color-pit-black: var(--color-deep-green);
-  --color-rubber-gray: var(--color-card-white);
+  --color-pit-black: var(--color-mint-track);
+  --color-rubber-gray: var(--color-mint-surface);
   --color-lane-chalk: var(--color-ink-green);
   --color-muted-chalk: var(--color-muted-green);
   --color-recovery-blue: var(--color-rest-blue);
   --color-easy-green: var(--color-soft-mint);
-  --color-line-white: var(--color-card-white);
-  --font-body: "IBM Plex Sans", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
-  --font-display: "IBM Plex Sans Condensed", "Noto Sans TC", "PingFang TC", system-ui, sans-serif;
-  --font-data: "IBM Plex Mono", "Noto Sans Mono CJK TC", "SFMono-Regular", ui-monospace, monospace;
+  --color-line-white: var(--color-ink-green);
+  --font-body: "Noto Sans TC", sans-serif;
+  --font-display: "DM Sans", "Noto Sans TC", sans-serif;
+  --font-data: "IBM Plex Mono", "Noto Sans TC", monospace;
   --radius-sm: 0.375rem;
   --radius-md: 0.75rem;
   --radius-lg: 1rem;
   --radius-xl: 1.35rem;
   --radius-full: 999px;
-  --space-page-max: 72rem;
-  --space-shell-gap: 1.25rem;
+  --space-page-max: 100%;
+  --space-shell-gap: 1.4rem;
   --space-section-gap: 1.6rem;
   --space-card-pad: 1.1rem;
   --space-control-y: 0.75rem;
@@ -1844,7 +1847,7 @@ button:disabled {
   font-weight: 700;
 }
 
-/* Light runtime surfaces keep the existing semantic components readable. */
+/* Legacy semantic surface selectors; the current canvas treatment follows below. */
 .surface-card,
 .provider-card,
 .schedule-row,
@@ -1968,63 +1971,11 @@ button:disabled {
   margin: 0;
 }
 
-.weekly-activity__bars,
 .signal-coverage__grid,
 .plan-journey,
 .athlete-baseline dl {
   display: grid;
   gap: 0.75rem;
-}
-
-.weekly-activity__plot,
-.weekly-activity__labels {
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  width: 100%;
-}
-
-.weekly-activity__bars {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.45rem;
-}
-
-.weekly-activity__plot {
-  display: grid;
-  align-items: end;
-  justify-items: stretch;
-  height: 8.5rem;
-  min-height: 8.5rem;
-  padding: 0 0 0.55rem;
-  border-bottom: 1px solid var(--color-line-mint);
-}
-
-.weekly-activity__column {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  min-width: 0;
-  height: 100%;
-}
-
-.weekly-activity__labels {
-  display: grid;
-  align-items: start;
-}
-
-.weekly-activity__day {
-  display: grid;
-  gap: 0.35rem;
-  min-width: 0;
-  justify-items: center;
-  text-align: center;
-}
-
-.weekly-activity__bar {
-  display: block;
-  width: min(1.6rem, 100%);
-  height: max(0.35rem, var(--bar-size));
-  border-radius: var(--radius-full) var(--radius-full) 0 0;
-  background: var(--color-lane-green);
 }
 
 .plan-journey {
@@ -2159,7 +2110,6 @@ button:disabled {
 }
 
 .today-grid > .today-decision-card,
-.today-grid > .weekly-activity,
 .today-grid > .workout-card,
 .today-grid > .race-card,
 .today-grid > .inbox-nudge {
@@ -2172,8 +2122,8 @@ button:disabled {
   grid-row: 2 / span 3;
 }
 
-/* Johnny light-mint runtime reconciliation. Older dark-shell selectors remain
-   for structure, while this block maps their surfaces to the approved theme. */
+/* Semantic component mapping retained from the earlier shell. The approved
+   Morning Start Line canvas and ruled surfaces are defined at the end. */
 .card-kicker,
 .section-heading-row span {
   color: var(--color-lane-green);
@@ -2485,36 +2435,6 @@ button:disabled {
   border-color: rgba(255, 255, 255, 0.46);
   background: color-mix(in srgb, var(--color-card-white) 88%, transparent);
   box-shadow: none;
-}
-
-.weekly-activity {
-  overflow: hidden;
-}
-
-.weekly-activity__bars {
-  padding-top: 0.7rem;
-}
-
-.weekly-activity__plot {
-  align-items: end;
-}
-
-.weekly-activity__bar {
-  background:
-    linear-gradient(180deg, var(--color-lane-green), var(--color-deep-green));
-  box-shadow: 0 0.35rem 0.8rem rgba(15, 74, 50, 0.14);
-}
-
-.weekly-activity__day strong {
-  color: var(--color-ink-green);
-  font-family: var(--font-data);
-  font-size: 0.8rem;
-}
-
-.weekly-activity__day small {
-  color: var(--color-muted-green);
-  font-family: var(--font-data);
-  font-size: 0.72rem;
 }
 
 .today-context-rail {
@@ -3048,4 +2968,274 @@ button:disabled {
 .athlete-target-status p { margin: 0.35rem 0 0; font-size: 0.875rem; }
 @media (max-width: 640px) {
   .athlete-target-settings { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Morning Start Line: the approved Split Board's continuous dark canvas. */
+:root { scrollbar-color: var(--color-line-mint) var(--color-mint-track); }
+::selection { color: var(--color-mint-track); background: var(--color-rail-mint); }
+body { background: var(--color-mint-track); }
+.app-shell { background: var(--color-mint-track); }
+
+.top-bar {
+  width: 9.2rem;
+  padding: 1.65rem 0.9rem;
+  border: 0;
+  color: var(--color-rail-ink);
+  background: var(--color-rail-mint);
+}
+.brand-lockup { padding: 0 0.25rem 0.2rem; }
+.top-bar h1 {
+  color: var(--color-rail-ink);
+  font-family: "DM Sans", sans-serif;
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 0.94;
+}
+.top-bar h1 span { display: block; }
+.top-nav { gap: 0.2rem; }
+.top-nav__item {
+  min-height: 2.45rem;
+  padding: 0.55rem 0.65rem;
+  border: 0;
+  border-radius: 0.55rem;
+  color: var(--color-rail-ink);
+  background: transparent;
+  font-size: 0.8rem;
+}
+.top-nav__item:hover { color: var(--color-rail-ink); background: #a8d9b5; }
+.top-nav__item--active,
+.top-nav__item--active:hover { color: #f3faf4; background: #28573b; }
+.user-menu { color: #426a4c; white-space: normal; overflow-wrap: anywhere; }
+.user-menu button { color: var(--color-rail-ink); border-color: #86bd96; background: transparent; }
+
+.main-surface {
+  width: calc(100% - 12.8rem);
+  max-width: none;
+  margin: 0 1.8rem 0 calc(9.2rem + 1.8rem);
+  padding: 1.7rem 0 4rem;
+}
+.page-heading {
+  max-width: none;
+  padding-bottom: 0.7rem;
+  border-bottom: 2px solid var(--color-ink-green);
+}
+.page-heading h2 { font-size: clamp(1.75rem, 3vw, 2.15rem); line-height: 1.15; }
+.page-heading > .section-label { display: none; }
+.page-stack { gap: 1.4rem; }
+.section-label { color: var(--color-muted-green); font-size: 0.68rem; letter-spacing: 0.04em; }
+
+.main-surface .surface-card,
+.main-surface .provider-card,
+.main-surface .schedule-row,
+.main-surface .empty-panel,
+.main-surface .state-panel,
+.main-surface .race-month,
+.main-surface .message-card,
+.main-surface .inbox-card,
+.main-surface .recommendation-card,
+.main-surface .athlete-baseline,
+.main-surface .signal-coverage {
+  border: 0;
+  border-top: 1px solid var(--color-line-mint);
+  border-radius: 0;
+  color: var(--color-ink-green);
+  background: transparent;
+  box-shadow: none;
+}
+.main-surface .surface-card,
+.main-surface .provider-card,
+.main-surface .inbox-card,
+.main-surface .recommendation-card,
+.main-surface .athlete-baseline,
+.main-surface .signal-coverage { padding: 1.15rem 0; }
+.main-surface .schedule-row { padding: 1rem 0; }
+.main-surface .inbox-card--historical { opacity: 0.82; }
+.main-surface .athlete-baseline dl { gap: 0; }
+.main-surface .athlete-baseline dl div {
+  border: 0;
+  border-right: 1px solid var(--color-line-mint);
+  border-radius: 0;
+  background: transparent;
+}
+.main-surface .athlete-baseline dl div:last-child { border-right: 0; }
+.main-surface .athlete-baseline dd { color: var(--color-ink-green); }
+.main-surface .signal-coverage__grid { gap: 0 1.5rem; }
+.main-surface .signal-pill { background: transparent; }
+.main-surface .signal-pill--covered { color: var(--color-ink-green); }
+.main-surface .decision-strip {
+  border: 0;
+  border-block: 1px solid var(--color-line-mint);
+  border-radius: 0;
+  background: transparent;
+}
+.main-surface .decision-strip > div {
+  border: 0;
+  border-right: 1px solid var(--color-line-mint);
+  border-radius: 0;
+  background: transparent;
+}
+.main-surface .decision-strip > div:last-child { border-right: 0; }
+.main-surface .evidence-row,
+.main-surface .recovery-signal-chip {
+  border: 0;
+  border-top: 1px solid var(--color-line-mint);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.main-surface .recovery-signal-chip { padding: 0.7rem 0; }
+.main-surface .plan-summary {
+  border: 0;
+  border-block: 1px solid var(--color-line-mint);
+  border-radius: 0;
+  background: transparent;
+}
+.main-surface .plan-summary > div { background: transparent; }
+.main-surface .plan-journey,
+.main-surface .plan-journey__intro {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.main-surface .plan-journey { padding: 0; }
+.main-surface .plan-journey__intro { border-bottom: 1px solid var(--color-line-mint); }
+.main-surface .plan-journey__stop--current .plan-journey__node { background: var(--color-deep-green); }
+.main-surface .recovery-signal-chip,
+.main-surface .athlete-baseline dl div,
+.main-surface .choice-fieldset,
+.main-surface .signal-coverage__grid { box-shadow: none; }
+
+.app-button--primary,
+.app-button--neutral { color: var(--color-mint-track); border-color: var(--color-deep-green); background: var(--color-deep-green); box-shadow: none; }
+.app-button--warning { color: var(--color-mint-track); }
+.app-button--danger { color: var(--color-mint-track); }
+.status-badge--warning { color: var(--color-mint-track) !important; }
+.status-badge--info { color: var(--color-mint-track) !important; }
+.status-badge--danger { color: var(--color-mint-track) !important; }
+.status-badge--success { color: var(--color-ink-green); background: var(--color-soft-mint); }
+.metric-row span,
+.data-chip { color: var(--color-ink-green); border: 0; border-right: 1px solid var(--color-line-mint); border-radius: 0; background: transparent; }
+.metric-row span:last-child { border-right: 0; }
+.main-surface .athlete-settings-form input,
+.main-surface .athlete-settings-form select,
+.main-surface .athlete-settings-form textarea,
+.main-surface .provider-form input,
+.main-surface .provider-form select { color: var(--color-ink-green); background: var(--color-mint-surface); }
+.daily-advice-card__notice--warning { background: color-mix(in srgb, var(--color-split-amber) 16%, var(--color-mint-track)); }
+
+.today-grid { grid-template-columns: minmax(0, 1fr); gap: 1.4rem; }
+.today-grid > .race-card { grid-column: 1 / -1; }
+.today-startline { grid-column: 1 / -1; min-width: 0; }
+.today-startline__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 0 0.7rem;
+  border-bottom: 2px solid var(--color-ink-green);
+}
+.today-startline__header h2 { margin: 0; font-family: var(--font-display); font-size: clamp(1.85rem, 3.4vw, 2.15rem); line-height: 1.15; }
+.today-startline__header time { color: var(--color-muted-green); font-family: var(--font-data); font-size: 0.72rem; white-space: nowrap; }
+.today-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--color-line-mint); }
+.today-week__day { min-width: 0; padding: 0.9rem 0.15rem 0.8rem; border-right: 1px solid var(--color-line-mint); text-align: center; }
+.today-week__day:last-child { border-right: 0; }
+.today-week__day strong { display: block; font-family: var(--font-data); font-size: 0.92rem; }
+.today-week__day span { display: block; margin-top: 0.2rem; color: var(--color-muted-green); font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.today-week__day--current { color: var(--color-ink-green); background: var(--color-soft-mint); }
+.today-week__day--current span { color: var(--color-ink-green); }
+.today-primary-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border-bottom: 1px solid var(--color-line-mint); }
+.today-primary-board .today-decision-card,
+.today-primary-board > .workout-card {
+  min-height: 13.2rem;
+  padding: 1.6rem 1.45rem 1.6rem 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-ink-green);
+  background: transparent;
+  box-shadow: none;
+}
+.today-primary-board .today-decision-card { border-right: 1px solid var(--color-line-mint); }
+.today-primary-board > .workout-card { padding-left: 1.45rem; }
+.today-decision-card::after { content: none; }
+.today-decision-card__header { gap: 0.7rem; }
+.today-decision-card__header strong { color: var(--color-split-amber); font-size: clamp(2rem, 3.8vw, 2.4rem); line-height: 1.12; }
+.today-decision-card--run .today-decision-card__header strong,
+.today-decision-card--completed .today-decision-card__header strong { color: var(--color-deep-green); }
+.today-decision-card--rest .today-decision-card__header strong { color: var(--color-rest-blue); }
+.today-primary-board .card-kicker { color: var(--color-muted-green); font-family: var(--font-data); font-size: 0.68rem; letter-spacing: 0.04em; opacity: 1; }
+.today-primary-board .today-decision-card p { max-width: 34ch; margin: 0; font-size: 0.84rem; line-height: 1.6; }
+.today-primary-board .today-decision-card .memory-insight,
+.today-primary-board .today-decision-card__freshness { color: var(--color-muted-green); font-size: 0.73rem; }
+.today-primary-board .today-decision-card > .app-button {
+  min-width: 0;
+  min-height: 0;
+  padding: 0.25rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--color-line-mint);
+  border-radius: 0;
+  color: var(--color-deep-green);
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.76rem;
+}
+.today-primary-board .workout-card .section-label { margin: 0; }
+.today-primary-board > .workout-card h3 { margin: 0; color: var(--color-ink-green); font-family: var(--font-display); font-size: clamp(2rem, 3.8vw, 2.45rem); line-height: 1.1; letter-spacing: -0.025em; }
+.today-primary-board > .workout-card p { margin: 0; font-size: 0.84rem; }
+.today-primary-board .workout-step-summary { color: var(--color-muted-green) !important; }
+.today-primary-board .metric-row { margin: 0; gap: 0; }
+.today-primary-board .metric-row span { padding: 0 0.55rem; color: var(--color-muted-green); font-size: 0.76rem; }
+.today-primary-board .metric-row span:first-child { padding-left: 0; }
+.today-primary-board .workout-card__actions { margin-top: auto; }
+.today-primary-board .workout-card__actions .app-button { min-width: 0; min-height: 2.35rem; padding: 0.5rem 0.9rem; border-radius: 0.55rem; }
+.today-startline .today-evidence { padding: 1rem 0 0; border: 0; border-radius: 0; background: transparent; }
+.today-startline .today-evidence h3 { font-family: var(--font-data); font-size: 0.68rem; letter-spacing: 0.04em; }
+.today-startline .today-evidence-list { margin-top: 0.5rem; }
+.today-startline .today-evidence-row { grid-template-columns: minmax(6rem, 1fr) minmax(5rem, 7rem) minmax(8rem, 1.3fr) auto; padding: 0.65rem 0; font-size: 0.78rem; }
+.today-startline .today-evidence-row small { font-size: 0.68rem; }
+.today-board-footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.4rem;
+  margin-top: 0.65rem;
+  padding: 0.85rem 0 0;
+  border-top: 2px solid var(--color-ink-green);
+  font-size: 0.75rem;
+}
+.today-board-footer__plan { display: flex; flex-wrap: wrap; gap: 0.35rem 0.7rem; }
+.today-board-footer__plan span { color: var(--color-muted-green); }
+.today-board-footer__pending { padding: 0; border: 0; color: var(--color-muted-green); background: transparent; font-size: inherit; text-align: left; }
+.today-board-footer__pending:hover { color: var(--color-deep-green); text-decoration: underline; text-underline-offset: 0.2rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 860px) {
+  .today-grid { grid-template-columns: minmax(0, 1fr); }
+  .today-primary-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 780px) {
+  .top-bar { position: static; width: 100%; padding: 0.9rem 1rem; background: var(--color-rail-mint); }
+  .top-bar__inner { gap: 0; }
+  .top-bar h1 { font-size: 1.45rem; }
+  .top-bar h1 span { display: inline; margin-left: 0.35rem; }
+  .top-nav { background: var(--color-rail-mint); border-color: #86bd96; box-shadow: none; }
+  .top-nav__item { color: var(--color-rail-ink); }
+  .top-nav__item--active { color: #f3faf4; }
+  .main-surface { width: 100%; margin: 0; padding: 1.2rem 1rem calc(5.4rem + env(safe-area-inset-bottom)); }
+}
+@media (max-width: 600px) {
+  .today-startline__header h2 { font-size: 1.7rem; }
+  .today-week__day { padding: 0.65rem 0.08rem; }
+  .today-week__day strong { font-size: 0.79rem; }
+  .today-week__day span { font-size: 0.58rem; }
+  .today-primary-board { grid-template-columns: minmax(0, 1fr); }
+  .today-primary-board .today-decision-card { border-right: 0; border-bottom: 1px solid var(--color-line-mint); }
+  .today-primary-board .today-decision-card,
+  .today-primary-board > .workout-card { min-height: 0; padding: 1.25rem 0; }
+  .today-startline .today-evidence-row { grid-template-columns: minmax(5.5rem, 1fr) minmax(4rem, auto) minmax(0, 1.5fr); }
+  .today-startline .today-evidence-row small { grid-column: 3; }
+  .main-surface .athlete-baseline dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .main-surface .athlete-baseline dl div:nth-child(2n) { border-right: 0; }
 }

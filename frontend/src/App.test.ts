@@ -283,23 +283,11 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('依照你過去的恢復模式')
   })
 
-  it('shows weekly activity rhythm below the Today decision', () => {
+  it('shows the current schedule without an invented weekly activity history', () => {
     const wrapper = mount(App)
 
-    expect(wrapper.get('[data-testid="weekly-activity"]').text()).toContain('本週活動')
-    const plot = wrapper.get('[data-testid="weekly-activity-plot"]')
-    expect(plot.classes()).toContain('weekly-activity__plot--spread')
-    expect(plot.findAll('[data-testid="weekly-activity-column"]')).toHaveLength(7)
-    expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').length).toBe(7)
-    expect(wrapper.findAll('[data-testid="weekly-activity-bar"]').map((bar) => bar.attributes('style'))).toEqual([
-      '--bar-size: 33%;',
-      '--bar-size: 0%;',
-      '--bar-size: 44%;',
-      '--bar-size: 56%;',
-      '--bar-size: 0%;',
-      '--bar-size: 28%;',
-      '--bar-size: 100%;',
-    ])
+    expect(wrapper.get('[data-testid="today-week-strip"]').findAll('.today-week__day')).toHaveLength(7)
+    expect(wrapper.find('[data-testid="weekly-activity"]').exists()).toBe(false)
   })
 
   it('marks auth inputs with the readable light input treatment', async () => {
@@ -340,11 +328,39 @@ describe('Johnny product shell', () => {
     expect(error.element.compareDocumentPosition(wrapper.get('[data-testid="auth-form"] button[type="submit"]').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('shows compact period context without duplicating the decision in a rail', () => {
+  it('shows the athlete-local date and seven scheduled days above one continuous decision board', () => {
     const wrapper = mount(App)
-    expect(wrapper.get('[data-testid="today-date-strip"]').text()).toContain('2026-09-26')
+    expect(wrapper.get('[data-testid="today-date-strip"]').attributes('datetime')).toBe('2026-09-26')
+    expect(wrapper.get('[data-testid="today-date-strip"]').text()).toBe('09.26 / SAT')
+    const days = wrapper.get('[data-testid="today-week-strip"]').findAll('.today-week__day')
+    expect(days).toHaveLength(7)
+    expect(days.filter((day) => day.attributes('aria-current') === 'date')).toHaveLength(1)
+    expect(wrapper.get('.today-startline').find('.today-primary-board').exists()).toBe(true)
+    expect(wrapper.get('.today-startline').find('[data-testid="today-evidence"]').exists()).toBe(true)
+    expect(wrapper.get('.today-startline').find('.today-board-footer').exists()).toBe(true)
     expect(wrapper.find('.today-context-rail').exists()).toBe(false)
     expect(wrapper.get('[data-testid="today-evidence"]').text()).toContain('決策依據')
+  })
+
+  it('uses the current plan week and does not turn activity history into scheduled workouts', async () => {
+    mockAuthenticatedToday({
+      userId: 'runner',
+      todayData: {
+        scheduled_workouts: [{ id: 'sat-easy', scheduled_for: '2026-09-26', workout_type: 'easy_run', planned_distance_meters: 8000, status: 'planned' }],
+        recovery: {},
+        daily_advice: advicePayload(),
+      },
+    })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+
+    const days = wrapper.get('[data-testid="today-week-strip"]').findAll('.today-week__day')
+    expect(days).toHaveLength(7)
+    expect(days[0].attributes('aria-label')).toContain('2026-09-23')
+    expect(days[3].attributes('aria-current')).toBe('date')
+    expect(days[3].text()).toContain('8K')
+    expect(days[0].text()).toContain('待排')
+    expect(days[0].text()).not.toContain('6K')
   })
 
   it('shows Athlete baseline before the settings form', async () => {
@@ -643,7 +659,7 @@ describe('Johnny product shell', () => {
       }),
     )
     expect(wrapper.text()).toContain('Johnny Chen')
-    expect(wrapper.text()).toContain('今天的訓練決策')
+    expect(wrapper.text()).toContain('今日訓練')
     expect(wrapper.text()).not.toContain('Sydney Marathon')
     expect(wrapper.text()).toContain('連接資料後')
   })
@@ -657,7 +673,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('nav').text()).toContain('運動員')
     expect(wrapper.get('nav').text()).toContain('資料')
     expect(wrapper.get('nav').text()).not.toContain('對話')
-    expect(wrapper.text()).toContain('今天的訓練決策')
+    expect(wrapper.text()).toContain('今日訓練')
     expect(wrapper.text()).toContain('Sydney Marathon')
   })
 
@@ -865,7 +881,7 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('今天的訓練決策')
+    expect(wrapper.text()).toContain('今日訓練')
     expect(wrapper.text()).not.toContain('尚未有足夠資料建立今日建議')
   })
 
@@ -911,18 +927,20 @@ describe('Johnny product shell', () => {
     expect(nudge.text()).toContain('查看待決定建議')
   })
 
-  it('orders Today as split, evidence, weekly rhythm, then contextual next steps', () => {
+  it('orders Today as week, split, evidence, footer, then supporting race context', () => {
     const wrapper = mount(App)
     const section = wrapper.get('[data-testid="today-decision-flow"]')
+    const week = section.get('[data-testid="today-week-strip"]').element
     const primary = section.get('.today-primary-board').element
     const evidence = section.get('[data-today-evidence]').element
-    const weekly = section.get('[data-testid="weekly-activity"]').element
+    const footer = section.get('.today-board-footer').element
     const race = section.get('[data-today-section="race"]').element
     const inbox = section.get('[data-today-section="inbox"]').element
+    expect(week.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(primary.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(evidence.compareDocumentPosition(weekly) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(weekly.compareDocumentPosition(race) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(race.compareDocumentPosition(inbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(evidence.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(footer.contains(inbox)).toBe(true)
+    expect(footer.compareDocumentPosition(race) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('omits the pending nudge when there is no Recommendation and explains insufficient data', async () => {
@@ -1244,13 +1262,16 @@ describe('Johnny product shell', () => {
     expect(card.find('.unavailable-signals').exists()).toBe(false)
   })
 
-  it('keeps the workout paired with the decision and race context secondary', () => {
+  it('keeps the workout paired with the decision and routes its fallback action to Plan', async () => {
     const wrapper = mount(App)
 
     expect(wrapper.find('.today-primary-board .workout-card').exists()).toBe(true)
     expect(wrapper.get('.race-card').classes()).toContain('today-card--context')
     expect(wrapper.get('.race-card').text()).toContain('今天的輕鬆跑是為了累積有氧基礎')
-    expect(wrapper.get('.workout-card').find('button').exists()).toBe(false)
+    const workoutAction = wrapper.get('[data-testid="today-workout-detail"]')
+    expect(workoutAction.text()).toContain('查看計畫')
+    await workoutAction.trigger('click')
+    expect(wrapper.get('[data-view="plan"]').attributes('aria-current')).toBe('page')
   })
 
   it('shows Plan as an inclusive training journey with schedule underneath', async () => {
@@ -1268,7 +1289,7 @@ describe('Johnny product shell', () => {
     expect(stops[1].classes()).toContain('plan-journey__stop--current')
     expect(stops.slice(2).every((stop) => stop.classes().includes('plan-journey__stop--next'))).toBe(true)
     expect(journey.findAll('.plan-phase')).toHaveLength(0)
-    expect(journey.text()).toContain('Build')
+    expect(journey.text()).toContain('建立期')
     expect(journey.text()).toContain('目前訓練週期')
     expect(wrapper.text()).toContain('接下來課表')
   })
@@ -1281,7 +1302,7 @@ describe('Johnny product shell', () => {
     const schedule = page.get('.schedule-section')
     const secondary = page.get('[data-testid="plan-secondary"]')
 
-    expect(summary.text()).toContain('Build')
+    expect(summary.text()).toContain('建立期')
     expect(summary.text()).toContain('Easy Run')
     expect(summary.element.compareDocumentPosition(journey.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(journey.element.compareDocumentPosition(schedule.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -1295,7 +1316,7 @@ describe('Johnny product shell', () => {
 
     expect(wrapper.get('[data-testid="plan-summary"]').text()).toContain('目前階段')
     expect(wrapper.text()).not.toContain('Race journey')
-    expect(wrapper.get('[data-testid="plan-training-journey"]').text()).toContain('Build')
+    expect(wrapper.get('[data-testid="plan-training-journey"]').text()).toContain('建立期')
     expect(wrapper.text()).toContain('Taipei Half Tune-up')
     expect(wrapper.text()).toContain('週三')
     expect(wrapper.text()).toContain('Easy Run')

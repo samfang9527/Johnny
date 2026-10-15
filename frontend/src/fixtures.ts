@@ -6,7 +6,6 @@ import type {
   ProviderOption,
   RaceSummary,
   RecommendationSummary,
-  WeeklyActivityPoint,
   WorkoutSummary,
 } from './types'
 
@@ -19,16 +18,6 @@ export const raceSummary: RaceSummary = {
   goal: 'Sub 4:00',
   daysRemaining: 16,
 }
-
-export const weeklyActivity: WeeklyActivityPoint[] = [
-  { dayLabel: '一', distanceKm: 6, loadLabel: 'Easy' },
-  { dayLabel: '二', distanceKm: 0, loadLabel: 'Rest' },
-  { dayLabel: '三', distanceKm: 8, loadLabel: 'Easy' },
-  { dayLabel: '四', distanceKm: 10, loadLabel: 'Tempo' },
-  { dayLabel: '五', distanceKm: 0, loadLabel: 'Rest' },
-  { dayLabel: '六', distanceKm: 5, loadLabel: 'Easy' },
-  { dayLabel: '日', distanceKm: 18, loadLabel: 'Long' },
-]
 
 export const futureRaces: RaceSummary[] = [
   raceSummary,
@@ -53,11 +42,11 @@ export const futureRaces: RaceSummary[] = [
 ]
 
 export const planPhases: PlanPhase[] = [
-  { id: 'base', label: 'Base', status: 'done', summary: '穩定跑量' },
-  { id: 'build', label: 'Build', status: 'current', summary: '累積馬拉松節奏' },
-  { id: 'peak', label: 'Peak', status: 'next', summary: '最高訓練週' },
-  { id: 'taper', label: 'Taper', status: 'next', summary: '降低疲勞' },
-  { id: 'race', label: 'Race', status: 'next', summary: '比賽執行' },
+  { id: 'base', label: '基礎期', status: 'done', summary: '穩定跑量' },
+  { id: 'build', label: '建立期', status: 'current', summary: '累積馬拉松節奏' },
+  { id: 'peak', label: '高峰期', status: 'next', summary: '最高訓練週' },
+  { id: 'taper', label: '減量期', status: 'next', summary: '降低疲勞' },
+  { id: 'race', label: '比賽週', status: 'next', summary: '比賽執行' },
 ]
 
 export const recoveryEvidence: EvidenceItem[] = [
@@ -88,8 +77,9 @@ export const unavailableSignals = ['尚未連接靜息心率來源', '缺少最�
 
 export const todayWorkout: WorkoutSummary = {
   id: 'workout-today',
-  weekday: '今日',
-  dateLabel: '8/21',
+  weekday: '週三',
+  dateLabel: '10/14',
+  scheduledFor: '2026-10-14',
   type: 'Easy Run',
   purpose: '恢復跑，維持輕鬆體感',
   distance: '8 km',
@@ -108,34 +98,44 @@ export const recommendation: RecommendationSummary = {
 }
 
 export const plannedWorkouts: WorkoutSummary[] = [
+  {
+    id: 'workout-mon',
+    weekday: '週一',
+    dateLabel: '10/12',
+    scheduledFor: '2026-10-12',
+    type: 'Easy Run',
+    purpose: '穩定有氧節奏',
+    distance: '6 km',
+    status: 'completed',
+  },
   todayWorkout,
   {
-    id: 'workout-wed',
-    weekday: '週三',
-    dateLabel: '8/26',
-    type: 'Easy Run',
-    purpose: '有氧恢復',
-    distance: '8 km',
-    pace: '6:20-6:40 /km',
-    heartRateZone: 'Zone 2',
+    id: 'workout-thu',
+    weekday: '週四',
+    dateLabel: '10/15',
+    scheduledFor: '2026-10-15',
+    type: 'Tempo',
+    purpose: '保持節奏感，不追求速度',
+    distance: '10 km',
     status: 'planned',
   },
   {
-    id: 'workout-fri',
-    weekday: '週五',
-    dateLabel: '8/28',
-    type: 'Tempo',
-    purpose: '馬拉松配速耐受',
-    duration: '45 分',
-    pace: '5:35-5:45 /km',
+    id: 'workout-sat',
+    weekday: '週六',
+    dateLabel: '10/17',
+    scheduledFor: '2026-10-17',
+    type: 'Easy Run',
+    purpose: '長跑前輕鬆活動',
+    distance: '5 km',
     status: 'planned',
   },
   {
     id: 'workout-sun',
     weekday: '週日',
-    dateLabel: '8/30',
+    dateLabel: '10/18',
+    scheduledFor: '2026-10-18',
     type: 'Long Run',
-    purpose: '賽前最後長距離',
+    purpose: '建立長距離耐力',
     distance: '18 km',
     pace: '6:00-6:20 /km',
     status: 'planned',

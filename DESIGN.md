@@ -1,32 +1,34 @@
 ---
 version: alpha
 name: "Johnny"
-description: "Chinese-first AI running companion interface with a light mint Morning Start Line visual language and a Split Board structure for today's workout decision."
+description: "Chinese-first running companion with the approved dark Morning Start Line visual language on the Split Board structure."
 colors:
-  primary: "#0F4A32"
-  mint-track: "#EEF9F1"
-  mint-surface: "#F8FCF8"
-  card-white: "#FFFFFF"
-  deep-green: "#0F4A32"
-  lane-green: "#2D7A58"
-  soft-mint: "#BFE8D2"
-  split-amber: "#D89422"
-  rest-blue: "#6C9ECF"
-  effort-red: "#B85A50"
-  ink-green: "#14382A"
-  muted-green: "#5F7B6B"
-  line-mint: "#D9ECDD"
+  primary: "#BDE8C9"
+  mint-track: "#17291E"
+  mint-surface: "#1D3525"
+  card-white: "#203727"
+  deep-green: "#BDE8C9"
+  lane-green: "#A0D3AD"
+  soft-mint: "#315F3F"
+  split-amber: "#EFBC76"
+  rest-blue: "#A9CCE1"
+  effort-red: "#E49286"
+  ink-green: "#EAF5ED"
+  muted-green: "#B5D2BD"
+  line-mint: "#47664E"
+  rail-mint: "#BDE8C9"
+  rail-ink: "#163C29"
 typography:
   body:
-    fontFamily: "'IBM Plex Sans', 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif"
+    fontFamily: "'Noto Sans TC', sans-serif"
     fontSize: "1rem"
     lineHeight: "1.65"
   display:
-    fontFamily: "'IBM Plex Sans Condensed', 'Noto Sans TC', 'PingFang TC', system-ui, sans-serif"
+    fontFamily: "'DM Sans', 'Noto Sans TC', sans-serif"
     fontSize: "2.5rem"
     lineHeight: "1.08"
   data:
-    fontFamily: "'IBM Plex Mono', 'Noto Sans Mono CJK TC', 'SFMono-Regular', ui-monospace, monospace"
+    fontFamily: "'IBM Plex Mono', 'Noto Sans TC', monospace"
     fontSize: "0.9375rem"
     lineHeight: "1.45"
 rounded:
@@ -37,7 +39,7 @@ rounded:
   xl: "1.35rem"
   full: "999px"
 spacing:
-  page-max: "72rem"
+  page-max: "100%"
   app-column: "26rem"
   shell-gap: "1.25rem"
   section-gap: "1.6rem"
@@ -49,52 +51,52 @@ components:
     backgroundColor: "{colors.mint-track}"
     textColor: "{colors.ink-green}"
   bottom-nav:
-    backgroundColor: "{colors.card-white}"
-    textColor: "{colors.muted-green}"
+    backgroundColor: "{colors.rail-mint}"
+    textColor: "{colors.rail-ink}"
   button-primary:
     backgroundColor: "{colors.deep-green}"
-    textColor: "{colors.card-white}"
+    textColor: "{colors.mint-track}"
     rounded: "{rounded.md}"
     padding: "{spacing.control-x}"
   button-neutral:
-    backgroundColor: "{colors.line-mint}"
-    textColor: "{colors.deep-green}"
+    backgroundColor: "{colors.deep-green}"
+    textColor: "{colors.mint-track}"
     rounded: "{rounded.md}"
     padding: "{spacing.control-x}"
   button-warning:
     backgroundColor: "{colors.split-amber}"
-    textColor: "{colors.ink-green}"
+    textColor: "{colors.mint-track}"
     rounded: "{rounded.md}"
     padding: "{spacing.control-x}"
   button-danger:
     backgroundColor: "{colors.effort-red}"
-    textColor: "{colors.card-white}"
+    textColor: "{colors.mint-track}"
     rounded: "{rounded.md}"
     padding: "{spacing.control-x}"
   card:
-    backgroundColor: "{colors.card-white}"
+    backgroundColor: "{colors.mint-track}"
     textColor: "{colors.ink-green}"
-    rounded: "{rounded.lg}"
+    rounded: "0"
     padding: "{spacing.card-pad}"
   today-decision-run:
-    backgroundColor: "{colors.deep-green}"
-    textColor: "{colors.card-white}"
-    rounded: "{rounded.xl}"
+    backgroundColor: "{colors.mint-track}"
+    textColor: "{colors.deep-green}"
+    rounded: "0"
     padding: "{spacing.card-pad}"
   today-decision-adjust:
-    backgroundColor: "{colors.split-amber}"
-    textColor: "{colors.ink-green}"
-    rounded: "{rounded.xl}"
+    backgroundColor: "{colors.mint-track}"
+    textColor: "{colors.split-amber}"
+    rounded: "0"
     padding: "{spacing.card-pad}"
   today-decision-rest:
-    backgroundColor: "{colors.rest-blue}"
-    textColor: "{colors.ink-green}"
-    rounded: "{rounded.xl}"
+    backgroundColor: "{colors.mint-track}"
+    textColor: "{colors.rest-blue}"
+    rounded: "0"
     padding: "{spacing.card-pad}"
   evidence-chip:
-    backgroundColor: "{colors.mint-surface}"
-    textColor: "{colors.lane-green}"
-    rounded: "{rounded.md}"
+    backgroundColor: "{colors.mint-track}"
+    textColor: "{colors.ink-green}"
+    rounded: "0"
   divider:
     backgroundColor: "{colors.line-mint}"
     textColor: "{colors.ink-green}"
@@ -104,15 +106,15 @@ components:
     rounded: "{rounded.full}"
   status-info:
     backgroundColor: "{colors.rest-blue}"
-    textColor: "{colors.ink-green}"
+    textColor: "{colors.mint-track}"
     rounded: "{rounded.full}"
   status-warning:
     backgroundColor: "{colors.split-amber}"
-    textColor: "{colors.ink-green}"
+    textColor: "{colors.mint-track}"
     rounded: "{rounded.full}"
   status-danger:
     backgroundColor: "{colors.effort-red}"
-    textColor: "{colors.card-white}"
+    textColor: "{colors.mint-track}"
     rounded: "{rounded.full}"
 ---
 
@@ -122,40 +124,40 @@ components:
 
 ### Creative North Star
 
-Johnny 的視覺世界是「每天站上起跑線前，身邊有一個懂你的跑步夥伴」。Morning Start Line 使用 light mint 作為清晨訓練 App 的底色；Split Board 把今日決策與實際課表並列，讓跑者先判斷，再看證據與下一步。深綠、琥珀與休息藍分別標示 Run、Adjust 與 Rest；Completed 有獨立的完成語意。
+Johnny 的視覺世界是「每天站上起跑線前，身邊有一個懂你的跑步夥伴」。已選定的 Morning Start Line 示意以深綠連續畫布、薄荷色導覽 rail、細分隔線與清晰的大字建立辨識度；Split Board 把今日決策與實際課表放在同一平面並列，讓跑者先判斷，再看證據與下一步。薄荷綠、琥珀與休息藍分別標示 Run、Adjust 與 Rest；Completed 有獨立的完成語意。
 
 Johnny 不應該像一般 SaaS dashboard，也不應該像聊天機器人。它的第一印象是：今天身體狀態如何、Johnny 建議 Run / Adjust / Rest、證據是什麼、下一步要做什麼。
 
-每日建議沿用既有白色卡片與深綠重點線，依序呈現本週執行回顧、今天怎麼執行、這堂課的重點。過期內容以琥珀色提示與原產生時間標示。這張卡不放接受或拒絕按鈕；需要確認的課表調整仍由 Johnny 的 Recommendation 卡片處理。
+每日建議沿用同一深綠畫布與分隔線節奏，依序呈現本週執行回顧、今天怎麼執行、這堂課的重點。過期內容以琥珀色提示與原產生時間標示。這張建議不放接受或拒絕按鈕；需要確認的課表調整仍由 Johnny 的 Recommendation 流程處理。
 
 ### Product context and register
 
 - **Audience and primary job:** 以繁體中文為主要介面的耐力跑者、馬拉松訓練者與長期訓練中的使用者。主要工作是每天快速理解訓練、恢復、風險與 Johnny 的建議，並決定今天要跑、調整或休息。
 - **Register:** Product-first app experience. 沒有行銷首頁；登入後第一畫面是 `今日`。
-- **Signature:** `Morning Start Line × Split Board`。Today 以緊湊日期／Plan Week strip 起始，主要版面並列 Today Decision 與今日課表，接著列出 2–3 個關鍵證據與真實目的地的 action。
+- **Signature:** `Morning Start Line × Split Board`。Today 以「今日訓練」標題、右側日期與七格課表條起始；今天那格高亮。其下為同一平面的 Today Decision／今日課表雙欄、2–3 條判斷依據、最後一條計畫／下一堂與待決定項目的頁腳。各區以規則線相接，不能拆成獨立浮動卡片。無有效計畫時，未排定日期應顯示「待排」，不可捏造休息日。
 - **Interaction loop:** Observe -> Understand -> Reason -> Recommend -> User Decision -> Act -> Learn.
 - **Tone:** Johnny 像懂訓練的跑友：直接、會開一點跑者懂的玩笑，但不幼稚。Rest copy 可以像 `今天不要硬撐，跑鞋先放假。`
-- **Anti-references:** 不做深色 AI chatbot、不做等寬數據牆、不做社群健身打卡牆、不做單調醫療健康儀表板、不做米色筆記本風。
+- **Anti-references:** 不做深色 AI chatbot、不做等寬數據牆、不做社群健身打卡牆、不做單調醫療健康儀表板、不做米色筆記本風。深色在這裡是訓練畫布，不是聊天氣泡介面。
 - **Token ownership/runtime mapping:** 本檔是 Johnny 前端視覺 source of truth。實作應將 frontmatter token 對應到 `frontend/src/styles.css` 的 CSS custom properties，再由 Vue components 透過語意 class 使用；不要在 component 內直接重複 hex 值。
 
 ## Colors
 
-Johnny 使用 light mint 作為預設 app shell。`mint-track` 是頁面背景，`mint-surface` 是輕量區塊背景，`card-white` 是主要卡片表面。文字主色使用 `ink-green`，次要文字使用 `muted-green`，分隔線使用 `line-mint`。
+Johnny 預設使用深綠畫布 `mint-track` 與薄荷色 rail `rail-mint`。`mint-surface`、`card-white` 和 `deep-green` 是保留給舊 class 的相容 token 名稱，實際值分別為深色層次與薄荷色重點色；不要從名稱推斷色相。文字主色使用 `ink-green`，次要文字使用 `muted-green`，分隔線使用 `line-mint`。選中的日期使用較亮綠色塊；整體不使用背景網格。
 
 決策狀態色：
 
-- `deep-green`: `我可以` / Run，主 workout decision card、primary safe action。
+- `deep-green`: `我可以` / Run 的標題、primary safe action。
 - `split-amber`: `不太對勁` / Adjust，代表需要調整但可恢復。
 - `rest-blue`: `先收一下` / Rest，代表保護性休息，不是失敗。
 - `effort-red`: 高風險、錯誤、傷痛警示、不可逆或破壞性動作。
 
-深色不再是全域背景，而是 Today 決策卡與高焦點區塊的局部強調。資料視覺化不要只靠色彩判斷；每個狀態都要同時有文字、標籤或 icon。
+狀態色用於文字或小面積標籤，不能將整張 Today 決策欄填滿。資料視覺化不要只靠色彩判斷；每個狀態都要同時有文字、標籤或 icon。
 
 ## Typography
 
-主要介面使用 `IBM Plex Sans` 搭配繁中 fallback `Noto Sans TC`、`PingFang TC`、`Microsoft JhengHei`。中文不使用 italic。
+主要介面使用 `Noto Sans TC`。品牌、拉丁字與顯示標題使用 `DM Sans` 搭配繁中 fallback `Noto Sans TC`。中文不使用 italic。
 
-Display 字體只用於頁面主標題、Today Decision、race countdown、phase title。卡片內標題保持緊湊，避免 hero-scale type 擠壓行動資訊。
+Display 字體用於頁面主標題、Today Decision、今日課表的 hero 標題、race countdown、phase title。Today 的決策與課表標題要明顯大於一般欄位；其他頁維持緊湊層級。
 
 數字、配速、日期、HRV、負荷、距離和 signal coverage 使用 `IBM Plex Mono` 或等寬 fallback。等寬字只用於資料與短標籤，不用於長篇中文說明。
 
@@ -180,13 +182,13 @@ Mobile 使用固定底部 navigation，label 為 `今日`、`計畫`、`Johnny`�
 
 Today mobile follows the Split Board reading order:
 
-1. Compact date and Plan Week context.
+1. 標題、athlete-local 日期與七格課表條；Plan Week 有資料時以其七日邊界為準，否則顯示當前日曆週。
 2. Today Decision, then actual planned workout.
-3. Two or three aligned evidence rows and expandable Daily Advice detail.
-4. Weekly activity rhythm, session reviews, and upcoming training.
+3. Two or three aligned evidence rows and the ruled plan/next-workout/pending footer, then expandable Daily Advice detail.
+4. Session reviews and upcoming training.
 5. Relevant race context and pending Recommendation nudge.
 
-Today desktop places decision and workout in one primary split. Supporting evidence and next steps align beneath it. Context for race, plan phase, signal coverage, and pending Recommendations appears only when useful and must not duplicate the decision or workout summary.
+Today desktop places decision and workout in one uninterrupted primary split with a one-pixel vertical rule. Supporting evidence and the plan/next-workout/pending footer continue on the same canvas beneath it. The product surface fills the desktop width between the side rail and balanced outer gutters. The seven-day strip shows actual scheduled workouts from the current Plan Version. Race and other context appears only when useful and must not duplicate the decision or workout summary.
 
 `計畫` begins with a training journey: base, build, peak, taper, and goal week. Race goals are optional highlights, not a prerequisite for the page to make sense. Weekly schedule sits underneath as execution detail.
 
@@ -194,13 +196,13 @@ Today desktop places decision and workout in one primary split. Supporting evide
 
 ## Elevation & Depth
 
-Johnny 的新預設比舊版更輕。卡片使用白色表面、細邊線和少量柔和 shadow，讓 mobile column 有 app-like tactility。不要把每個區塊都做成同等卡片；Today Decision card 是最高層級。
+頁面以共同的深綠表面與細分隔線組織內容。一般資訊區、課表列、Recommendation 與 Signal Coverage 不使用白色浮動卡片或陰影；以字級、留白與規則線建立層級。Today 的決策與課表雙欄是第一焦點。
 
-Static cards may use a subtle shadow on light mint backgrounds. Interactive cards should primarily signal hover/focus through border and background shifts. Modal、drawer、toast 可以使用更強陰影，但不能模糊整個產品成裝飾背景。
+Interactive rows use border and background shifts for hover/focus. Modal、drawer、toast 可以使用有方向的陰影與較深獨立表面，以清楚區分它們和頁面；不使用裝飾性 halo。
 
 ## Shapes
 
-標準 radius 是 `0.75rem`。Main decision card 可使用 `xl`，但 controls 和 smaller cards 保持 `md` 或 `lg`。Pill 只用於 status badge、signal chip、短 filter chip。
+頁面區段與列以直線邊緣呈現。控制項 radius 為 `0.55–0.75rem`；dialog 等浮層可較圓。Pill 只用於 status badge、signal chip、短 filter chip。
 
 Track/race identity should come from lane lines, phase segments, data rhythm, and start-line hierarchy, not from decorative blobs or unrelated gradients.
 
@@ -241,16 +243,16 @@ Motion should feel like a training state change: short, useful, and stateful. Ru
 
 ### Data visualization
 
-The weekly activity rhythm chart belongs below Today Decision. It should show the week at a glance without becoming a full analytics dashboard. Chart labels need text equivalents and cannot depend on color alone.
+The seven-day schedule strip is the weekly view on Today. Do not present fixture distances as completed activity. A future history chart needs real completed sessions, a clearly named measure and period, and text equivalents for every visual value.
 
 ## Do's and Don'ts
 
 - **Do:** Make Today answer `我今天要跑、調整，還是休息？`
-- **Do:** Use the light mint shell and deep green decision card as Johnny's memorable first impression.
+- **Do:** Use the mint rail, dark continuous canvas, seven-day strip and ruled Split Board as Johnny's memorable first impression.
 - **Do:** Keep evidence visible when Johnny suggests Adjust or Rest.
 - **Do:** Let Athlete Memory appear only through relevant recommendation/conversation wording, never as a browsable memory database.
 - **Do:** Put Signal Coverage before provider admin details on `資料`.
-- **Don't:** Bring back a full dark cockpit shell as the default.
+- **Don't:** Replace the ruled canvas with independent white cards, shadows, background grids or a full-width colored decision tile.
 - **Don't:** Make Johnny a mascot-heavy or childish character.
 - **Don't:** Turn the app into a generic dashboard grid of equal cards.
 - **Don't:** Hide decision evidence behind chat.

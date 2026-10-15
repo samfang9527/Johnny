@@ -53,7 +53,6 @@ import {
   recoveryEvidence as fixtureRecoveryEvidence,
   todayWorkout as fixtureTodayWorkout,
   unavailableSignals as fixtureUnavailableSignals,
-  weeklyActivity as fixtureWeeklyActivity,
 } from './fixtures'
 import type {
   ConversationThread,
@@ -361,6 +360,9 @@ const scheduleWeekStart = computed(() => {
     return addCalendarDays(plan.starts_on, Math.min(Math.max(elapsed, 0), lastWeek) * 7)
   }
   const dates = displayWorkouts.value.map((workout) => workout.scheduledFor).filter(isIsoDate).sort()
+  const weekday = new Date(`${todayIsoDate.value}T00:00:00Z`).getUTCDay()
+  const calendarWeekStart = addCalendarDays(todayIsoDate.value, -((weekday + 6) % 7))
+  if (dates.some((date) => date >= calendarWeekStart && date <= addCalendarDays(calendarWeekStart, 6))) return calendarWeekStart
   return dates.find((value) => value >= todayIsoDate.value) ?? dates[dates.length - 1] ?? null
 })
 const visibleScheduleEnd = computed(() => scheduleWeekStart.value ? addCalendarDays(scheduleWeekStart.value, visibleTrainingWeeks.value * 7 - 1) : null)
@@ -431,9 +433,39 @@ const planLeadWorkout = computed(() => {
 const currentPlanPhase = computed(() => journeyPhases.value.find((phase) => phase.status === 'current') ?? (recoveryWindow.value ? {
   label: '恢復週 · Recovery Window', summary: `上一份計畫已結束，安排七天恢復。第 ${recoveryWindow.value.day} / 7 天`,
 } : { label: journeyPhases.value.length ? '計畫尚未開始' : '尚無有效訓練計畫', summary: journeyPhases.value.length ? '接下來的訓練階段已排定。' : '請重新產生計畫，安排接下來的訓練。' }))
+const startLineWeekStart = computed(() => {
+  const adviceWeek = dailyAdvice.value?.planWeek
+  if (adviceWeek && todayIsoDate.value >= adviceWeek.startsOn && todayIsoDate.value <= adviceWeek.endsOn) return adviceWeek.startsOn
+  const planWeek = scheduleWeekStart.value
+  if (activePlan.value && planWeek && todayIsoDate.value >= planWeek && todayIsoDate.value <= addCalendarDays(planWeek, 6)) return planWeek
+  const weekday = new Date(`${todayIsoDate.value}T00:00:00Z`).getUTCDay()
+  return addCalendarDays(todayIsoDate.value, -((weekday + 6) % 7))
+})
+const startLineWeek = computed(() => Array.from({ length: 7 }, (_, index) => {
+  const date = addCalendarDays(startLineWeekStart.value, index)
+  const weekday = ['日', '一', '二', '三', '四', '五', '六'][new Date(`${date}T00:00:00Z`).getUTCDay()]
+  const workout = displayWorkouts.value.find((item) => item.scheduledFor === date)
+    ?? (date === todayIsoDate.value && todayWorkout.value.status !== 'empty' && (!todayWorkout.value.scheduledFor || todayWorkout.value.scheduledFor === date) ? todayWorkout.value : null)
+  const distance = workout?.distance?.match(/\b(\d+(?:\.\d+)?)\s*(?:km|公里)\b/i)?.[1]
+  const inPlan = activePlan.value && date >= activePlan.value.starts_on && date <= activePlan.value.ends_on
+  const demoHasWeek = !shouldRequireAuth() && fixtureWorkouts.some((item) => item.scheduledFor && item.scheduledFor >= startLineWeekStart.value && item.scheduledFor <= addCalendarDays(startLineWeekStart.value, 6))
+  const session = distance ? `${distance}K` : workout?.duration || workout?.type || (inPlan || demoHasWeek ? '休' : '待排')
+  return { date, day: date.slice(-2), label: `${weekday} ${session}`, isToday: date === todayIsoDate.value }
+}))
+const startLineDateLabel = computed(() => {
+  const date = new Date(`${todayIsoDate.value}T00:00:00Z`)
+  const weekday = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][date.getUTCDay()]
+  return `${todayIsoDate.value.slice(5, 7)}.${todayIsoDate.value.slice(8, 10)} / ${weekday}`
+})
+const todayWorkoutHeadline = computed(() => {
+  const workout = todayWorkout.value
+  if (workout.status === 'empty') return workout.type
+  const type = workout.type.toLowerCase()
+  const name = type.includes('easy') ? 'EASY' : type.includes('long') ? 'LONG' : type.includes('tempo') ? 'TEMPO' : workout.type.toUpperCase()
+  const distance = workout.distance?.match(/\b(\d+(?:\.\d+)?)\s*(?:km|公里)\b/i)?.[1]
+  return distance ? `${distance} KM ${name}` : name
+})
 const signalCoverageSummary = computed(() => `Johnny 已有 ${coveredSignalCount.value}/${signalCoverage.value.length} 個訓練訊號`)
-const weeklyActivityPoints = computed(() => fixtureWeeklyActivity)
-const maxWeeklyDistance = computed(() => Math.max(...weeklyActivityPoints.value.map((point) => point.distanceKm), 1))
 const athleteTimezoneOptions = computed(() => {
   const currentTimezone = athleteSettings.value.timezone
   if (currentTimezone && !timezoneOptions.some((option) => option.value === currentTimezone)) {
@@ -2866,8 +2898,7 @@ function shouldRequireAuth(): boolean {
     <header class="top-bar">
       <div class="top-bar__inner">
         <div class="brand-lockup">
-          <p class="section-label">Running Companion</p>
-          <h1>Johnny</h1>
+          <h1>Johnny<span>Running</span></h1>
         </div>
         <nav class="top-nav" aria-label="主要導覽">
           <button
@@ -2892,18 +2923,23 @@ function shouldRequireAuth(): boolean {
 
     <main class="main-surface">
       <section v-if="activeView === 'today'" class="today-grid" data-testid="today-decision-flow" aria-labelledby="today-title">
-        <div class="page-heading today-grid__wide">
-          <p class="section-label">今日</p>
-          <h2 id="today-title">今天的訓練決策</h2>
-          <p>Johnny 會把課表、恢復訊號和建議放在同一個決策脈絡裡。</p>
-        </div>
-
-        <div class="today-date-strip today-grid__wide" data-testid="today-date-strip">
-          <time :datetime="todayIsoDate">{{ todayIsoDate }}</time>
-          <span v-if="dailyAdvice?.planWeek">Plan Week · {{ dailyAdvice.planWeek.startsOn }}–{{ dailyAdvice.planWeek.endsOn }}</span>
-          <span v-else-if="activePlan">{{ currentPlanPhase.label }}</span>
-          <span v-else>今日安排</span>
-        </div>
+        <div class="today-startline today-grid__wide">
+          <header class="today-startline__header">
+            <h2 id="today-title">今日訓練</h2>
+            <time :datetime="todayIsoDate" data-testid="today-date-strip">{{ startLineDateLabel }}</time>
+          </header>
+          <div class="today-week" data-testid="today-week-strip" aria-label="本週課表">
+            <div
+              v-for="day in startLineWeek"
+              :key="day.date"
+              class="today-week__day"
+              :class="{ 'today-week__day--current': day.isToday }"
+              :aria-current="day.isToday ? 'date' : undefined"
+              :aria-label="`${day.date}，${day.label}${day.isToday ? '，今天' : ''}`"
+            >
+              <strong>{{ day.day }}</strong><span>{{ day.label }}</span>
+            </div>
+          </div>
 
         <article v-if="effectiveTodayState === 'loading'" class="state-panel today-grid__wide" aria-live="polite">
           <p class="section-label">Loading</p>
@@ -2927,7 +2963,7 @@ function shouldRequireAuth(): boolean {
         </article>
 
         <template v-else>
-        <div class="today-primary-board today-grid__wide">
+        <div class="today-primary-board">
           <article
             class="today-decision-card"
             :class="`today-decision-card--${todayDecision.tone}`"
@@ -2935,7 +2971,7 @@ function shouldRequireAuth(): boolean {
             data-testid="today-decision-card"
           >
             <div class="today-decision-card__header">
-              <span class="card-kicker">Johnny 今天看起來</span>
+              <span class="card-kicker">JOHNNY 建議 / 今日判斷</span>
               <strong>{{ todayDecision.label }}</strong>
             </div>
             <p>{{ todayDecision.voice }}</p>
@@ -2947,8 +2983,8 @@ function shouldRequireAuth(): boolean {
           </article>
 
           <article class="surface-card workout-card" data-today-section="workout" data-today-workout-summary>
-            <p class="section-label">今日課表</p>
-            <h3>{{ todayWorkout.type }}</h3>
+            <p class="section-label">TODAY'S SESSION / 今日課表</p>
+            <h3>{{ todayWorkoutHeadline }}</h3>
             <p>{{ todayWorkout.purpose }}</p>
             <p v-if="workoutTargetSummary(todayWorkout)" class="workout-step-summary">{{ workoutTargetSummary(todayWorkout) }}</p>
             <p v-if="workoutStagePreview(todayWorkout).length" class="workout-step-summary">{{ workoutStagePreview(todayWorkout).map((step) => `${step.label} ${step.load}`).join(' · ') }}</p>
@@ -2958,13 +2994,13 @@ function shouldRequireAuth(): boolean {
               <span v-if="todayWorkout.pace">{{ todayWorkout.pace }}</span>
               <span v-if="todayWorkout.heartRateZone">{{ todayWorkout.heartRateZone }}</span>
             </div>
-            <div v-if="hasWorkoutDetails(todayWorkout)" class="workout-card__actions">
-              <AppButton tone="neutral" type="button" data-testid="today-workout-detail" @click="openWorkoutDetails(todayWorkout)">查看細節</AppButton>
+            <div class="workout-card__actions">
+              <AppButton tone="neutral" type="button" data-testid="today-workout-detail" @click="hasWorkoutDetails(todayWorkout) ? openWorkoutDetails(todayWorkout) : showView('plan')">{{ hasWorkoutDetails(todayWorkout) ? '查看今日課表 →' : '查看計畫 →' }}</AppButton>
             </div>
           </article>
         </div>
 
-        <section class="today-evidence today-grid__wide" data-testid="today-evidence" data-today-evidence aria-labelledby="today-evidence-title">
+        <section class="today-evidence" data-testid="today-evidence" data-today-evidence aria-labelledby="today-evidence-title">
           <div class="section-heading-row">
             <h3 id="today-evidence-title">決策依據</h3>
             <StatusBadge :tone="recoveryDecision.tone">{{ recoveryDecision.label }}</StatusBadge>
@@ -2987,46 +3023,25 @@ function shouldRequireAuth(): boolean {
           </div>
         </section>
 
+        <footer class="today-board-footer">
+          <div class="today-board-footer__plan" :data-today-section="nextWorkout ? 'upcoming' : undefined">
+            <strong>計畫 / {{ currentPlanPhase.label }}</strong>
+            <span v-if="nextWorkout">下一堂：{{ nextWorkout.type }} · {{ nextWorkout.scheduledFor }}</span>
+            <span v-else>下一堂：尚未排定</span>
+          </div>
+          <button v-if="pendingInboxItems.length" class="today-board-footer__pending" type="button" data-today-section="inbox" @click="showView('johnny')">
+            Johnny 待決定 {{ pendingInboxItems.length }} 項 →
+            <span class="visually-hidden">{{ todayRecommendationStrip.summary }} · 查看待決定建議</span>
+          </button>
+          <button v-else class="today-board-footer__pending" type="button" @click="showView('plan')">查看完整計畫 →</button>
+        </footer>
+        </template>
+        </div>
+
+        <template v-if="effectiveTodayState === 'full'">
         <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" collapsed class="today-grid__wide" data-testid="today-daily-advice" />
 
-        <section class="surface-card weekly-activity" data-testid="weekly-activity" aria-labelledby="weekly-activity-title">
-          <div class="section-heading-row">
-            <h3 id="weekly-activity-title">本週活動</h3>
-            <span>跑量節奏</span>
-          </div>
-          <div class="weekly-activity__bars" aria-label="本週跑步距離">
-            <div class="weekly-activity__plot weekly-activity__plot--spread" data-testid="weekly-activity-plot" aria-hidden="true">
-              <span
-                v-for="point in weeklyActivityPoints"
-                :key="`${point.dayLabel}-bar`"
-                class="weekly-activity__column"
-                data-testid="weekly-activity-column"
-              >
-                <span
-                  class="weekly-activity__bar"
-                  data-testid="weekly-activity-bar"
-                  :style="{ '--bar-size': `${Math.round((point.distanceKm / maxWeeklyDistance) * 100)}%` }"
-                ></span>
-              </span>
-            </div>
-            <div class="weekly-activity__labels">
-              <div v-for="point in weeklyActivityPoints" :key="point.dayLabel" class="weekly-activity__day">
-                <strong>{{ point.dayLabel }}</strong>
-                <small>{{ point.distanceKm }} km</small>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <SessionReviews v-if="currentUser" :key="currentUser.id" :anchor-date="todayIsoDate" :time-zone="userTimezone" :refresh-key="sessionReviewsRefreshKey" class="today-grid__wide" @changed="handleSessionReviewChanged" @error="handleSessionExpiry" />
-
-        <article v-if="nextWorkout" class="surface-card today-upcoming today-grid__wide" data-today-section="upcoming">
-          <div>
-            <h3>下一堂課</h3>
-            <p>{{ nextWorkout.scheduledFor }} · {{ nextWorkout.type }}</p>
-          </div>
-          <AppButton tone="neutral" @click="showView('plan')">查看計畫</AppButton>
-        </article>
 
         <article v-if="raceSummary.raceDate" class="surface-card today-card--context race-card" data-today-section="race">
           <p class="section-label">下一場比賽</p>
@@ -3036,13 +3051,6 @@ function shouldRequireAuth(): boolean {
           <p class="race-card__rationale">{{ raceTrainingRationale }}</p>
         </article>
 
-        <article v-if="pendingInboxItems.length" class="surface-card today-grid__wide inbox-nudge" data-today-section="inbox">
-          <div>
-            <h3>Johnny 待決定 · {{ pendingInboxItems.length }} 項</h3>
-            <p>{{ todayRecommendationStrip.summary }}</p>
-          </div>
-          <AppButton tone="neutral" @click="showView('johnny')">查看待決定建議</AppButton>
-        </article>
         </template>
       </section>
 

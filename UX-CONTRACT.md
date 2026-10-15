@@ -16,9 +16,9 @@
 - Production navigation shows exactly `今日`, `計畫`, `Johnny`, `運動員`, and `資料`.
 - Conversation remains hidden from production navigation while the code path is retained for later reactivation and tests.
 - `今日` is the default route and acts as the start-line cockpit.
-- `今日` starts with a Today Decision card before schedule, plan, or recommendation details.
+- `今日` starts with its title, athlete-local date, and a seven-day schedule strip. Today's date is marked. The decision and actual workout share one ruled Split Board below the strip, followed on the same surface by evidence and the plan/next-workout/pending footer.
 - Today Decision states use:
-  - `我可以` with primary action `開始跑步`
+  - `我可以` with an action to workout details when available, otherwise `查看計畫`; Johnny does not yet track a run
   - `不太對勁` or `先收一下` with primary action `查看 Johnny 建議` when current Daily Advice exists
   - `不太對勁` or `先收一下` with primary action `查看待決定建議` when a pending Recommendation exists without current Daily Advice
   - `不太對勁` or `先收一下` with primary action `查看課表` when neither exists
@@ -26,8 +26,9 @@
 - Today and Johnny may show the same current Daily Advice for the athlete-local date, with all three sections, generation time, and freshness. They never show two revisions together. Pending approval-backed Recommendations remain separate in Johnny and retain their actions.
 - Manual Garmin sync completion may return a Daily Advice run. The frontend observes that run and refreshes Today when it completes; a failed refresh retains prior advice with stale status.
 - Today Decision evidence shows the top current training/recovery signals plus one subtle Athlete Memory insight when relevant. It does not expose Athlete Memory as a browsable data object.
-- `今日` mobile layout uses a centered vertical flow. Desktop uses the main Today decision column plus a right-side context rail for race, plan, signal coverage, and pending recommendation context.
-- `今日` includes a weekly activity rhythm chart below the decision card.
+- `今日` mobile layout retains the seven-day strip and stacks the decision, workout, evidence, and footer in that order. Desktop uses one two-column decision/workout plane, a one-pixel vertical rule, aligned evidence rows, and a ruled footer. Pending recommendations appear in the footer; other secondary context follows below.
+- The schedule strip uses current Plan Week dates when a valid Plan Week is available, otherwise the athlete-local calendar week. It shows scheduled workouts from the active Plan Version, and never treats past activity bars as scheduled sessions. Without an effective schedule, unassigned dates read `待排` rather than `休`.
+- `今日` uses the seven-day schedule strip for the weekly view. It does not show sample activity history as real athlete data; session reviews remain below the decision board.
 - `計畫` owns an inclusive training journey with phase segments at the top and weekly schedule underneath. Races are optional goals inside the journey, not a required identity for every athlete.
 - `Johnny` owns pending recommendation decisions first, weekly review/check-ins below, and no public conversation composer for this release.
 - Johnny recommendation cards may display the emotional state language, but decision buttons use formal action language.
@@ -50,7 +51,7 @@
 
 ## Visual State Rules
 
-- Run / Adjust / Rest have distinct visual tones, but preserve the same card structure so users do not relearn the page.
+- Run / Adjust / Rest have distinct headline tones while preserving the same continuous Split Board structure so users do not relearn the page.
 - Busy buttons keep stable dimensions.
 - Empty, loading, and error states keep the same page footprint where possible.
 - Important values wrap instead of clipping on narrow viewports.

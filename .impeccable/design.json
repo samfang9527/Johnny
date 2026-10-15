@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-14T18:20:20Z",
+  "title": "Design System: Johnny",
+  "extensions": {
+    "colorMeta": {
+      "mint-track": { "role": "background", "displayName": "Start-line canvas", "canonical": "#17291e" },
+      "rail-mint": { "role": "navigation", "displayName": "Mint rail", "canonical": "#bde8c9" },
+      "ink-green": { "role": "foreground", "displayName": "Canvas ink", "canonical": "#eaf5ed" },
+      "line-mint": { "role": "border", "displayName": "Ruled divider", "canonical": "#47664e" },
+      "split-amber": { "role": "state", "displayName": "Adjust amber", "canonical": "#efbc76" }
+    },
+    "typographyMeta": {
+      "body": { "displayName": "Noto Sans TC", "purpose": "Chinese-first product copy and controls." },
+      "display": { "displayName": "DM Sans", "purpose": "Brand, page titles, decision and workout headlines." },
+      "data": { "displayName": "IBM Plex Mono", "purpose": "Dates, measurements and short evidence labels." }
+    },
+    "shadows": [
+      { "name": "overlay", "value": "0 18px 50px rgba(0, 0, 0, 0.25)", "purpose": "Dialogs and drawers only; page sections remain flat." }
+    ],
+    "motion": [
+      { "name": "state-change", "value": "180ms ease-out", "purpose": "Short hover, focus and decision state transitions; disabled under reduced motion." }
+    ],
+    "breakpoints": [
+      { "name": "rail-to-bottom-nav", "value": "780px" },
+      { "name": "split-to-stack", "value": "600px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Mint navigation rail",
+      "kind": "nav",
+      "refersTo": "app-shell",
+      "description": "Two-line brand and dark active destination on the mint rail.",
+      "html": "<nav class=\"ds-rail\"><strong>Johnny<span>Running</span></strong><a class=\"ds-rail-active\" href=\"#today\">今日</a><a href=\"#plan\">計畫</a></nav>",
+      "css": ".ds-rail{display:grid;align-content:start;gap:10px;width:142px;padding:24px 14px;background:var(--color-rail-mint,#bde8c9);color:var(--color-rail-ink,#163c29);font-family:'Noto Sans TC',sans-serif}.ds-rail strong{font:700 29px/.94 'DM Sans',sans-serif;letter-spacing:-.04em;margin-bottom:18px}.ds-rail strong span{display:block}.ds-rail a{display:block;padding:9px 10px;border-radius:9px;color:inherit;text-decoration:none;font-size:12px}.ds-rail a:hover,.ds-rail a:focus-visible{background:#a8d9b5}.ds-rail .ds-rail-active{background:#28573b;color:#f3faf4}"
+    },
+    {
+      "name": "Seven-day schedule",
+      "kind": "custom",
+      "refersTo": "app-shell",
+      "description": "A seven-cell schedule strip with the current athlete-local day filled in green.",
+      "html": "<div class=\"ds-week\"><div><strong>12</strong><span>一 6K</span></div><div><strong>13</strong><span>二 休</span></div><div class=\"ds-week-current\"><strong>14</strong><span>三 8K</span></div><div><strong>15</strong><span>四 10K</span></div><div><strong>16</strong><span>五 休</span></div><div><strong>17</strong><span>六 5K</span></div><div><strong>18</strong><span>日 18K</span></div></div>",
+      "css": ".ds-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:var(--color-mint-track,#17291e);color:var(--color-ink-green,#eaf5ed);border-bottom:1px solid var(--color-line-mint,#47664e);font-family:'Noto Sans TC',sans-serif}.ds-week>div{text-align:center;padding:14px 3px;border-right:1px solid var(--color-line-mint,#47664e)}.ds-week>div:last-child{border:0}.ds-week strong{display:block;font:600 15px 'IBM Plex Mono',monospace}.ds-week span{display:block;font-size:11px;color:var(--color-muted-green,#b5d2bd)}.ds-week .ds-week-current{background:#315f3f}.ds-week .ds-week-current span{color:#eaf5ed}"
+    },
+    {
+      "name": "Split decision plane",
+      "kind": "custom",
+      "refersTo": "today-decision-adjust",
+      "description": "Decision and workout share one canvas and one vertical rule.",
+      "html": "<div class=\"ds-split\"><section><small>JOHNNY 建議 / 今日判斷</small><h2>保守執行</h2><p>今天先維持輕鬆節奏。</p></section><section><small>TODAY'S SESSION / 今日課表</small><h2>8 KM EASY</h2><p>輕鬆跑 · 6:20–6:40 /km</p></section></div>",
+      "css": ".ds-split{display:grid;grid-template-columns:1fr 1fr;background:var(--color-mint-track,#17291e);color:var(--color-ink-green,#eaf5ed);border-bottom:1px solid var(--color-line-mint,#47664e);font-family:'Noto Sans TC',sans-serif}.ds-split section{padding:24px}.ds-split section:first-child{border-right:1px solid var(--color-line-mint,#47664e)}.ds-split small{font:600 11px 'IBM Plex Mono',monospace;color:var(--color-muted-green,#b5d2bd)}.ds-split h2{font:700 38px/1.1 'DM Sans','Noto Sans TC',sans-serif;margin:12px 0}.ds-split section:first-child h2{color:var(--color-split-amber,#efbc76)}.ds-split p{font-size:13px;margin:0}@media(max-width:480px){.ds-split{grid-template-columns:1fr}.ds-split section:first-child{border-right:0;border-bottom:1px solid var(--color-line-mint,#47664e)}}"
+    },
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Mint filled action on the dark canvas.",
+      "html": "<button class=\"ds-primary\" type=\"button\">查看今日課表 →</button>",
+      "css": ".ds-primary{border:1px solid var(--color-rail-mint,#bde8c9);border-radius:9px;background:var(--color-rail-mint,#bde8c9);color:var(--color-mint-track,#17291e);font:700 13px 'Noto Sans TC',sans-serif;padding:11px 16px;cursor:pointer}.ds-primary:hover{filter:brightness(1.07)}.ds-primary:focus-visible{outline:2px solid var(--color-split-amber,#efbc76);outline-offset:3px}"
+    },
+    {
+      "name": "Ruled evidence row",
+      "kind": "custom",
+      "refersTo": "divider",
+      "description": "Three aligned values with source and explanation on the same canvas.",
+      "html": "<div class=\"ds-evidence\"><span>HRV</span><strong>52 ms</strong><em>低於基準 18%</em></div>",
+      "css": ".ds-evidence{display:grid;grid-template-columns:1fr 105px 1.25fr;gap:12px;padding:11px 0;border-top:1px solid var(--color-line-mint,#47664e);background:var(--color-mint-track,#17291e);color:var(--color-ink-green,#eaf5ed);font:12px 'Noto Sans TC',sans-serif}.ds-evidence strong{font:600 14px 'IBM Plex Mono',monospace}.ds-evidence em{font-style:normal;color:var(--color-muted-green,#b5d2bd)}"
+    },
+    {
+      "name": "Form field",
+      "kind": "input",
+      "refersTo": "card",
+      "description": "Dark, legible input that keeps the product palette in forms.",
+      "html": "<label class=\"ds-field\">時區<input value=\"台北 (Asia/Taipei)\" /></label>",
+      "css": ".ds-field{display:grid;gap:6px;color:var(--color-muted-green,#b5d2bd);font:13px 'Noto Sans TC',sans-serif}.ds-field input{padding:12px;border:1px solid var(--color-line-mint,#47664e);border-radius:9px;background:var(--color-mint-surface,#1d3525);color:var(--color-ink-green,#eaf5ed);font:inherit}.ds-field input:focus-visible{outline:2px solid var(--color-split-amber,#efbc76);outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Morning Start Line on Split Board",
+    "overview": "A daily running decision on a continuous dark green canvas. A mint navigation rail, seven-day schedule, large decision and workout typography, and fine rules make the day's action easy to scan.",
+    "keyCharacteristics": ["Mint rail and dark canvas", "Seven-day schedule above a shared decision plane", "Dividers and typography instead of floating cards"],
+    "rules": [
+      { "name": "One decision plane", "body": "The decision, today's workout, evidence and plan footer stay in one uninterrupted Today surface.", "section": "layout" },
+      { "name": "Truthful schedule", "body": "Show scheduled workouts from the current Plan Version. Mark dates without a schedule as pending unless a planned rest day is known.", "section": "components" }
+    ],
+    "dos": ["Use the mint rail, seven-day strip and ruled Split Board on Today.", "Keep action labels tied to real destinations."],
+    "donts": ["Do not use independent white cards, shadows or decorative grids for standard page sections.", "Do not invent schedule entries from activity history."]
+  }
+}

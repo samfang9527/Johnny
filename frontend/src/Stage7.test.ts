@@ -110,11 +110,11 @@ describe('Stage 7 frontend acceptance', () => {
       return json({ scheduled_workouts: [workout(`run-${day}`, day)], recovery: {} })
     })
     await app.get('[data-view="today"]').trigger('click')
-    expect(app.get('[data-testid="today-date-strip"]').text()).toContain('2026-09-26')
+    expect(app.get('[data-testid="today-date-strip"]').attributes('datetime')).toBe('2026-09-26')
     expect(app.get('[data-today-workout-summary]').text()).toContain('run-2026-09-26')
     await vi.advanceTimersByTimeAsync(60_000)
     await flushPromises()
-    expect(app.get('[data-testid="today-date-strip"]').text()).toContain('2026-09-27')
+    expect(app.get('[data-testid="today-date-strip"]').attributes('datetime')).toBe('2026-09-27')
     expect(app.get('[data-today-workout-summary]').text()).toContain('run-2026-09-27')
   })
   it('updates an open journey after athlete-local midnight', async () => {

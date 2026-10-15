@@ -83,12 +83,6 @@ export interface RaceSummary {
   goalIntent?: 'complete' | 'perform' | null
 }
 
-export interface WeeklyActivityPoint {
-  dayLabel: string
-  distanceKm: number
-  loadLabel: string
-}
-
 export interface PlanPhase {
   id: string
   label: string
