@@ -16,7 +16,7 @@
 - Production navigation shows exactly `今日`, `計畫`, `Johnny`, `運動員`, and `資料`.
 - Conversation remains hidden from production navigation while the code path is retained for later reactivation and tests.
 - `今日` is the default route and acts as the start-line cockpit.
-- `今日` starts with its title, athlete-local date, and a seven-day schedule strip. Today's date is marked. The decision and actual workout share one ruled Split Board below the strip, followed on the same surface by evidence and the plan/next-workout/pending footer.
+- `今日` starts with its title, athlete-local date, an upcoming-race line when available, and a seven-day schedule strip. Today's date is marked. The decision and actual workout share one ruled Split Board below the strip, followed on the same surface by evidence and the plan/next-workout/pending footer.
 - Today Decision states use:
   - `我可以` with an action to workout details when available, otherwise `查看計畫`; Johnny does not yet track a run
   - `不太對勁` or `先收一下` with primary action `查看 Johnny 建議` when current Daily Advice exists
@@ -28,8 +28,11 @@
 - Today Decision evidence shows the top current training/recovery signals plus one subtle Athlete Memory insight when relevant. It does not expose Athlete Memory as a browsable data object.
 - `今日` mobile layout retains the seven-day strip and stacks the decision, workout, evidence, and footer in that order. Desktop uses one two-column decision/workout plane, a one-pixel vertical rule, aligned evidence rows, and a ruled footer. Pending recommendations appear in the footer; other secondary context follows below.
 - The schedule strip uses current Plan Week dates when a valid Plan Week is available, otherwise the athlete-local calendar week. It shows scheduled workouts from the active Plan Version, and never treats past activity bars as scheduled sessions. Without an effective schedule, unassigned dates read `待排` rather than `休`.
+- All dates in Today's strip are keyboard-reachable buttons, and today remains visually marked. Selecting another day opens an inline preview beneath the strip with its workout or truthful rest/pending state. Selecting another day updates that preview; selecting the same day or today closes it and returns to the initial Today view. An explicit `查看完整計畫` action opens `計畫`. Today's date-specific decision and advice remain tied to today.
+- Controls acknowledge hover, press, and selection promptly. The Today preview, expandable sections, and dialogs use short open/close motion while preserving native keyboard and focus behavior; reduced-motion preferences remove the spatial movement. Navigation between top-level pages remains immediate.
+- The optional next-race line appears before the strip and shows the saved upcoming race's name, distance, date and athlete-local countdown. It never shows a fabricated finish goal or implies the race is included in the active Plan Version; the former lower race card is not repeated.
 - `今日` uses the seven-day schedule strip for the weekly view. It does not show sample activity history as real athlete data; session reviews remain below the decision board.
-- `計畫` owns an inclusive training journey with phase segments at the top and weekly schedule underneath. Races are optional goals inside the journey, not a required identity for every athlete.
+- `計畫` starts with one `目前計畫` section containing the current phase, week and next workout, and the training journey; the weekly schedule follows. A native disclosure shows only races snapshotted into the active plan as included races, distinguishing its target race from supporting races. Saved goals and regeneration actions remain available inside the disclosure; a no-plan state exposes plan generation directly. There is no separate `階段詳情` section. Races are optional goals, not a required identity for every athlete.
 - `Johnny` owns pending recommendation decisions first, weekly review/check-ins below, and no public conversation composer for this release.
 - Johnny recommendation cards may display the emotional state language, but decision buttons use formal action language.
 - `運動員` owns Athlete Baseline. It shows a baseline snapshot first: weekly mileage, experience, injury status, preferred training rhythm, and recent baseline metrics. Editable profile/settings remain below the snapshot.

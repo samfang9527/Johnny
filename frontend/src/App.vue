@@ -40,6 +40,7 @@ import RaceGoalModal from './components/RaceGoalModal.vue'
 import RecommendationActions from './components/RecommendationActions.vue'
 import StatusBadge from './components/StatusBadge.vue'
 import TrainingPlanRegenerationSheet from './components/TrainingPlanRegenerationSheet.vue'
+import { vMotionDetails } from './motionDetails'
 import { formatRaceDistance, formatRacePriority } from './raceGoalForm'
 import {
   conversationThreads as fixtureConversationThreads,
@@ -48,7 +49,6 @@ import {
   planPhases as fixturePlanPhases,
   plannedWorkouts as fixtureWorkouts,
   providers,
-  raceSummary as fixtureRaceSummary,
   recommendation as fixtureRecommendation,
   recoveryEvidence as fixtureRecoveryEvidence,
   todayWorkout as fixtureTodayWorkout,
@@ -281,7 +281,15 @@ const effectiveTodayState = computed(() => {
   }
   return hasBackendHydrated.value && shouldRequireAuth() && !apiRaceSummary.value && !apiTodayWorkout.value && (!apiDailyAdvice.value || apiDailyAdvice.value.state === 'no_plan') ? 'empty' : 'full'
 })
-const raceSummary = computed(() => apiRaceSummary.value ?? (shouldRequireAuth() ? emptyRaceSummary() : fixtureRaceSummary))
+const raceSummary = computed(() => {
+  if (apiRaceSummary.value) return apiRaceSummary.value
+  if (shouldRequireAuth()) return emptyRaceSummary()
+  return fixtureFutureRaces.filter((race) => race.raceDate >= todayIsoDate.value)
+    .sort((left, right) => left.raceDate.localeCompare(right.raceDate))[0] ?? emptyRaceSummary()
+})
+const raceCountdownDays = computed(() => raceSummary.value.raceDate
+  ? Math.max(0, Math.round((Date.parse(`${raceSummary.value.raceDate}T00:00:00Z`) - Date.parse(`${todayIsoDate.value}T00:00:00Z`)) / 86_400_000))
+  : 0)
 const todayWorkout = computed(() => apiTodayWorkout.value ?? (shouldRequireAuth() ? emptyWorkoutSummary() : fixtureTodayWorkout))
 const recoveryEvidence = computed(() => {
   if (apiRecoveryEvidence.value.length) {
@@ -326,6 +334,8 @@ const coveredSignalCount = computed(() => signalCoverage.value.filter((item) => 
 const recommendation = computed(() => apiRecommendation.value ?? (shouldRequireAuth() ? null : fixtureRecommendation))
 const displayWorkouts = computed(() => props.workouts ?? (apiWorkouts.value.length ? apiWorkouts.value : shouldRequireAuth() ? [] : fixtureWorkouts))
 const visibleTrainingWeeks = ref(1)
+const previewDate = ref<string | null>(null)
+const previewWorkout = computed(() => displayWorkouts.value.find((workout) => workout.scheduledFor === previewDate.value) ?? null)
 const journeyPhases = computed<PlanPhase[]>(() => shouldRequireAuth() ? apiPlanPhases.value.map((segment) => ({
   id: `${segment.phase}-${segment.startsOn}`,
   label: segment.label,
@@ -340,7 +350,6 @@ const displayInboxItems = computed(() => {
     return status ? { ...item, status, statusLabel: statusLabel(status) } : item
   })
 })
-const planPhases = computed(() => (apiPlanPhases.value.length ? apiPlanPhases.value : shouldRequireAuth() ? [] : demoPlanPhases))
 const activeThreadId = ref(displayThreads.value[0]?.id ?? '')
 const activeThread = computed(() => displayThreads.value.find((thread) => thread.id === activeThreadId.value) ?? displayThreads.value[0])
 const pendingInboxItems = computed(() => displayInboxItems.value.filter((item) => item.status === 'pending'))
@@ -387,6 +396,30 @@ const recoveryWindow = computed(() => {
   return { startsOn, endsOn, day }
 })
 const upcomingRaceEntries = computed(() => raceEntries.value.filter((race) => race.date >= todayIsoDate.value))
+const planIncludedRaces = computed(() => {
+  if (!shouldRequireAuth()) {
+    const race = fixtureFutureRaces.find((entry) => entry.id === 'race-taipei-half')
+    return race ? [{ id: race.id, name: race.name, date: race.raceDate, distance: race.distance, isTarget: true }] : []
+  }
+  const plan = activePlan.value
+  if (!plan || !Array.isArray(plan.workouts)) return []
+  const seen = new Set<string>()
+  return plan.workouts.map(mapWorkout)
+    .filter((workout): workout is WorkoutSummary => Boolean(workout?.workoutType === 'race' && workout.raceGoalId))
+    .filter((workout) => {
+      if (seen.has(workout.raceGoalId!)) return false
+      seen.add(workout.raceGoalId!)
+      return true
+    })
+    .map((workout) => ({
+      id: workout.raceGoalId!,
+      name: workout.raceName || workout.type,
+      date: workout.scheduledFor || '',
+      distance: workout.distance,
+      isTarget: workout.raceGoalId === plan.race_id,
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date))
+})
 const dataSourceNeedsAttention = computed(() =>
   Boolean(
     garminConnection.value &&
@@ -450,8 +483,12 @@ const startLineWeek = computed(() => Array.from({ length: 7 }, (_, index) => {
   const inPlan = activePlan.value && date >= activePlan.value.starts_on && date <= activePlan.value.ends_on
   const demoHasWeek = !shouldRequireAuth() && fixtureWorkouts.some((item) => item.scheduledFor && item.scheduledFor >= startLineWeekStart.value && item.scheduledFor <= addCalendarDays(startLineWeekStart.value, 6))
   const session = distance ? `${distance}K` : workout?.duration || workout?.type || (inPlan || demoHasWeek ? '休' : '待排')
-  return { date, day: date.slice(-2), label: `${weekday} ${session}`, isToday: date === todayIsoDate.value }
+  return { date, day: date.slice(-2), label: `${weekday} ${session}`, isToday: date === todayIsoDate.value, status: workout ? 'scheduled' : inPlan || demoHasWeek ? 'rest' : 'pending' }
 }))
+const previewDayStatus = computed(() => startLineWeek.value.find((day) => day.date === previewDate.value)?.status === 'rest' ? '休息日' : '待排')
+watch(startLineWeek, (days) => {
+  if (previewDate.value && !days.some((day) => day.date === previewDate.value && !day.isToday)) previewDate.value = null
+})
 const startLineDateLabel = computed(() => {
   const date = new Date(`${todayIsoDate.value}T00:00:00Z`)
   const weekday = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][date.getUTCDay()]
@@ -483,7 +520,6 @@ const todayRecommendationStrip = computed(() =>
     dataSourceNeedsAttention.value,
   ),
 )
-const raceTrainingRationale = computed(() => buildRaceTrainingRationale(todayWorkout.value))
 const selectedWorkoutId = ref<string | null>(null)
 const selectedWorkoutDetail = computed(() => {
   const id = selectedWorkoutId.value
@@ -533,13 +569,6 @@ type PlanPhaseTimelineSegment = {
   focus: string
   dateRange: string
 }
-
-const demoPlanPhases: PlanPhaseTimelineSegment[] = [
-  { phase: 'base', label: '基礎期', focus: '建立輕鬆跑與長跑節奏', dateRange: '8/3 - 8/16' },
-  { phase: 'build', label: '建立期', focus: '逐步提高品質課表比重', dateRange: '8/17 - 8/23' },
-  { phase: 'peak', label: '高峰期', focus: '完成關鍵長跑與配速練習', dateRange: '8/24 - 8/29' },
-  { phase: 'taper', label: '減量期', focus: '保留節奏，降低疲勞', dateRange: '8/30 - 9/5' },
-]
 
 type AthleteSettingsForm = {
   timezone: string
@@ -686,22 +715,6 @@ function buildTodayRecommendationStrip(
     actionView: 'johnny',
     actionTone: 'neutral',
   }
-}
-
-function buildRaceTrainingRationale(workout: WorkoutSummary): string {
-  if (workout.status === 'empty') {
-    return '設定目標與課表後，Johnny 會說明今天如何服務下一場比賽。'
-  }
-  if (workout.type.includes('Easy')) {
-    return '今天的輕鬆跑是為了累積有氧基礎，不是測驗速度。'
-  }
-  if (workout.type.includes('Tempo')) {
-    return '今天的節奏課是為了穩定比賽配速，重點是控制強度。'
-  }
-  if (workout.type.includes('Long')) {
-    return '今天的長距離是為了建立後段耐力，配速應該保留餘裕。'
-  }
-  return `今天的${workout.type}會服務下一場目標，請用恢復狀態決定執行強度。`
 }
 
 function buildRecoveryEvidenceItems(recovery: Record<string, unknown>, trainingLoad: Record<string, unknown> | undefined): EvidenceItem[] {
@@ -998,10 +1011,38 @@ function handleSessionExpiry(error: unknown): boolean {
 }
 
 function showView(view: ViewKey) {
+  if (activeView.value !== view && typeof document !== 'undefined') {
+    document.documentElement.scrollTop = 0
+    document.body.scrollTop = 0
+  }
+  previewDate.value = null
   activeView.value = view
   if (typeof window !== 'undefined') {
     window.history.replaceState(null, '', `#${view}`)
   }
+}
+
+function setLeavingInert(element: Element) {
+  if (element instanceof HTMLElement) element.inert = true
+}
+
+function clearTransitionInert(element: Element) {
+  if (element instanceof HTMLElement) element.inert = false
+}
+
+function toggleTodayDayPreview(date: string) {
+  if (date === todayIsoDate.value) {
+    previewDate.value = null
+    return
+  }
+  previewDate.value = previewDate.value === date ? null : date
+}
+
+async function closeTodayDayPreview() {
+  const date = previewDate.value
+  previewDate.value = null
+  await nextTick()
+  if (date) document.querySelector<HTMLButtonElement>(`.today-week__day[data-date="${date}"]`)?.focus()
 }
 
 function handleTodayDecisionAction() {
@@ -2928,18 +2969,55 @@ function shouldRequireAuth(): boolean {
             <h2 id="today-title">今日訓練</h2>
             <time :datetime="todayIsoDate" data-testid="today-date-strip">{{ startLineDateLabel }}</time>
           </header>
-          <div class="today-week" data-testid="today-week-strip" aria-label="本週課表">
-            <div
-              v-for="day in startLineWeek"
-              :key="day.date"
-              class="today-week__day"
-              :class="{ 'today-week__day--current': day.isToday }"
-              :aria-current="day.isToday ? 'date' : undefined"
-              :aria-label="`${day.date}，${day.label}${day.isToday ? '，今天' : ''}`"
-            >
-              <strong>{{ day.day }}</strong><span>{{ day.label }}</span>
+          <div v-if="effectiveTodayState === 'full' && raceSummary.raceDate >= todayIsoDate" class="today-race-line" data-testid="today-race-line" aria-label="下一場比賽">
+            <span class="today-race-line__label">下一場比賽</span>
+            <div class="today-race-line__identity">
+              <strong>{{ raceSummary.name }}</strong>
+              <span>{{ raceSummary.distance }} · <time :datetime="raceSummary.raceDate">{{ formatDateLabel(raceSummary.raceDate) }}</time></span>
             </div>
+            <strong class="today-race-line__count">{{ raceCountdownDays === 0 ? '今天比賽' : `倒數 ${raceCountdownDays} 天` }}</strong>
           </div>
+          <div class="today-week" data-testid="today-week-strip" aria-label="本週課表">
+            <template v-for="day in startLineWeek" :key="day.date">
+              <button v-if="day.isToday" type="button" class="today-week__day today-week__day--current" :data-date="day.date" aria-current="date" :aria-label="`${day.date}，${day.label}，${previewDate ? '回到今日' : '今天'}`" @click="toggleTodayDayPreview(day.date)">
+                <strong>{{ day.day }}</strong><span>{{ day.label }}</span>
+              </button>
+              <button v-else type="button" class="today-week__day" :class="{ 'today-week__day--selected': previewDate === day.date }" :data-date="day.date" :aria-label="`${day.date}，${day.label}，預覽課表`" :aria-expanded="previewDate === day.date" :aria-controls="previewDate === day.date ? 'today-day-preview' : undefined" @click="toggleTodayDayPreview(day.date)">
+                <strong>{{ day.day }}</strong><span>{{ day.label }}</span>
+              </button>
+            </template>
+          </div>
+          <Transition name="preview-reveal" @before-enter="clearTransitionInert" @before-leave="setLeavingInert" @leave-cancelled="clearTransitionInert">
+            <section v-if="previewDate" id="today-day-preview" class="today-day-preview" data-testid="today-day-preview" aria-labelledby="today-day-preview-title" aria-live="polite">
+              <div class="today-day-preview__inner">
+                <div class="today-day-preview__heading">
+                  <div>
+                    <p class="section-label">課表預覽</p>
+                    <h3 id="today-day-preview-title"><time :datetime="previewDate">{{ formatDateLabel(previewDate) }}</time> · {{ formatWeekday(previewDate) }}</h3>
+                  </div>
+                  <button type="button" class="today-day-preview__close" aria-label="關閉課表預覽" @click="closeTodayDayPreview">關閉 ×</button>
+                </div>
+                <template v-if="previewWorkout">
+                  <strong class="today-day-preview__workout">{{ previewWorkout.type }}</strong>
+                  <p>{{ previewWorkout.purpose }}</p>
+                  <div class="today-day-preview__facts">
+                    <span v-if="previewWorkout.distance">{{ previewWorkout.distance }}</span>
+                    <span v-if="previewWorkout.duration && !previewWorkout.type.includes(previewWorkout.duration.split(' ')[0])">{{ previewWorkout.duration }}</span>
+                    <span v-if="previewWorkout.pace">{{ previewWorkout.pace }}</span>
+                  </div>
+                  <div v-if="workoutStagePreview(previewWorkout).length > 1" class="workout-stage-preview" aria-label="課表步驟摘要">
+                    <span v-for="(stage, index) in workoutStagePreview(previewWorkout)" :key="`${stage.label}-${index}`"><small>{{ stage.label }}</small><strong>{{ stage.load }}</strong></span>
+                  </div>
+                  <p v-if="workoutTargetSummary(previewWorkout)">{{ workoutTargetSummary(previewWorkout) }}</p>
+                </template>
+                <strong v-else class="today-day-preview__empty">{{ previewDayStatus }}</strong>
+                <div class="today-day-preview__actions">
+                  <AppButton v-if="previewWorkout && hasWorkoutDetails(previewWorkout)" tone="neutral" type="button" @click="openWorkoutDetails(previewWorkout)">查看課表細節</AppButton>
+                  <AppButton tone="neutral" type="button" data-testid="preview-open-plan" @click="showView('plan')">查看完整計畫 →</AppButton>
+                </div>
+              </div>
+            </section>
+          </Transition>
 
         <article v-if="effectiveTodayState === 'loading'" class="state-panel today-grid__wide" aria-live="polite">
           <p class="section-label">Loading</p>
@@ -3043,14 +3121,6 @@ function shouldRequireAuth(): boolean {
 
         <SessionReviews v-if="currentUser" :key="currentUser.id" :anchor-date="todayIsoDate" :time-zone="userTimezone" :refresh-key="sessionReviewsRefreshKey" class="today-grid__wide" @changed="handleSessionReviewChanged" @error="handleSessionExpiry" />
 
-        <article v-if="raceSummary.raceDate" class="surface-card today-card--context race-card" data-today-section="race">
-          <p class="section-label">下一場比賽</p>
-          <h3>{{ raceSummary.name }}</h3>
-          <p class="race-card__count">{{ raceSummary.daysRemaining }} 天</p>
-          <p>{{ raceSummary.distance }} · {{ raceSummary.goal }} · {{ raceSummary.date }}</p>
-          <p class="race-card__rationale">{{ raceTrainingRationale }}</p>
-        </article>
-
         </template>
       </section>
 
@@ -3063,23 +3133,15 @@ function shouldRequireAuth(): boolean {
           </div>
         </div>
 
-        <section class="plan-summary" data-testid="plan-summary" aria-label="目前計畫摘要">
-          <div><span>目前階段</span><strong>{{ recoveryWindow ? '恢復週' : currentPlanPhase.label }}</strong></div>
-          <div><span>Plan Week</span><strong>{{ scheduleWeekStart && visibleScheduleEnd ? `${formatDateLabel(scheduleWeekStart)}–${formatDateLabel(visibleScheduleEnd)}` : '本週安排' }}</strong></div>
-          <div><span>下一堂課</span><strong>{{ planLeadWorkout?.type || '尚未排定' }}</strong><small v-if="planLeadWorkout">{{ planLeadWorkout.scheduledFor || planLeadWorkout.dateLabel }}</small></div>
-        </section>
+        <section class="plan-current" data-testid="plan-current" aria-labelledby="plan-current-title">
+          <div class="plan-current__heading">
+            <h3 id="plan-current-title">目前計畫</h3>
+          </div>
 
-        <article v-if="inFlightPlanRegeneration" class="state-panel" data-testid="training-plan-regeneration-in-flight" aria-live="polite">
-          <p class="section-label">計畫更新中</p>
-          <h3>正在重新產生訓練計畫</h3>
-          <p>目前課表會繼續保留，完成後才會顯示新的安排。</p>
-        </article>
-
-        <section class="surface-card plan-journey plan-training-journey" data-testid="plan-training-journey" aria-label="訓練旅程">
-          <div class="plan-journey__intro">
-            <span class="card-kicker">目前訓練週期</span>
+          <div class="plan-current__phase" data-testid="plan-current-phase">
             <strong>{{ currentPlanPhase.label }}</strong>
             <p>{{ currentPlanPhase.summary }}</p>
+            <AppButton v-if="!activePlan && shouldRequireAuth() && !inFlightPlanRegeneration" tone="primary" type="button" data-testid="open-plan-regeneration-sheet" @click="openPlanRegenerationSheet">產生訓練計畫</AppButton>
             <div v-if="recoveryWindow" data-testid="plan-recovery-window" role="status">
               <p>{{ recoveryWindow.startsOn }} - {{ recoveryWindow.endsOn }} · {{ userTimezone }}</p>
               <p>上一份計畫已結束，這七天用於恢復，不是新的訓練計畫。第 {{ recoveryWindow.day }} / 7 天</p>
@@ -3088,28 +3150,81 @@ function shouldRequireAuth(): boolean {
               <p v-else-if="recoveryWindow.day === 7">今天是恢復週最後一天，可準備下一份計畫，最早 {{ addCalendarDays(recoveryWindow.endsOn, 1) }} 開始。</p>
             </div>
           </div>
-          <div class="plan-journey__phases" :class="{ 'plan-journey__phases--empty': !journeyPhases.length }" data-testid="plan-journey-phases">
-            <div class="plan-journey__track" data-testid="plan-journey-track" aria-hidden="true"></div>
-            <article
-              v-for="phase in journeyPhases"
-              :key="phase.id"
-              class="plan-journey__stop"
-              :class="`plan-journey__stop--${phase.status}`"
-              data-testid="plan-journey-stop"
-            >
-              <span class="plan-journey__node" data-testid="plan-journey-node"></span>
-              <div class="plan-journey__meta">
-                <span>{{ formatPlanPhaseLabel(phase.label) }}</span>
-                <strong>{{ phase.summary }}</strong>
+
+          <section class="plan-summary" data-testid="plan-summary" aria-label="目前計畫摘要">
+            <div><span>本週安排</span><strong>{{ scheduleWeekStart && visibleScheduleEnd ? `${formatDateLabel(scheduleWeekStart)}–${formatDateLabel(visibleScheduleEnd)}` : '尚未排定' }}</strong></div>
+            <div><span>下一堂課</span><strong>{{ planLeadWorkout?.type || '尚未排定' }}</strong><small v-if="planLeadWorkout">{{ planLeadWorkout.scheduledFor || planLeadWorkout.dateLabel }}</small></div>
+          </section>
+
+          <article v-if="inFlightPlanRegeneration" class="state-panel" data-testid="training-plan-regeneration-in-flight" aria-live="polite">
+            <p class="section-label">計畫更新中</p>
+            <h3>正在重新產生訓練計畫</h3>
+            <p>目前課表會繼續保留，完成後才會顯示新的安排。</p>
+          </article>
+
+          <section v-if="journeyPhases.length" class="plan-journey plan-training-journey" data-testid="plan-training-journey" aria-label="訓練旅程">
+            <h4 class="plan-current__subheading">訓練階段</h4>
+            <div class="plan-journey__phases" data-testid="plan-journey-phases">
+              <div class="plan-journey__track" data-testid="plan-journey-track" aria-hidden="true"></div>
+              <article
+                v-for="phase in journeyPhases"
+                :key="phase.id"
+                class="plan-journey__stop"
+                :class="`plan-journey__stop--${phase.status}`"
+                data-testid="plan-journey-stop"
+              >
+                <span class="plan-journey__node" data-testid="plan-journey-node"></span>
+                <div class="plan-journey__meta">
+                  <span>{{ formatPlanPhaseLabel(phase.label) }}</span>
+                  <strong>{{ phase.summary }}</strong>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <details v-motion-details class="plan-races" data-testid="plan-races">
+            <summary>{{ activePlan || !shouldRequireAuth() ? '查看本計畫納入的賽事' : '查看目標與計畫設定' }}</summary>
+            <div class="plan-races__content motion-details__content">
+              <div v-if="planIncludedRaces.length" class="plan-races__included">
+                <article v-for="race in planIncludedRaces" :key="race.id" class="plan-races__entry">
+                  <span>{{ race.isTarget ? '目標賽事 · 計畫以此為訓練方向' : '其他已納入賽事 · 影響附近課表' }}</span>
+                  <strong>{{ race.name }}</strong>
+                  <p>{{ race.date ? formatDateLabel(race.date) : '日期未提供' }}<span v-if="race.distance"> · {{ race.distance }}</span></p>
+                </article>
               </div>
-            </article>
-          </div>
+              <p v-else>{{ activePlan ? '目前計畫沒有納入賽事。' : '目前沒有有效計畫，尚無納入賽事。' }}</p>
+
+              <div class="plan-races__management">
+                <h4>已設定目標</h4>
+                <div v-if="upcomingRaceEntries.length" class="plan-race-list">
+                  <article v-for="race in upcomingRaceEntries" :key="race.id" class="plan-race-goal">
+                    <div class="plan-race-goal__identity"><strong>{{ race.name }}</strong><span>{{ race.distance }} · {{ race.goal }}</span></div>
+                    <div class="app-dialog__actions plan-race-goal__actions">
+                      <AppButton data-testid="edit-race" :aria-label="`編輯 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="editRaceEntry(race, $event)">編輯</AppButton>
+                      <AppButton data-testid="delete-race" :aria-label="`刪除 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="requestDeleteRace(race)">刪除</AppButton>
+                    </div>
+                    <p class="plan-race-goal__course">{{ raceCourseDetails(race) }}</p>
+                    <div v-if="activePlan?.race_id === race.id && activePlan.preparation_assessment" class="plan-race-goal__assessment" role="status" data-testid="preparation-assessment">
+                      <StatusBadge :tone="activePlan.preparation_assessment.status === 'gap' ? 'warning' : activePlan.preparation_assessment.status === 'on_track' ? 'success' : 'info'">{{ preparationStatusLabel(activePlan.preparation_assessment.status) }}</StatusBadge>
+                      <p>{{ activePlan.preparation_assessment.explanation_zh }}</p>
+                    </div>
+                  </article>
+                </div>
+                <p v-else>尚未設定目標</p>
+                <div class="app-dialog__actions plan-races__actions">
+                  <AppButton v-if="activePlan || !shouldRequireAuth()" tone="neutral" type="button" data-testid="open-plan-regeneration-sheet" @click="openPlanRegenerationSheet">重新產生計畫</AppButton>
+                  <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
+                </div>
+              </div>
+            </div>
+          </details>
         </section>
 
         <p v-if="raceEditLoading" role="status">正在載入賽事…</p>
         <p v-if="raceActionError" class="field-error" role="alert">{{ raceActionError }}</p>
         <p v-if="racePlanReminder" class="inline-note" role="status" data-testid="race-plan-reminder">{{ racePlanReminder }}</p>
 
+        <Transition name="overlay" @before-enter="clearTransitionInert" @before-leave="setLeavingInert" @leave-cancelled="clearTransitionInert">
         <ConfirmDialog
           v-if="deletingRace"
           title="刪除目標賽事"
@@ -3121,7 +3236,9 @@ function shouldRequireAuth(): boolean {
           @cancel="deletingRace = null"
           @confirm="confirmDeleteRace"
         />
+        </Transition>
 
+        <Transition name="overlay" @before-enter="clearTransitionInert" @before-leave="setLeavingInert" @leave-cancelled="clearTransitionInert">
         <RaceGoalModal
           v-if="isRaceGoalModalOpen"
           ref="raceGoalModalRef"
@@ -3132,7 +3249,9 @@ function shouldRequireAuth(): boolean {
           @close="requestCloseRaceGoalModal"
           @submit="submitRaceEntry"
         />
+        </Transition>
 
+        <Transition name="overlay" @before-enter="clearTransitionInert" @before-leave="setLeavingInert" @leave-cancelled="clearTransitionInert">
         <ConfirmDialog
           v-if="isRaceGoalConfirmOpen"
           :title="editingRace ? '放棄編輯目標' : '放棄新增目標'"
@@ -3141,7 +3260,9 @@ function shouldRequireAuth(): boolean {
           @cancel="cancelRaceGoalDiscard"
           @confirm="confirmRaceGoalDiscard"
         />
+        </Transition>
 
+        <Transition name="overlay" @before-enter="clearTransitionInert" @before-leave="setLeavingInert" @leave-cancelled="clearTransitionInert">
         <TrainingPlanRegenerationSheet
           v-if="isPlanRegenerationSheetOpen && planRegenerationOptions"
           :options="planRegenerationOptions"
@@ -3163,6 +3284,7 @@ function shouldRequireAuth(): boolean {
             </div>
           </section>
         </div>
+        </Transition>
         <p v-if="planRegenerationError && !isPlanRegenerationSheetOpen" class="field-error" role="alert">{{ planRegenerationError }}</p>
 
         <section class="schedule-section" aria-labelledby="schedule-title">
@@ -3222,48 +3344,6 @@ function shouldRequireAuth(): boolean {
           </article>
         </section>
 
-        <section class="plan-secondary" data-testid="plan-secondary" aria-labelledby="plan-secondary-title">
-          <div class="section-heading">
-            <div>
-              <h3 id="plan-secondary-title">目標與計畫調整</h3>
-              <p>賽事或訓練方向變更後，可重新產生計畫；目前課表會保留到新計畫完成。</p>
-            </div>
-            <div class="app-dialog__actions">
-              <AppButton tone="neutral" type="button" data-testid="open-plan-regeneration-sheet" @click="openPlanRegenerationSheet">重新產生計畫</AppButton>
-              <AppButton tone="primary" type="button" data-testid="open-race-goal-modal" @click="openRaceGoalModal">新增目標</AppButton>
-            </div>
-          </div>
-
-          <div v-if="upcomingRaceEntries.length" class="plan-race-list">
-            <article v-for="race in upcomingRaceEntries" :key="race.id" class="plan-race-goal">
-              <div class="plan-race-goal__identity"><strong>{{ race.name }}</strong><span>{{ race.distance }} · {{ race.goal }}</span></div>
-              <div class="app-dialog__actions plan-race-goal__actions">
-                <AppButton data-testid="edit-race" :aria-label="`編輯 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="editRaceEntry(race, $event)">編輯</AppButton>
-                <AppButton data-testid="delete-race" :aria-label="`刪除 ${race.name}`" :disabled="raceGoalBusy || raceEditLoading" @click="requestDeleteRace(race)">刪除</AppButton>
-              </div>
-              <p class="plan-race-goal__course">{{ raceCourseDetails(race) }}</p>
-              <div v-if="activePlan?.race_id === race.id && activePlan.preparation_assessment" class="plan-race-goal__assessment" role="status" data-testid="preparation-assessment">
-                <StatusBadge :tone="activePlan.preparation_assessment.status === 'gap' ? 'warning' : activePlan.preparation_assessment.status === 'on_track' ? 'success' : 'info'">{{ preparationStatusLabel(activePlan.preparation_assessment.status) }}</StatusBadge>
-                <p>{{ activePlan.preparation_assessment.explanation_zh }}</p>
-              </div>
-            </article>
-          </div>
-          <p v-else>尚未設定目標</p>
-
-          <article v-if="planPhases.length" class="plan-phase-details" data-testid="plan-phase-timeline" aria-label="訓練計畫階段">
-            <div class="section-heading">
-              <h4>階段詳情</h4>
-              <StatusBadge tone="info">{{ planPhases.length }} 個階段</StatusBadge>
-            </div>
-            <div class="decision-strip decision-strip--compact" role="list">
-              <div v-for="segment in planPhases" :key="`${segment.phase}-${segment.dateRange}`" role="listitem">
-                <p class="section-label">{{ segment.label }}</p>
-                <strong>{{ segment.focus }}</strong>
-                <p>{{ segment.dateRange }}</p>
-              </div>
-            </div>
-          </article>
-        </section>
       </section>
 
       <section v-else-if="activeView === 'johnny'" class="page-stack johnny-page" data-testid="johnny-page" aria-labelledby="johnny-title">
@@ -3754,6 +3834,7 @@ function shouldRequireAuth(): boolean {
 
         <p v-if="providerMessage" class="inline-note" aria-live="polite">{{ providerMessage }}</p>
 
+        <Transition name="overlay" @before-enter="clearTransitionInert" @before-leave="setLeavingInert" @leave-cancelled="clearTransitionInert">
         <div
           v-if="isProviderDialogOpen"
           class="provider-dialog"
@@ -3814,6 +3895,7 @@ function shouldRequireAuth(): boolean {
             </div>
           </form>
         </div>
+        </Transition>
       </section>
 
       <section v-else class="empty-panel" :aria-labelledby="`${activeView}-title`">
@@ -3823,6 +3905,7 @@ function shouldRequireAuth(): boolean {
       </section>
     </main>
 
+    <Transition name="overlay" @before-enter="clearTransitionInert" @before-leave="setLeavingInert" @leave-cancelled="clearTransitionInert">
     <div
       v-if="selectedWorkoutDetail"
       class="app-dialog"
@@ -3874,5 +3957,6 @@ function shouldRequireAuth(): boolean {
         </article>
       </section>
     </div>
+    </Transition>
   </div>
 </template>

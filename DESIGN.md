@@ -134,7 +134,7 @@ Johnny 不應該像一般 SaaS dashboard，也不應該像聊天機器人。它�
 
 - **Audience and primary job:** 以繁體中文為主要介面的耐力跑者、馬拉松訓練者與長期訓練中的使用者。主要工作是每天快速理解訓練、恢復、風險與 Johnny 的建議，並決定今天要跑、調整或休息。
 - **Register:** Product-first app experience. 沒有行銷首頁；登入後第一畫面是 `今日`。
-- **Signature:** `Morning Start Line × Split Board`。Today 以「今日訓練」標題、右側日期與七格課表條起始；今天那格高亮。其下為同一平面的 Today Decision／今日課表雙欄、2–3 條判斷依據、最後一條計畫／下一堂與待決定項目的頁腳。各區以規則線相接，不能拆成獨立浮動卡片。無有效計畫時，未排定日期應顯示「待排」，不可捏造休息日。
+- **Signature:** `Morning Start Line × Split Board`。Today 以「今日訓練」標題、右側日期與七格課表條起始；有下一場比賽時，在標題與課表條之間顯示精簡賽事資訊與倒數。今天那格高亮，點其他日期會在七格條下方就地預覽該日課表，明確點選「查看完整計畫」才進入 `計畫`；Today Decision 始終只代表今天。其下為同一平面的 Today Decision／今日課表雙欄、2–3 條判斷依據、最後一條計畫／下一堂與待決定項目的頁腳。各區以規則線相接，不能拆成獨立浮動卡片。無有效計畫時，未排定日期應顯示「待排」，不可捏造休息日。
 - **Interaction loop:** Observe -> Understand -> Reason -> Recommend -> User Decision -> Act -> Learn.
 - **Tone:** Johnny 像懂訓練的跑友：直接、會開一點跑者懂的玩笑，但不幼稚。Rest copy 可以像 `今天不要硬撐，跑鞋先放假。`
 - **Anti-references:** 不做深色 AI chatbot、不做等寬數據牆、不做社群健身打卡牆、不做單調醫療健康儀表板、不做米色筆記本風。深色在這裡是訓練畫布，不是聊天氣泡介面。
@@ -173,7 +173,7 @@ Copy 原則：
 主架構是五個 product surfaces：
 
 - `今日`: start-line cockpit，預設入口。
-- `計畫`: inclusive training journey + weekly schedule。Race goals can appear inside the journey, but non-race athletes still see a useful training cycle.
+- `計畫`: current plan, inclusive training journey, and weekly schedule。The current plan reveals its included races on demand; non-race athletes still see a useful training cycle.
 - `Johnny`: pending recommendations first, weekly review/check-ins below. Conversation remains hidden until public-ready.
 - `運動員`: Athlete Baseline snapshot first, profile/settings below. Athlete Memory is not a browsable frontend page.
 - `資料`: Signal Coverage first, provider connection details below.
@@ -182,15 +182,14 @@ Mobile 使用固定底部 navigation，label 為 `今日`、`計畫`、`Johnny`�
 
 Today mobile follows the Split Board reading order:
 
-1. 標題、athlete-local 日期與七格課表條；Plan Week 有資料時以其七日邊界為準，否則顯示當前日曆週。
+1. 標題、athlete-local 日期、可用時的下一場比賽摘要與七格課表條；Plan Week 有資料時以其七日邊界為準，否則顯示當前日曆週。
 2. Today Decision, then actual planned workout.
 3. Two or three aligned evidence rows and the ruled plan/next-workout/pending footer, then expandable Daily Advice detail.
-4. Session reviews and upcoming training.
-5. Relevant race context and pending Recommendation nudge.
+4. Session reviews; do not repeat the race summary below the board.
 
-Today desktop places decision and workout in one uninterrupted primary split with a one-pixel vertical rule. Supporting evidence and the plan/next-workout/pending footer continue on the same canvas beneath it. The product surface fills the desktop width between the side rail and balanced outer gutters. The seven-day strip shows actual scheduled workouts from the current Plan Version. Race and other context appears only when useful and must not duplicate the decision or workout summary.
+Today desktop places decision and workout in one uninterrupted primary split with a one-pixel vertical rule. Supporting evidence and the plan/next-workout/pending footer continue on the same canvas beneath it. The product surface fills the desktop width between the side rail and balanced outer gutters. The seven-day strip shows actual scheduled workouts from the current Plan Version. The next-race line names the saved upcoming race, distance, date and athlete-local countdown without implying it is part of the current Plan Version; it disappears when no future race exists.
 
-`計畫` begins with a training journey: base, build, peak, taper, and goal week. Race goals are optional highlights, not a prerequisite for the page to make sense. Weekly schedule sits underneath as execution detail.
+`計畫` begins with one current-plan section: the current phase and focus, this week's dates, the next workout, and the training journey (base, build, peak, taper, and goal week). An inline disclosure reveals races included in this plan, separating the target race from supporting races and from saved goals that are not in the plan snapshot. Goal management and regeneration live inside that disclosure; without an active plan, a visible action starts plan generation. Weekly schedule sits underneath as execution detail; a date chosen from Today is focused there with its workout or a truthful rest/pending state. Do not repeat phase details in another section.
 
 `資料` begins with Signal Coverage, e.g. `Johnny 已有 4/6 個訓練訊號`。The six MVP signals are activity, sleep, HRV, resting heart rate, training load, and athlete baseline.
 
@@ -239,11 +238,11 @@ Use lucide-style outline icons if an icon library is introduced; otherwise keep 
 
 ### Motion
 
-Motion should feel like a training state change: short, useful, and stateful. Run/Adjust/Rest transitions may use a quick card tone shift or rail reveal. Respect `prefers-reduced-motion`; no continuous floating backgrounds.
+Motion should feel like a training state change: short, useful, and stateful. Control and selection feedback uses a shared 140 ms rhythm; inline previews, native disclosures, and overlays enter within 240 ms and leave within 180 ms. The seven-day strip's selected state responds first, then the preview reveals beneath it. Run/Adjust/Rest may use a quick tone shift. Page-to-page transitions are a separate future layer. Respect `prefers-reduced-motion`; no continuous floating backgrounds.
 
 ### Data visualization
 
-The seven-day schedule strip is the weekly view on Today. Do not present fixture distances as completed activity. A future history chart needs real completed sessions, a clearly named measure and period, and text equivalents for every visual value.
+The seven-day schedule strip is the weekly view on Today. Other dates open a compact inline workout preview beneath the strip; an explicit action opens `計畫`. Clicking today closes the preview and returns to the initial Today view. The Today Decision remains tied to today. Do not present fixture distances as completed activity. A future history chart needs real completed sessions, a clearly named measure and period, and text equivalents for every visual value.
 
 ## Do's and Don'ts
 

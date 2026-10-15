@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vMotionDetails } from '../motionDetails'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { listSessionReviews, saveSessionReviews, type SessionReview, type SessionReviewDecision, type SessionReviewSaveResult } from '../api/client'
 import AppButton from './AppButton.vue'
@@ -113,8 +114,9 @@ function workoutLabel(review: SessionReview) {
     <p v-if="saveError" class="field-error" role="alert">{{ saveError }}</p>
     <p v-if="!loading && !loadError && !buckets[0].items.length" class="inline-note">目前沒有需要確認的活動。</p>
     <template v-for="bucket in buckets" :key="String(bucket.history)">
-      <component :is="bucket.history ? 'details' : 'div'" v-if="bucket.items.length" class="session-reviews__list">
+      <component :is="bucket.history ? 'details' : 'div'" v-if="bucket.items.length" v-motion-details class="session-reviews__list">
         <summary v-if="bucket.history">已確認與課表外活動（{{ bucket.items.length }}）· 可修正</summary>
+        <div class="motion-details__content">
         <article v-for="review in bucket.items" :key="review.id" class="session-reviews__item" :aria-label="`${review.local_date} 活動確認`">
           <h4>{{ review.local_date }} · {{ summary(review.duration_seconds, review.distance_meters) }}</h4>
           <p v-if="review.status === 'automatic'">Johnny 已{{ review.activities.length > 1 ? '將這些紀錄合併並' : '' }}配對到課表，這樣正確嗎？</p>
@@ -146,6 +148,7 @@ function workoutLabel(review: SessionReview) {
             <AppButton v-if="!bucket.history" :disabled="Boolean(busyId)" @click="save(review, [{ activity_ids: review.activities.map(item => item.id), workout_id: null }])">標記為課表外活動</AppButton>
           </div>
         </article>
+        </div>
       </component>
     </template>
   </section>

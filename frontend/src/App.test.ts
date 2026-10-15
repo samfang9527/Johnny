@@ -335,11 +335,98 @@ describe('Johnny product shell', () => {
     const days = wrapper.get('[data-testid="today-week-strip"]').findAll('.today-week__day')
     expect(days).toHaveLength(7)
     expect(days.filter((day) => day.attributes('aria-current') === 'date')).toHaveLength(1)
+    expect(days.find((day) => day.attributes('aria-current') === 'date')?.element.tagName).toBe('BUTTON')
     expect(wrapper.get('.today-startline').find('.today-primary-board').exists()).toBe(true)
     expect(wrapper.get('.today-startline').find('[data-testid="today-evidence"]').exists()).toBe(true)
     expect(wrapper.get('.today-startline').find('.today-board-footer').exists()).toBe(true)
     expect(wrapper.find('.today-context-rail').exists()).toBe(false)
     expect(wrapper.get('[data-testid="today-evidence"]').text()).toContain('決策依據')
+  })
+
+  it('previews a selected workout below the week strip without leaving Today', async () => {
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'))
+    const wrapper = mount(App, { attachTo: document.body })
+
+    const sunday = wrapper.get('[data-testid="today-week-strip"] button[data-date="2026-10-18"]')
+    await sunday.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-view="today"]').attributes('aria-current')).toBe('page')
+    const preview = wrapper.get('[data-testid="today-day-preview"]')
+    expect(preview.text()).toContain('10/18')
+    expect(preview.text()).toContain('Long Run')
+    expect(sunday.attributes('aria-expanded')).toBe('true')
+    expect(preview.element.compareDocumentPosition(wrapper.get('.today-primary-board').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(wrapper.find('[data-testid="today-decision-card"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="today-week-strip"] button[data-date="2026-10-17"]').trigger('click')
+    expect(wrapper.get('[data-testid="today-day-preview"]').text()).toContain('Easy Run')
+    expect(wrapper.get('[data-testid="today-day-preview"]').text()).not.toContain('Long Run')
+    await wrapper.get('[data-testid="today-week-strip"] button[data-date="2026-10-17"]').trigger('click')
+    expect(wrapper.find('[data-testid="today-day-preview"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('returns focus to the selected date when closing its preview', async () => {
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'))
+    const wrapper = mount(App, { attachTo: document.body })
+    const dateButton = wrapper.get('[data-testid="today-week-strip"] button[data-date="2026-10-18"]')
+    await dateButton.trigger('click')
+    await wrapper.get('[data-testid="today-day-preview"] button[aria-label="關閉課表預覽"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="today-day-preview"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(dateButton.element)
+    wrapper.unmount()
+  })
+
+  it('returns to the initial Today view when clicking today in the week strip', async () => {
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'))
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="today-week-strip"] button[data-date="2026-10-18"]').trigger('click')
+    expect(wrapper.find('[data-testid="today-day-preview"]').exists()).toBe(true)
+
+    const today = wrapper.get('[data-testid="today-week-strip"] button[aria-current="date"]')
+    await today.trigger('click')
+
+    expect(wrapper.find('[data-testid="today-day-preview"]').exists()).toBe(false)
+    expect(wrapper.get('[data-view="today"]').attributes('aria-current')).toBe('page')
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('今日判斷')
+  })
+
+  it('explains an unscheduled day in the inline preview', async () => {
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'))
+    const wrapper = mount(App)
+
+    await wrapper.get('[data-testid="today-week-strip"] button[data-date="2026-10-16"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="today-day-preview"]').text()).toContain('休息日')
+    expect(wrapper.get('[data-view="today"]').attributes('aria-current')).toBe('page')
+  })
+
+  it('offers an explicit path to Plan from the preview', async () => {
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'))
+    const wrapper = mount(App)
+    await wrapper.get('[data-testid="today-week-strip"] button[data-date="2026-10-17"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="today-day-preview"] button[data-testid="preview-open-plan"]').trigger('click')
+    expect(wrapper.get('[data-view="plan"]').attributes('aria-current')).toBe('page')
+    expect(wrapper.find('[data-testid="today-day-preview"]').exists()).toBe(false)
+  })
+
+  it('shows the next race in the first Today section without placeholder goal text', () => {
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'))
+    const wrapper = mount(App)
+    const race = wrapper.get('[data-testid="today-race-line"]')
+    const strip = wrapper.get('[data-testid="today-week-strip"]')
+
+    expect(race.text()).toContain('Taipei Half Tune-up')
+    expect(race.text()).toContain('Half Marathon')
+    expect(race.text()).toContain('11/15')
+    expect(race.text()).toContain('倒數 31 天')
+    expect(race.element.compareDocumentPosition(strip.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(wrapper.find('.race-card').exists()).toBe(false)
   })
 
   it('uses the current plan week and does not turn activity history into scheduled workouts', async () => {
@@ -674,7 +761,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.get('nav').text()).toContain('資料')
     expect(wrapper.get('nav').text()).not.toContain('對話')
     expect(wrapper.text()).toContain('今日訓練')
-    expect(wrapper.text()).toContain('Sydney Marathon')
+    expect(wrapper.text()).toContain('Taipei Half Tune-up')
   })
 
   it('shows the start-line navigation and keeps conversation hidden', () => {
@@ -927,20 +1014,20 @@ describe('Johnny product shell', () => {
     expect(nudge.text()).toContain('查看待決定建議')
   })
 
-  it('orders Today as week, split, evidence, footer, then supporting race context', () => {
+  it('orders Today as race, week, split, evidence, then footer', () => {
     const wrapper = mount(App)
     const section = wrapper.get('[data-testid="today-decision-flow"]')
+    const race = section.get('[data-testid="today-race-line"]').element
     const week = section.get('[data-testid="today-week-strip"]').element
     const primary = section.get('.today-primary-board').element
     const evidence = section.get('[data-today-evidence]').element
     const footer = section.get('.today-board-footer').element
-    const race = section.get('[data-today-section="race"]').element
     const inbox = section.get('[data-today-section="inbox"]').element
+    expect(race.compareDocumentPosition(week) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(week.compareDocumentPosition(primary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(primary.compareDocumentPosition(evidence) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(evidence.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(footer.contains(inbox)).toBe(true)
-    expect(footer.compareDocumentPosition(race) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('omits the pending nudge when there is no Recommendation and explains insufficient data', async () => {
@@ -1266,8 +1353,7 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App)
 
     expect(wrapper.find('.today-primary-board .workout-card').exists()).toBe(true)
-    expect(wrapper.get('.race-card').classes()).toContain('today-card--context')
-    expect(wrapper.get('.race-card').text()).toContain('今天的輕鬆跑是為了累積有氧基礎')
+    expect(wrapper.get('[data-testid="today-race-line"]').text()).toContain('Taipei Half Tune-up')
     const workoutAction = wrapper.get('[data-testid="today-workout-detail"]')
     expect(workoutAction.text()).toContain('查看計畫')
     await workoutAction.trigger('click')
@@ -1290,23 +1376,30 @@ describe('Johnny product shell', () => {
     expect(stops.slice(2).every((stop) => stop.classes().includes('plan-journey__stop--next'))).toBe(true)
     expect(journey.findAll('.plan-phase')).toHaveLength(0)
     expect(journey.text()).toContain('建立期')
-    expect(journey.text()).toContain('目前訓練週期')
+    expect(journey.text()).toContain('訓練階段')
     expect(wrapper.text()).toContain('接下來課表')
   })
 
-  it('leads Plan with phase, week, and next workout before secondary race controls', async () => {
+  it('leads Plan with one current-plan section and keeps race context collapsed', async () => {
     const wrapper = mount(App, { props: { initialView: 'plan' } })
     const page = wrapper.get('.plan-page')
-    const summary = page.get('[data-testid="plan-summary"]')
-    const journey = page.get('[data-testid="plan-training-journey"]')
+    const currentPlan = page.get('[data-testid="plan-current"]')
+    const summary = currentPlan.get('[data-testid="plan-summary"]')
+    const journey = currentPlan.get('[data-testid="plan-training-journey"]')
     const schedule = page.get('.schedule-section')
-    const secondary = page.get('[data-testid="plan-secondary"]')
+    const raceDisclosure = currentPlan.get('[data-testid="plan-races"]')
 
-    expect(summary.text()).toContain('建立期')
+    expect(currentPlan.get('[data-testid="plan-current-phase"]').text()).toContain('建立期')
     expect(summary.text()).toContain('Easy Run')
-    expect(summary.element.compareDocumentPosition(journey.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(journey.element.compareDocumentPosition(schedule.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(schedule.element.compareDocumentPosition(secondary.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(page.find('[data-testid="plan-secondary"]').exists()).toBe(false)
+    expect(currentPlan.element.compareDocumentPosition(schedule.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(raceDisclosure.element.tagName).toBe('DETAILS')
+    expect((raceDisclosure.element as HTMLDetailsElement).open).toBe(false)
+    expect(raceDisclosure.get('summary').text()).toContain('查看本計畫納入的賽事')
+    expect(raceDisclosure.get('.plan-races__included').text()).toContain('Taipei Half Tune-up')
+    expect(journey.text()).toContain('建立期')
+    expect(page.find('[data-testid="plan-phase-timeline"]').exists()).toBe(false)
+    expect(page.text()).not.toContain('階段詳情')
   })
 
   it('opens Plan with journey phases, race goals, and workout context', async () => {
@@ -1314,7 +1407,8 @@ describe('Johnny product shell', () => {
 
     await wrapper.get('button[data-view="plan"]').trigger('click')
 
-    expect(wrapper.get('[data-testid="plan-summary"]').text()).toContain('目前階段')
+    expect(wrapper.get('[data-testid="plan-current-phase"]').text()).toContain('建立期')
+    expect(wrapper.get('[data-testid="plan-summary"]').text()).toContain('本週安排')
     expect(wrapper.text()).not.toContain('Race journey')
     expect(wrapper.get('[data-testid="plan-training-journey"]').text()).toContain('建立期')
     expect(wrapper.text()).toContain('Taipei Half Tune-up')
@@ -1388,10 +1482,10 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { initialView: 'plan', requireAuth: true } })
     await flushPromises()
 
-    const timeline = wrapper.get('[data-testid="plan-phase-timeline"]')
-    expect(timeline.text()).toContain('維持期')
-    expect(timeline.text()).toContain('維持穩定有氧節奏')
-    expect(timeline.text()).not.toContain('舊版訓練內容不應顯示')
+    const journey = wrapper.get('[data-testid="plan-training-journey"]')
+    expect(journey.text()).toContain('維持期')
+    expect(journey.text()).toContain('維持穩定有氧節奏')
+    expect(journey.text()).not.toContain('舊版訓練內容不應顯示')
   })
 
   it('does not render stale API phase metadata when no active plan exists', async () => {

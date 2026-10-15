@@ -37,6 +37,10 @@
   --space-card-pad: 1.1rem;
   --space-control-y: 0.75rem;
   --space-control-x: 1rem;
+  --motion-feedback: 140ms;
+  --motion-reveal: 240ms;
+  --motion-exit: 180ms;
+  --motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
   font-family: var(--font-body);
   color: var(--color-ink-green);
   background: var(--color-mint-track);
@@ -737,7 +741,7 @@ button:disabled {
 
 .plan-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--color-line-mint);
@@ -767,33 +771,121 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
-.plan-secondary {
+.plan-current {
   display: grid;
-  gap: 1rem;
-  padding-top: 1.4rem;
-  border-top: 1px solid var(--color-line-mint);
+  gap: 1.35rem;
 }
 
-.plan-secondary h3,
-.plan-secondary h4 {
+.plan-current__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.plan-current__heading h3,
+.plan-current__subheading,
+.plan-races__management h4 {
   margin: 0;
 }
 
-.plan-secondary .section-heading p {
-  margin: 0.35rem 0 0;
+.plan-current__phase {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.plan-current__phase > strong {
+  color: var(--color-deep-green);
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+}
+
+.plan-current__phase p {
+  margin: 0;
   color: var(--color-muted-green);
+}
+
+.plan-current__phase .app-button {
+  justify-self: start;
+  margin-top: 0.5rem;
+}
+
+.plan-current__subheading {
+  grid-column: 1 / -1;
+}
+
+.plan-races {
+  border-block: 1px solid var(--color-line-mint);
+}
+
+.plan-races > summary {
+  min-height: 2.75rem;
+  padding: 0.7rem 0;
+  color: var(--color-deep-green);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.plan-races > summary:focus-visible {
+  outline: 2px solid var(--color-deep-green);
+  outline-offset: 2px;
+}
+
+.plan-races[open] > summary {
+  border-bottom: 1px solid var(--color-line-mint);
+}
+
+.plan-races__content,
+.plan-races__included,
+.plan-races__management,
+.plan-races__entry {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.plan-races__content {
+  padding: 1rem 0 1.25rem;
+}
+
+.plan-races__content > p,
+.plan-races__management > p {
+  margin: 0;
+  color: var(--color-muted-green);
+}
+
+.plan-races__entry {
+  gap: 0.2rem;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--color-line-mint);
+}
+
+.plan-races__entry:first-child {
+  border-top: 0;
+}
+
+.plan-races__entry > span,
+.plan-races__entry > p {
+  margin: 0;
+  color: var(--color-muted-green);
+}
+
+.plan-races__entry > strong {
+  color: var(--color-ink-green);
+}
+
+.plan-races__management {
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-line-mint);
+}
+
+.plan-races__actions {
+  justify-content: flex-start;
 }
 
 .plan-race-list {
   display: grid;
   gap: 0.75rem;
-}
-
-.plan-phase-details {
-  display: grid;
-  gap: 0.75rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--color-line-mint);
 }
 
 .schedule-list {
@@ -2456,29 +2548,8 @@ button:disabled {
     var(--color-card-white);
 }
 
-.plan-journey__intro {
-  display: grid;
-  grid-column: 1 / -1;
-  gap: 0.35rem;
-  padding: 0.85rem;
-  border: 1px solid color-mix(in srgb, var(--color-lane-green) 28%, var(--color-line-mint));
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--color-soft-mint) 44%, var(--color-card-white));
-}
-
 .plan-journey__phases {
   display: contents;
-}
-
-.plan-journey__intro strong {
-  color: var(--color-deep-green);
-  font-family: var(--font-display);
-  font-size: 1.45rem;
-}
-
-.plan-journey__intro p {
-  margin: 0;
-  color: var(--color-muted-green);
 }
 
 .plan-journey__track {
@@ -2876,15 +2947,6 @@ button:disabled {
     overflow-x: auto;
   }
 
-  .plan-training-journey .plan-journey__intro {
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-
-  .plan-training-journey .plan-journey__phases--empty {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3092,15 +3154,13 @@ body { background: var(--color-mint-track); }
   background: transparent;
 }
 .main-surface .plan-summary > div { background: transparent; }
-.main-surface .plan-journey,
-.main-surface .plan-journey__intro {
+.main-surface .plan-journey {
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 .main-surface .plan-journey { padding: 0; }
-.main-surface .plan-journey__intro { border-bottom: 1px solid var(--color-line-mint); }
 .main-surface .plan-journey__stop--current .plan-journey__node { background: var(--color-deep-green); }
 .main-surface .recovery-signal-chip,
 .main-surface .athlete-baseline dl div,
@@ -3138,13 +3198,81 @@ body { background: var(--color-mint-track); }
 }
 .today-startline__header h2 { margin: 0; font-family: var(--font-display); font-size: clamp(1.85rem, 3.4vw, 2.15rem); line-height: 1.15; }
 .today-startline__header time { color: var(--color-muted-green); font-family: var(--font-data); font-size: 0.72rem; white-space: nowrap; }
+.today-race-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem 1.3rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--color-line-mint);
+}
+.today-race-line__label { color: var(--color-muted-green); font-size: 0.75rem; white-space: nowrap; }
+.today-race-line__identity { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.7rem; min-width: 0; }
+.today-race-line__identity strong { overflow-wrap: anywhere; font-size: 0.95rem; }
+.today-race-line__identity span { color: var(--color-muted-green); font-size: 0.78rem; }
+.today-race-line__count { color: var(--color-deep-green); font-family: var(--font-data); font-size: 1.12rem; white-space: nowrap; }
 .today-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--color-line-mint); }
-.today-week__day { min-width: 0; padding: 0.9rem 0.15rem 0.8rem; border-right: 1px solid var(--color-line-mint); text-align: center; }
+.today-week__day { min-width: 0; min-height: 3.5rem; padding: 0.9rem 0.15rem 0.8rem; border: 0; border-right: 1px solid var(--color-line-mint); border-radius: 0; color: var(--color-ink-green); background: transparent; text-align: center; }
 .today-week__day:last-child { border-right: 0; }
 .today-week__day strong { display: block; font-family: var(--font-data); font-size: 0.92rem; }
 .today-week__day span { display: block; margin-top: 0.2rem; color: var(--color-muted-green); font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.today-week button.today-week__day { cursor: pointer; }
+.today-week button.today-week__day:hover { background: var(--color-mint-surface); }
 .today-week__day--current { color: var(--color-ink-green); background: var(--color-soft-mint); }
 .today-week__day--current span { color: var(--color-ink-green); }
+.today-week button.today-week__day--current:hover { background: var(--color-soft-mint); }
+.today-week__day--selected { background: var(--color-mint-surface); box-shadow: inset 0 -3px var(--color-deep-green); }
+.today-week__day--selected span { color: var(--color-ink-green); }
+.today-day-preview { display: grid; grid-template-rows: 1fr; overflow: hidden; border-bottom: 1px solid var(--color-line-mint); }
+.today-day-preview__inner { display: grid; gap: 0.55rem; min-height: 0; padding: 1rem 0 1.2rem; overflow: hidden; }
+.today-day-preview__heading { display: flex; align-items: start; justify-content: space-between; gap: 0.75rem; }
+.today-day-preview__heading .section-label { margin: 0 0 0.25rem; }
+.today-day-preview__heading h3 { margin: 0; font-family: var(--font-display); font-size: 1.3rem; }
+.today-day-preview__close { border: 0; padding: 0.3rem 0; color: var(--color-muted-green); background: transparent; cursor: pointer; font: inherit; font-size: 0.8rem; white-space: nowrap; }
+.today-day-preview__close:hover { color: var(--color-ink-green); }
+.today-day-preview__workout { font-size: 1.1rem; }
+.today-day-preview p { margin: 0; color: var(--color-muted-green); }
+.today-day-preview__facts { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; color: var(--color-deep-green); font-family: var(--font-data); font-size: 0.8rem; }
+.today-day-preview__empty { font-size: 1.1rem; }
+.today-day-preview__actions { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.35rem; }
+
+/* Motion keeps selection, disclosure and overlay changes in the same rhythm. */
+button,
+summary {
+  transition: color var(--motion-feedback) ease, background-color var(--motion-feedback) ease, border-color var(--motion-feedback) ease, box-shadow var(--motion-feedback) ease, opacity var(--motion-feedback) ease;
+}
+input,
+select,
+textarea { transition: background-color var(--motion-feedback) ease, border-color var(--motion-feedback) ease, color var(--motion-feedback) ease; }
+.app-button { transition: color var(--motion-feedback) ease, background-color var(--motion-feedback) ease, border-color var(--motion-feedback) ease, opacity var(--motion-feedback) ease, filter var(--motion-feedback) ease, transform var(--motion-feedback) ease; }
+.status-badge,
+.today-decision-card__header strong { transition: color var(--motion-feedback) ease, background-color var(--motion-feedback) ease; }
+.preview-reveal-enter-active,
+.preview-reveal-leave-active { transition: grid-template-rows var(--motion-reveal) var(--motion-ease), opacity var(--motion-exit) ease, border-color var(--motion-exit) ease; }
+.preview-reveal-leave-active { transition-duration: var(--motion-exit); pointer-events: none; }
+.preview-reveal-enter-from,
+.preview-reveal-leave-to { grid-template-rows: 0fr; opacity: 0; border-bottom-color: transparent; }
+.preview-reveal-enter-from .today-day-preview__inner,
+.preview-reveal-leave-to .today-day-preview__inner { padding-block: 0; }
+.preview-reveal-enter-active .today-day-preview__inner,
+.preview-reveal-leave-active .today-day-preview__inner { transition: padding-block var(--motion-reveal) var(--motion-ease); }
+.overlay-enter-active,
+.overlay-leave-active { transition: opacity var(--motion-reveal) ease; }
+.overlay-leave-active { transition-duration: var(--motion-exit); pointer-events: none; }
+.overlay-enter-from,
+.overlay-leave-to { opacity: 0; }
+.overlay-enter-active .app-dialog__panel,
+.overlay-enter-active .provider-dialog__panel,
+.overlay-leave-active .app-dialog__panel,
+.overlay-leave-active .provider-dialog__panel { transition: transform var(--motion-reveal) var(--motion-ease), opacity var(--motion-reveal) ease; }
+.overlay-leave-active .app-dialog__panel,
+.overlay-leave-active .provider-dialog__panel { transition-duration: var(--motion-exit); }
+.overlay-enter-from .app-dialog__panel,
+.overlay-enter-from .provider-dialog__panel,
+.overlay-leave-to .app-dialog__panel,
+.overlay-leave-to .provider-dialog__panel { transform: translateY(0.45rem); opacity: 0; }
+.daily-advice-card__body > .motion-details__content,
+.session-reviews__list > .motion-details__content { display: flow-root; }
 .today-primary-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border-bottom: 1px solid var(--color-line-mint); }
 .today-primary-board .today-decision-card,
 .today-primary-board > .workout-card {
@@ -3227,6 +3355,10 @@ body { background: var(--color-mint-track); }
 }
 @media (max-width: 600px) {
   .today-startline__header h2 { font-size: 1.7rem; }
+  .today-race-line { grid-template-columns: minmax(0, 1fr) auto; gap: 0.2rem 0.6rem; }
+  .today-race-line__label { grid-column: 1; grid-row: 1; }
+  .today-race-line__identity { grid-column: 1; grid-row: 2; display: grid; gap: 0.1rem; }
+  .today-race-line__count { grid-column: 2; grid-row: 1 / span 2; font-size: 0.95rem; }
   .today-week__day { padding: 0.65rem 0.08rem; }
   .today-week__day strong { font-size: 0.79rem; }
   .today-week__day span { font-size: 0.58rem; }

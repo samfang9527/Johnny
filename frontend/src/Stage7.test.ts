@@ -40,18 +40,40 @@ describe('Stage 7 frontend acceptance', () => {
     return wrapper
   }
 
-  it.each(['base', 'maintenance', 'taper', 'race'] as const)('uses canonical %s metadata in both journey surfaces without workouts', async (phase) => {
+  it.each(['base', 'maintenance', 'taper', 'race'] as const)('uses canonical %s metadata in the journey without workouts', async (phase) => {
     const app = await render([plan(phase)])
     expect(app.get('[data-testid="plan-training-journey"]').text()).toContain(`canonical-${phase}`)
-    expect(app.get('[data-testid="plan-phase-timeline"]').text()).toContain(`canonical-${phase}`)
+    expect(app.find('[data-testid="plan-phase-timeline"]').exists()).toBe(false)
     expect(app.findAll('[data-testid="plan-journey-stop"]')).toHaveLength(1)
     expect(app.get('[data-testid="plan-journey-stop"]').classes()).toContain('plan-journey__stop--current')
     expect(app.get('[data-testid="plan-training-journey"]').text()).not.toContain('Build')
   })
+  it('shows only races snapshotted into the active plan as its race context', async () => {
+    const app = await render([plan('build', {
+      race_id: 'target-race',
+      ends_on: '2026-11-15',
+      workouts: [
+        { ...workout('supporting-race-workout', '2026-10-25'), workout_type: 'race', race_goal_id: 'supporting-race', race_name: 'Riverside 10K', race_priority: 'tune_up', planned_distance_meters: 10000 },
+        { ...workout('target-race-workout', '2026-11-15'), workout_type: 'race', race_goal_id: 'target-race', race_name: 'Taipei Half Tune-up', race_priority: 'primary', planned_distance_meters: 21097 },
+      ],
+    })], (url) => url.includes('/api/v1/races') ? json([{
+      id: 'new-race', name: 'New race outside this plan', race_date: '2026-11-01', distance_meters: 5000, priority: 'secondary', status: 'planned',
+    }]) : undefined)
+
+    const included = app.get('.plan-races__included')
+    expect(included.text()).toContain('目標賽事 · 計畫以此為訓練方向')
+    expect(included.text()).toContain('Taipei Half Tune-up')
+    expect(included.text()).toContain('其他已納入賽事 · 影響附近課表')
+    expect(included.text()).toContain('Riverside 10K')
+    expect(included.text()).not.toContain('New race outside this plan')
+    expect(app.get('.plan-races__management').text()).toContain('New race outside this plan')
+  })
   it('has an honest authenticated no-active journey and Today rail', async () => {
     const app = await render([])
     expect(app.findAll('[data-testid="plan-journey-stop"]')).toHaveLength(0)
-    expect(app.get('[data-testid="plan-training-journey"]').text()).toContain('尚無有效訓練計畫')
+    expect(app.find('[data-testid="plan-training-journey"]').exists()).toBe(false)
+    expect(app.get('[data-testid="plan-current-phase"]').text()).toContain('尚無有效訓練計畫')
+    expect(app.get('[data-testid="plan-current-phase"]').find('[data-testid="open-plan-regeneration-sheet"]').exists()).toBe(true)
     await app.get('[data-view="today"]').trigger('click')
     expect(app.text()).not.toContain('Build')
   })
@@ -63,8 +85,8 @@ describe('Stage 7 frontend acceptance', () => {
     const scroller = app.get('[data-testid="plan-journey-phases"]')
     expect(scroller.findAll('[data-testid="plan-journey-stop"]')).toHaveLength(5)
     for (const phase of phases) expect(scroller.text()).toContain(`canonical-${phase}`)
-    expect(scroller.find('.plan-journey__intro').exists()).toBe(false)
-    expect(app.find('[data-testid="plan-training-journey"] > .plan-journey__intro').exists()).toBe(true)
+    expect(scroller.text()).not.toContain('目前計畫')
+    expect(app.get('[data-testid="plan-current-phase"]').text()).toContain('canonical-base')
   })
   it.each([
     ['2026-09-25T15:59:59Z', 'base'],
@@ -329,7 +351,7 @@ describe('Stage 7 frontend acceptance', () => {
     vi.setSystemTime(new Date(instant))
     const app = await render([plan('race', { status: 'completed', ends_on: '2026-09-19' })])
     expect(app.find('[data-testid="plan-recovery-window"]').exists()).toBe(visible)
-    expect(app.get('[data-testid="plan-training-journey"]').text()).toContain(text)
+    expect(app.get('[data-testid="plan-current-phase"]').text()).toContain(text)
     if (visible) {
       const recovery = app.get('[data-testid="plan-recovery-window"]')
       expect(recovery.text()).toContain('2026-09-20')
