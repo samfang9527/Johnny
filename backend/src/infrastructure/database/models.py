@@ -312,6 +312,33 @@ class TrainingMetricSnapshotModel(TimestampMixin, Base):
     metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
 
+class PlanActivationRevisionModel(TimestampMixin, Base):
+    __tablename__ = "plan_activation_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    plan_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    previous_plan_id: Mapped[str | None] = mapped_column(String(36))
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_local_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    timezone_name: Mapped[str] = mapped_column(String(80), nullable=False)
+
+
+class WorkoutPrescriptionRevisionModel(TimestampMixin, Base):
+    __tablename__ = "workout_prescription_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    plan_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    workout_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    scheduled_for: Mapped[date] = mapped_column(Date(), nullable=False)
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    workout_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[str] = mapped_column(String(32), nullable=False)
+    recommendation_id: Mapped[str | None] = mapped_column(String(36))
+
+
 class RecommendationModel(TimestampMixin, Base):
     __tablename__ = "recommendations"
     __table_args__ = (

@@ -20,6 +20,8 @@ EXPECTED_TABLES = {
     "recommendations",
     "agent_runs",
     "daily_advices",
+    "plan_activation_revisions",
+    "workout_prescription_revisions",
     "agent_run_steps",
     "agent_context_sources",
     "agent_tasks",

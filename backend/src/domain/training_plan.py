@@ -424,6 +424,29 @@ class Workout:
             raise DomainValidationError(f"invalid workout status transition: {self.status} -> {status}")
         return replace(self, status=status)
 
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> Workout:
+        """Restore every canonical field from a stored prescription snapshot."""
+        scheduled_for = payload["scheduled_for"]
+        return cls.create(
+            id=payload.get("id"),
+            scheduled_for=date.fromisoformat(scheduled_for) if isinstance(scheduled_for, str) else scheduled_for,
+            workout_type=payload["workout_type"],
+            purpose=payload["purpose"],
+            planned_duration_minutes=payload.get("planned_duration_minutes"),
+            planned_distance_meters=payload.get("planned_distance_meters"),
+            pace_range_seconds_per_km=tuple(payload["pace_range_seconds_per_km"])
+            if payload.get("pace_range_seconds_per_km") is not None else None,
+            heart_rate_zone=payload.get("heart_rate_zone"),
+            phase=payload.get("phase"),
+            coach_note=payload.get("coach_note"),
+            steps=tuple(payload.get("steps") or ()),
+            status=payload.get("status", "planned"),
+            race_goal_id=payload.get("race_goal_id"),
+            race_name=payload.get("race_name"),
+            race_priority=payload.get("race_priority"),
+        )
+
     def to_payload(self) -> dict[str, Any]:
         return {
             "id": self.id,

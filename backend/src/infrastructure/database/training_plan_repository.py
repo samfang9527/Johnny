@@ -16,7 +16,7 @@ from src.domain.training_plan import (
     validate_phase_segments,
 )
 
-from .models import PlanAdjustmentModel, RaceModel, TrainingPlanModel, WorkoutModel
+from .models import AthleteProfileModel, PlanAdjustmentModel, RaceModel, TrainingPlanModel, WorkoutModel
 
 
 class SqlAlchemyTrainingPlanRepository:
@@ -211,6 +211,7 @@ class SqlAlchemyTrainingPlanRepository:
             conflict.status = "superseded"
         draft.status = "active"
         self._session.flush()
+        self._record_active_history(user_id, draft, was_active=False, old_workouts={})
         return _plan_from_model(draft)
 
     def save_plan(self, user_id: str, plan: TrainingPlan) -> TrainingPlan:
@@ -221,6 +222,11 @@ class SqlAlchemyTrainingPlanRepository:
     def _save_plan_model(self, user_id: str, plan: TrainingPlan) -> TrainingPlanModel:
         _ensure_matching_user_id(user_id, plan.user_id)
         model = self._get_plan_model(user_id, plan)
+        was_active = model.status == "active" and model.id is not None
+        old_workouts = {
+            workout.id: _workout_from_model(workout).to_payload()
+            for workout in model.workouts
+        } if was_active else {}
         model.user_id = user_id
         model.race_id = plan.race_id
         model.name = plan.name
@@ -229,7 +235,38 @@ class SqlAlchemyTrainingPlanRepository:
         model.ends_on = plan.ends_on
         model.metadata_json = dict(plan.metadata)
         model.workouts = [_workout_model_from_domain(workout) for workout in plan.workouts]
+        self._session.flush()
+        if plan.status == "active":
+            self._record_active_history(user_id, model, was_active=was_active, old_workouts=old_workouts)
         return model
+
+    def _record_active_history(
+        self, user_id: str, model: TrainingPlanModel, *, was_active: bool,
+        old_workouts: dict[str, dict],
+    ) -> None:
+        from .coaching_repository import SqlAlchemyCoachingRepository
+
+        profile = self._session.scalar(select(AthleteProfileModel).where(AthleteProfileModel.user_id == user_id))
+        timezone_name = profile.timezone if profile is not None else "UTC"
+        now = datetime.now(timezone.utc)
+        history = SqlAlchemyCoachingRepository(self._session)
+        if not was_active:
+            history.record_plan_activation(
+                user_id=user_id, plan_id=model.id, effective_at=now,
+                effective_local_date=model.starts_on, timezone_name=timezone_name,
+                previous_plan_id=(model.metadata_json or {}).get("previous_plan_id"),
+            )
+        today = now.astimezone(ZoneInfo(timezone_name)).date()
+        for workout_model in model.workouts:
+            workout = _workout_from_model(workout_model)
+            if old_workouts.get(workout.id) == workout.to_payload():
+                continue
+            history.record_prescription_revision(
+                user_id=user_id, plan_id=model.id, workout=workout,
+                effective_at=now, source="generation" if not was_active else "legacy_backfill",
+                confidence="known" if workout.scheduled_for >= today else "legacy_uncertain",
+                recommendation_id=None,
+            )
 
     def get_plan_for_user(self, user_id: str, plan_id: str | None) -> TrainingPlan | None:
         if plan_id is None:

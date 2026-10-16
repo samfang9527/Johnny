@@ -1,10 +1,14 @@
 import json
 from pathlib import Path
 import runpy
+from datetime import date, datetime, timezone
 
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import JSON, Column, DateTime, ForeignKey, MetaData, String, Table, create_engine, inspect, text
+from sqlalchemy.orm import Session
+
+from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 
 
 def test_migration_revision_ids_fit_default_alembic_version_column() -> None:
@@ -36,6 +40,49 @@ def test_alembic_upgrade_creates_mvp_schema(tmp_path: Path, monkeypatch) -> None
         "integration_credentials",
         "daily_advices",
     }.issubset(table_names)
+
+
+def test_coaching_history_upgrade_marks_old_prescriptions_uncertain(tmp_path: Path, monkeypatch) -> None:
+    database_url = f"sqlite:///{tmp_path / 'coaching_history.db'}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    config = Config("backend/alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0011_add_daily_advice")
+    engine = create_engine(database_url)
+    metadata = MetaData()
+    users = Table("users", metadata, autoload_with=engine)
+    plans = Table("training_plans", metadata, autoload_with=engine)
+    workouts = Table("workouts", metadata, autoload_with=engine)
+    now = datetime(2026, 10, 16, tzinfo=timezone.utc)
+    with engine.begin() as conn:
+        conn.execute(users.insert().values(
+            id="legacy-user", email="legacy@example.com", display_name="Legacy",
+            status="active", created_at=now, updated_at=now,
+        ))
+        conn.execute(plans.insert().values(
+            id="legacy-plan", user_id="legacy-user", name="Legacy plan", status="active",
+            starts_on=date(2025, 1, 1), ends_on=date(2025, 2, 1),
+            metadata_json={}, created_at=now, updated_at=now,
+        ))
+        conn.execute(workouts.insert().values(
+            id="legacy-workout", training_plan_id="legacy-plan", scheduled_for=date(2025, 1, 2),
+            workout_type="easy_run", planned_duration_minutes=40, status="planned",
+            details={"purpose": "Aerobic", "steps": []}, created_at=now, updated_at=now,
+        ))
+    command.upgrade(config, "head")
+    revisions = Table("workout_prescription_revisions", MetaData(), autoload_with=engine)
+    with engine.connect() as conn:
+        rows = list(conn.execute(revisions.select()))
+    assert len(rows) == 1
+    assert rows[0].workout_id == "legacy-workout"
+    assert rows[0].confidence == "legacy_uncertain"
+    assert rows[0].workout_payload["planned_duration_minutes"] == 40
+    with Session(engine) as session:
+        snapshots = SqlAlchemyCoachingRepository(session).list_prescriptions(
+            "legacy-user", date(2025, 1, 2), date(2025, 1, 2), "UTC", {},
+        )
+    assert len(snapshots) == 1
+    assert snapshots[0].confidence == "legacy_uncertain"
 
 
 def test_daily_advice_migration_has_one_current_row_per_user_day_and_provenance(tmp_path: Path, monkeypatch) -> None:
