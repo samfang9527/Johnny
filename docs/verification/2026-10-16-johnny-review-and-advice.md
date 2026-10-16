@@ -21,6 +21,8 @@ The Johnny page was opened in the local test-mode Vite app at desktop, 375px and
 
 `npm --prefix frontend run test` could not execute tests in this host: Vitest 4.1.11 timed out starting a worker (`[vitest-pool-runner]: Timeout waiting for worker to respond`) before transform, import or any test. A single new component test reproduced it; threads, forks and VM thread pools were also attempted, including outside the sandbox. The added `useJohnny.test.ts` and `JohnnyPage.test.ts` are type checked by the build but **have not run**. This remains a release verification gap, along with populated browser acceptance and live-provider behavior.
 
+Isolation check: `npm --prefix frontend run test -- src/raceGoalForm.test.ts --environment=node --pool=threads --maxWorkers=1 --no-file-parallelism` passed 4 tests. A direct `require('./frontend/node_modules/jsdom')` did not finish after 60 seconds; the loader trace continued through jsdom's generated modules. The startup problem is specific to the installed jsdom environment on this host, rather than Vitest's ability to start every worker.
+
 ## Cutover and rollback
 
 1. Pause old schedulers and drain already-running `daily_advice.sync` and `daily_recommendation` work before switching producers. Deploy the additive `0012` migration and new API/worker code before enabling the 04:00 reviewer and Johnny UI.
