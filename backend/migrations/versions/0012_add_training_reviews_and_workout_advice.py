@@ -48,6 +48,90 @@ def upgrade() -> None:
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         )
+    if "coaching_input_versions" not in tables:
+        op.create_table(
+            "coaching_input_versions",
+            sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), primary_key=True),
+            sa.Column("revision", sa.Integer(), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        )
+    if "training_reviews" not in tables:
+        op.create_table(
+            "training_reviews",
+            sa.Column("id", sa.String(36), primary_key=True),
+            sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
+            sa.Column("publication_date", sa.Date(), nullable=False),
+            sa.Column("reviewed_date", sa.Date(), nullable=False),
+            sa.Column("starts_on", sa.Date(), nullable=False),
+            sa.Column("ends_on", sa.Date(), nullable=False),
+            sa.Column("timezone_name", sa.String(80), nullable=False),
+            sa.Column("current_revision_id", sa.String(36)),
+            sa.Column("attempt_state", sa.String(32), nullable=False),
+            sa.Column("attempt_error", sa.String(120)),
+            sa.Column("reserved_generation", sa.Integer(), nullable=False),
+            sa.Column("reserved_run_id", sa.String(36)),
+            sa.Column("freshness", sa.String(32), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.UniqueConstraint("user_id", "publication_date", name="uq_training_review_slot"),
+        )
+    if "training_review_revisions" not in tables:
+        op.create_table(
+            "training_review_revisions",
+            sa.Column("id", sa.String(36), primary_key=True),
+            sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
+            sa.Column("review_id", sa.String(36), sa.ForeignKey("training_reviews.id"), nullable=False),
+            sa.Column("run_id", sa.String(36), nullable=False),
+            sa.Column("content_fingerprint", sa.String(64), nullable=False),
+            sa.Column("input_revision", sa.Integer(), nullable=False),
+            sa.Column("payload", sa.JSON(), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.UniqueConstraint("review_id", "content_fingerprint", name="uq_review_content"),
+        )
+    if "workout_advices" not in tables:
+        op.create_table(
+            "workout_advices",
+            sa.Column("id", sa.String(36), primary_key=True),
+            sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
+            sa.Column("advice_date", sa.Date(), nullable=False),
+            sa.Column("slot_key", sa.String(80), nullable=False),
+            sa.Column("current_revision_id", sa.String(36)),
+            sa.Column("attempt_state", sa.String(32), nullable=False),
+            sa.Column("attempt_error", sa.String(120)),
+            sa.Column("reserved_generation", sa.Integer(), nullable=False),
+            sa.Column("reserved_run_id", sa.String(36)),
+            sa.Column("freshness", sa.String(32), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.UniqueConstraint("user_id", "advice_date", "slot_key", name="uq_workout_advice_slot"),
+        )
+    if "workout_advice_revisions" not in tables:
+        op.create_table(
+            "workout_advice_revisions",
+            sa.Column("id", sa.String(36), primary_key=True),
+            sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
+            sa.Column("advice_id", sa.String(36), sa.ForeignKey("workout_advices.id"), nullable=False),
+            sa.Column("run_id", sa.String(36), nullable=False),
+            sa.Column("content_fingerprint", sa.String(64), nullable=False),
+            sa.Column("input_revision", sa.Integer(), nullable=False),
+            sa.Column("payload", sa.JSON(), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        )
+    if "recommendations" in tables:
+        existing = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("recommendations")}
+        for name, column_type in (
+            ("source_advice_revision_id", sa.String(36)),
+            ("workout_fingerprint", sa.String(64)),
+            ("evidence_fingerprint", sa.String(64)),
+            ("decision_fingerprint", sa.String(64)),
+            ("expires_at", sa.DateTime(timezone=True)),
+            ("invalidation_reason", sa.String(120)),
+        ):
+            if name not in existing:
+                op.add_column("recommendations", sa.Column(name, column_type))
     _backfill_existing_plans()
 
 
@@ -117,5 +201,16 @@ def _backfill_existing_plans() -> None:
 
 
 def downgrade() -> None:
+    existing = set(sa.inspect(op.get_bind()).get_table_names())
+    if "recommendations" in existing:
+        for name in ("invalidation_reason", "expires_at", "decision_fingerprint",
+                     "evidence_fingerprint", "workout_fingerprint", "source_advice_revision_id"):
+            if name in {column["name"] for column in sa.inspect(op.get_bind()).get_columns("recommendations")}:
+                op.drop_column("recommendations", name)
+    op.drop_table("workout_advice_revisions")
+    op.drop_table("workout_advices")
+    op.drop_table("training_review_revisions")
+    op.drop_table("training_reviews")
+    op.drop_table("coaching_input_versions")
     op.drop_table("workout_prescription_revisions")
     op.drop_table("plan_activation_revisions")

@@ -361,6 +361,12 @@ class RecommendationModel(TimestampMixin, Base):
     decision: Mapped[str | None] = mapped_column(String(32))
     decision_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     evidence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    source_advice_revision_id: Mapped[str | None] = mapped_column(String(36))
+    workout_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    evidence_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    decision_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invalidation_reason: Mapped[str | None] = mapped_column(String(120))
 
 
 class AgentRunModel(TimestampMixin, Base):
@@ -432,6 +438,73 @@ class DailyAdviceModel(TimestampMixin, Base):
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source_sync_run_id: Mapped[str | None] = mapped_column(String(36))
     source_run_id: Mapped[str | None] = mapped_column(String(36))
+
+
+class CoachingInputVersionModel(TimestampMixin, Base):
+    __tablename__ = "coaching_input_versions"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class TrainingReviewModel(TimestampMixin, Base):
+    __tablename__ = "training_reviews"
+    __table_args__ = (UniqueConstraint("user_id", "publication_date", name="uq_training_review_slot"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    publication_date: Mapped[date] = mapped_column(Date, nullable=False)
+    reviewed_date: Mapped[date] = mapped_column(Date, nullable=False)
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    timezone_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    current_revision_id: Mapped[str | None] = mapped_column(String(36))
+    attempt_state: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    attempt_error: Mapped[str | None] = mapped_column(String(120))
+    reserved_generation: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reserved_run_id: Mapped[str | None] = mapped_column(String(36))
+    freshness: Mapped[str] = mapped_column(String(32), default="current", nullable=False)
+
+
+class TrainingReviewRevisionModel(TimestampMixin, Base):
+    __tablename__ = "training_review_revisions"
+    __table_args__ = (UniqueConstraint("review_id", "content_fingerprint", name="uq_review_content"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    review_id: Mapped[str] = mapped_column(ForeignKey("training_reviews.id"), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class WorkoutAdviceModel(TimestampMixin, Base):
+    __tablename__ = "workout_advices"
+    __table_args__ = (UniqueConstraint("user_id", "advice_date", "slot_key", name="uq_workout_advice_slot"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    advice_date: Mapped[date] = mapped_column(Date, nullable=False)
+    slot_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    current_revision_id: Mapped[str | None] = mapped_column(String(36))
+    attempt_state: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    attempt_error: Mapped[str | None] = mapped_column(String(120))
+    reserved_generation: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reserved_run_id: Mapped[str | None] = mapped_column(String(36))
+    freshness: Mapped[str] = mapped_column(String(32), default="current", nullable=False)
+
+
+class WorkoutAdviceRevisionModel(TimestampMixin, Base):
+    __tablename__ = "workout_advice_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    advice_id: Mapped[str] = mapped_column(ForeignKey("workout_advices.id"), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
 class AgentTaskModel(TimestampMixin, Base):

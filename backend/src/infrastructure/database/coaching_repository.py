@@ -9,17 +9,205 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.domain.training_plan import Workout
-from src.domain.training_review import PrescriptionSnapshot
+from src.domain.training_review import GenerationReservation, PrescriptionSnapshot, review_period
+from src.domain.coaching_fingerprints import canonical_fingerprint
 from .activity_repository import SqlAlchemyActivityRepository
 from .models import (
     IntegrationConnectionModel, PlanActivationRevisionModel, SyncRunModel,
-    WorkoutPrescriptionRevisionModel,
+    WorkoutPrescriptionRevisionModel, UserModel, CoachingInputVersionModel,
+    TrainingReviewModel, TrainingReviewRevisionModel, WorkoutAdviceModel,
+    WorkoutAdviceRevisionModel, RecommendationModel,
 )
 
 
 class SqlAlchemyCoachingRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def _lock_owner_version(self, user_id: str) -> CoachingInputVersionModel:
+        owner = self._session.scalar(select(UserModel).where(UserModel.id == user_id).with_for_update())
+        if owner is None:
+            raise LookupError("athlete not found")
+        row = self._session.get(CoachingInputVersionModel, user_id)
+        if row is None:
+            row = CoachingInputVersionModel(user_id=user_id, revision=0)
+            self._session.add(row)
+            self._session.flush()
+        return row
+
+    def bump_input_version(self, user_id: str) -> int:
+        version = self._lock_owner_version(user_id)
+        version.revision += 1
+        self._session.flush()
+        return version.revision
+
+    def reserve_review(self, user_id: str, publication_date: date, timezone_name: str,
+                       run_id: str) -> GenerationReservation:
+        ZoneInfo(timezone_name)
+        version = self._lock_owner_version(user_id)
+        slot = self._session.scalar(select(TrainingReviewModel).where(
+            TrainingReviewModel.user_id == user_id,
+            TrainingReviewModel.publication_date == publication_date,
+        ).with_for_update())
+        if slot is None:
+            period = review_period(publication_date)
+            slot = TrainingReviewModel(
+                user_id=user_id, publication_date=publication_date,
+                reviewed_date=period.reviewed_date, starts_on=period.starts_on,
+                ends_on=period.ends_on, timezone_name=timezone_name,
+                reserved_generation=0,
+            )
+            self._session.add(slot)
+            self._session.flush()
+        slot.reserved_generation += 1
+        slot.reserved_run_id = run_id
+        slot.timezone_name = timezone_name
+        slot.attempt_state = "queued"
+        slot.attempt_error = None
+        self._session.flush()
+        return GenerationReservation(user_id, "daily_review", slot.id,
+                                     slot.reserved_generation, version.revision, run_id)
+
+    def reserve_advice(self, user_id: str, advice_date: date, slot_key: str,
+                       run_id: str, constraints: dict) -> GenerationReservation:
+        if not slot_key:
+            raise ValueError("non-null advice slot key is required")
+        version = self._lock_owner_version(user_id)
+        slot = self._session.scalar(select(WorkoutAdviceModel).where(
+            WorkoutAdviceModel.user_id == user_id,
+            WorkoutAdviceModel.advice_date == advice_date,
+            WorkoutAdviceModel.slot_key == slot_key,
+        ).with_for_update())
+        if slot is None:
+            slot = WorkoutAdviceModel(user_id=user_id, advice_date=advice_date,
+                                      slot_key=slot_key, reserved_generation=0)
+            self._session.add(slot)
+            self._session.flush()
+        slot.reserved_generation += 1
+        slot.reserved_run_id = run_id
+        slot.attempt_state = "queued"
+        slot.attempt_error = None
+        self._session.flush()
+        return GenerationReservation(user_id, "workout_advice", slot.id,
+                                     slot.reserved_generation, version.revision, run_id)
+
+    def _current_reservation(self, reservation: GenerationReservation, kind: str):
+        if reservation.workflow_kind != kind:
+            raise ValueError("reservation workflow does not match publication")
+        model_class = TrainingReviewModel if kind == "daily_review" else WorkoutAdviceModel
+        slot = self._session.scalar(select(model_class).where(
+            model_class.id == reservation.slot_id,
+            model_class.user_id == reservation.user_id,
+        ).with_for_update())
+        if (slot is None or slot.reserved_generation != reservation.generation
+                or slot.reserved_run_id != reservation.run_id):
+            return None
+        return slot
+
+    def publish_review(self, reservation: GenerationReservation, revision: dict) -> bool:
+        version = self._lock_owner_version(reservation.user_id)
+        slot = self._current_reservation(reservation, "daily_review")
+        if slot is None:
+            return False
+        if version.revision != reservation.input_revision:
+            slot.attempt_state = "inputs_changed"
+            self._session.flush()
+            return False
+        fingerprint = revision.get("fingerprint") or canonical_fingerprint(revision)
+        existing = self._session.scalar(select(TrainingReviewRevisionModel).where(
+            TrainingReviewRevisionModel.review_id == slot.id,
+            TrainingReviewRevisionModel.content_fingerprint == fingerprint,
+        ))
+        if existing is None:
+            existing = TrainingReviewRevisionModel(
+                user_id=reservation.user_id, review_id=slot.id, run_id=reservation.run_id,
+                content_fingerprint=fingerprint, input_revision=reservation.input_revision,
+                payload=revision,
+            )
+            self._session.add(existing)
+            self._session.flush()
+        slot.current_revision_id = existing.id
+        slot.attempt_state = "ready"
+        slot.attempt_error = None
+        self._session.flush()
+        return True
+
+    def publish_advice(self, reservation: GenerationReservation, revision: dict,
+                       proposal=None) -> bool:
+        version = self._lock_owner_version(reservation.user_id)
+        slot = self._current_reservation(reservation, "workout_advice")
+        if slot is None:
+            return False
+        if version.revision != reservation.input_revision:
+            slot.attempt_state = "inputs_changed"
+            self._session.flush()
+            return False
+        payload = dict(revision)
+        if proposal is not None:
+            from .recommendation_repository import SqlAlchemyRecommendationRepository
+            if proposal.user_id != reservation.user_id:
+                raise ValueError("proposal owner mismatch")
+            saved = SqlAlchemyRecommendationRepository(self._session).create_recommendation(
+                reservation.user_id, proposal,
+            )
+            payload["recommendation_id"] = saved.id
+        item = WorkoutAdviceRevisionModel(
+            user_id=reservation.user_id, advice_id=slot.id, run_id=reservation.run_id,
+            content_fingerprint=payload.get("fingerprint") or canonical_fingerprint(payload),
+            input_revision=reservation.input_revision, payload=payload,
+        )
+        self._session.add(item)
+        self._session.flush()
+        if proposal is not None:
+            recommendation_model = self._session.scalar(select(RecommendationModel).where(
+                RecommendationModel.id == payload["recommendation_id"],
+                RecommendationModel.user_id == reservation.user_id,
+            ))
+            recommendation_model.source_advice_revision_id = item.id
+            recommendation_model.workout_fingerprint = payload.get("workout_fingerprint")
+            recommendation_model.evidence_fingerprint = payload.get("evidence_fingerprint")
+            recommendation_model.decision_fingerprint = payload.get("decision_fingerprint")
+        slot.current_revision_id = item.id
+        slot.attempt_state = "ready"
+        slot.attempt_error = None
+        self._session.flush()
+        return True
+
+    def mark_attempt_failed(self, reservation: GenerationReservation, state: str,
+                            reason_code: str) -> None:
+        slot = self._current_reservation(reservation, reservation.workflow_kind)
+        if slot is not None:
+            slot.attempt_state = state
+            slot.attempt_error = reason_code
+            self._session.flush()
+
+    def get_review_slot(self, user_id: str, publication_date: date) -> dict | None:
+        slot = self._session.scalar(select(TrainingReviewModel).where(
+            TrainingReviewModel.user_id == user_id,
+            TrainingReviewModel.publication_date == publication_date,
+        ))
+        if slot is None:
+            return None
+        current = self._session.get(TrainingReviewRevisionModel, slot.current_revision_id) if slot.current_revision_id else None
+        return {"id": slot.id, "publication_date": slot.publication_date.isoformat(),
+                "attempt_state": slot.attempt_state, "attempt_error": slot.attempt_error,
+                "freshness": slot.freshness, "revision_id": slot.current_revision_id,
+                "current": current.payload if current else None}
+
+    def get_advice_slot(self, user_id: str, advice_date: date, slot_key: str) -> dict | None:
+        slot = self._session.scalar(select(WorkoutAdviceModel).where(
+            WorkoutAdviceModel.user_id == user_id,
+            WorkoutAdviceModel.advice_date == advice_date,
+            WorkoutAdviceModel.slot_key == slot_key,
+        ))
+        if slot is None:
+            return None
+        current = self._session.get(WorkoutAdviceRevisionModel, slot.current_revision_id) if slot.current_revision_id else None
+        return {"id": slot.id, "advice_date": slot.advice_date.isoformat(),
+                "slot_key": slot.slot_key, "attempt_state": slot.attempt_state,
+                "attempt_error": slot.attempt_error, "freshness": slot.freshness,
+                "revision_id": slot.current_revision_id,
+                "current": current.payload if current else None}
 
     def list_review_activities(self, user_id: str, starts_on: date, ends_on: date):
         return tuple(SqlAlchemyActivityRepository(self._session).list_activities_for_user_between(

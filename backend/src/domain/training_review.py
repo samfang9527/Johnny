@@ -48,3 +48,13 @@ class ReviewEvidence:
     sessions: tuple[ActivitySession, ...]
     covered_dates: frozenset[date]
     uncertainty_reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class GenerationReservation:
+    user_id: str
+    workflow_kind: str
+    slot_id: str
+    generation: int
+    input_revision: int
+    run_id: str
