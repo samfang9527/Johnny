@@ -157,7 +157,8 @@ class GarminConnectResourceAdapter:
             return GarminResourceFetchResult(items=[api.get_lactate_threshold()])
         if resource_type == "activities":
             items = api.get_activities_by_date(start_text, end_text, sortorder="asc")
-            return GarminResourceFetchResult(items=items, cursor=_date_cursor(start_date, end_date))
+            return GarminResourceFetchResult(items=items, cursor=_date_cursor(start_date, end_date),
+                                             pagination_complete=True)
         if resource_type == "body_battery":
             items = [
                 {"calendarDate": _item_date(item), "get_body_battery": item}

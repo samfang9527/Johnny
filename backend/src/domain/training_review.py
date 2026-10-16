@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from src.domain.training_plan import Workout
+from src.domain.activity_sessions import ActivitySession
 
 
 @dataclass(frozen=True)
@@ -36,3 +37,14 @@ class PrescriptionSnapshot:
     source: str
     confidence: str
     recommendation_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ReviewEvidence:
+    period: ReviewPeriod
+    timezone_name: str
+    cutoff_at: datetime
+    prescriptions: tuple[PrescriptionSnapshot, ...]
+    sessions: tuple[ActivitySession, ...]
+    covered_dates: frozenset[date]
+    uncertainty_reasons: tuple[str, ...] = ()

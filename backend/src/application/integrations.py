@@ -159,10 +159,13 @@ class GarminInitialSyncCommand:
 class GarminResourceFetchResult:
     items: tuple[dict, ...] = ()
     cursor: dict | None = None
+    pagination_complete: bool = False
 
-    def __init__(self, items: list[dict] | tuple[dict, ...] | None = None, cursor: dict | None = None) -> None:
+    def __init__(self, items: list[dict] | tuple[dict, ...] | None = None, cursor: dict | None = None,
+                 pagination_complete: bool = False) -> None:
         object.__setattr__(self, "items", tuple(dict(item) for item in items or ()))
         object.__setattr__(self, "cursor", dict(cursor or {}))
+        object.__setattr__(self, "pagination_complete", pagination_complete)
 
 
 @dataclass(frozen=True)
@@ -415,6 +418,11 @@ class GarminInitialSyncHandler:
                 summary = summary.record_fetched(resource_type, len(result.items))
                 failed_before = summary.failed_count(resource_type)
                 summary = self._store_resource(command.user_id, connection.id, resource_type, result.items, summary)
+                if resource_type == "activities":
+                    summary = summary.with_activity_coverage(
+                        starts_on=start_date, ends_on=end_date, timezone_name=timezone_name,
+                        pagination_complete=result.pagination_complete and summary.failed_count("activities") == 0,
+                    )
                 if summary.failed_count(resource_type) == failed_before:
                     self._integrations.upsert_resource_cursor(
                         connection.id,

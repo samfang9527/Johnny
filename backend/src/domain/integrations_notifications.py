@@ -244,6 +244,7 @@ class NormalizedProviderRecord:
 @dataclass(frozen=True)
 class SyncSummary:
     resources: dict[str, dict[str, Any]]
+    activity_coverage: dict[str, Any] | None = None
 
     @classmethod
     def empty(cls) -> SyncSummary:
@@ -273,10 +274,23 @@ class SyncSummary:
         safe_backoff = _safe_backoff_metadata(backoff or {})
         if safe_backoff:
             bucket["backoff"] = safe_backoff
-        return SyncSummary(resources=resources)
+        return SyncSummary(resources=resources, activity_coverage=self.activity_coverage)
 
     def to_payload(self) -> dict[str, Any]:
-        return {"resources": _copy_resources(self.resources)}
+        payload = {"resources": _copy_resources(self.resources)}
+        if self.activity_coverage is not None:
+            payload["activity_coverage"] = dict(self.activity_coverage)
+        return payload
+
+    def with_activity_coverage(
+        self, *, starts_on: date, ends_on: date, timezone_name: str,
+        pagination_complete: bool, skipped_count: int = 0,
+    ) -> SyncSummary:
+        return replace(self, activity_coverage={
+            "starts_on": starts_on.isoformat(), "ends_on": ends_on.isoformat(),
+            "timezone_name": timezone_name, "pagination_complete": pagination_complete,
+            "skipped_count": skipped_count,
+        })
 
     def failed_count(self, resource_type: str) -> int:
         return int(self.resources.get(resource_type, {}).get("failed", 0))
@@ -294,14 +308,15 @@ class SyncSummary:
             safe_backoff = _safe_backoff_metadata(values.get("backoff", {}))
             if safe_backoff:
                 bucket["backoff"] = safe_backoff
-        return cls(resources=resources)
+        coverage = (payload or {}).get("activity_coverage")
+        return cls(resources=resources, activity_coverage=dict(coverage) if isinstance(coverage, dict) else None)
 
     def _increment(self, resource_type: str, field: str, count: int) -> SyncSummary:
         if count < 0:
             raise DomainValidationError("sync summary count cannot be negative")
         resources = _copy_resources(self.resources)
         _bucket(resources, resource_type)[field] += count
-        return SyncSummary(resources=resources)
+        return SyncSummary(resources=resources, activity_coverage=self.activity_coverage)
 
 
 @dataclass(frozen=True)

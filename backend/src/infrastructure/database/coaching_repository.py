@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -10,12 +10,57 @@ from sqlalchemy.orm import Session
 
 from src.domain.training_plan import Workout
 from src.domain.training_review import PrescriptionSnapshot
-from .models import PlanActivationRevisionModel, WorkoutPrescriptionRevisionModel
+from .activity_repository import SqlAlchemyActivityRepository
+from .models import (
+    IntegrationConnectionModel, PlanActivationRevisionModel, SyncRunModel,
+    WorkoutPrescriptionRevisionModel,
+)
 
 
 class SqlAlchemyCoachingRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def list_review_activities(self, user_id: str, starts_on: date, ends_on: date):
+        return tuple(SqlAlchemyActivityRepository(self._session).list_activities_for_user_between(
+            user_id, starts_on, ends_on,
+        ))
+
+    def covered_review_dates(
+        self, user_id: str, starts_on: date, ends_on: date,
+        timezone_name: str, as_of: datetime,
+    ) -> frozenset[date]:
+        ZoneInfo(timezone_name)
+        runs = self._session.scalars(
+            select(SyncRunModel).join(
+                IntegrationConnectionModel,
+                SyncRunModel.integration_connection_id == IntegrationConnectionModel.id,
+            ).where(
+                IntegrationConnectionModel.user_id == user_id,
+                SyncRunModel.finished_at.is_not(None),
+                SyncRunModel.finished_at <= _utc(as_of),
+            )
+        )
+        days: set[date] = set()
+        for run in runs:
+            summary = run.summary or {}
+            coverage = summary.get("activity_coverage") or {}
+            bucket = (summary.get("resources") or {}).get("activities") or {}
+            if (coverage.get("timezone_name") != timezone_name
+                    or coverage.get("pagination_complete") is not True
+                    or coverage.get("skipped_count", 0) != 0
+                    or bucket.get("failed", 0) != 0):
+                continue
+            try:
+                first = max(starts_on, date.fromisoformat(coverage["starts_on"]))
+                last = min(ends_on, date.fromisoformat(coverage["ends_on"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            current = first
+            while current <= last:
+                days.add(current)
+                current += timedelta(days=1)
+        return frozenset(days)
 
     def record_plan_activation(
         self, *, user_id: str, plan_id: str, effective_at: datetime,
