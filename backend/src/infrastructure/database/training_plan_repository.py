@@ -123,6 +123,51 @@ class SqlAlchemyTrainingPlanRepository:
             return None
         return self._resolve_targets(_plan_from_model(model))
 
+    def get_plan_for_date_raw(self, user_id: str, anchor_date: date) -> TrainingPlan | None:
+        """Read stored prescription fields without display-only Target enrichment."""
+        model = self._session.scalar(select(TrainingPlanModel).options(
+            selectinload(TrainingPlanModel.workouts),
+        ).where(TrainingPlanModel.user_id == user_id,
+                TrainingPlanModel.status == "active").order_by(
+            TrainingPlanModel.starts_on.desc(), TrainingPlanModel.id.desc(),
+        ).limit(1))
+        visited: set[str] = set()
+        while model is not None and anchor_date < model.starts_on:
+            if model.id in visited:
+                return None
+            visited.add(model.id)
+            previous_id = (model.metadata_json or {}).get("previous_plan_id")
+            if not previous_id:
+                return None
+            model = self._session.scalar(select(TrainingPlanModel).options(
+                selectinload(TrainingPlanModel.workouts),
+            ).where(TrainingPlanModel.id == previous_id,
+                    TrainingPlanModel.user_id == user_id,
+                    TrainingPlanModel.status.in_(("active", "superseded", "completed"))))
+        if model is None or not model.starts_on <= anchor_date <= model.ends_on:
+            return None
+        return _plan_from_model(model)
+
+    def update_workout_if_current(self, user_id: str, plan_id: str, workout_id: str,
+                                  expected_fingerprint: str, after: Workout) -> bool:
+        from src.domain.coaching_fingerprints import canonical_fingerprint
+        model = self._session.scalar(select(WorkoutModel).join(TrainingPlanModel).where(
+            WorkoutModel.id == workout_id,
+            TrainingPlanModel.id == plan_id,
+            TrainingPlanModel.user_id == user_id,
+            TrainingPlanModel.status == "active",
+        ).with_for_update())
+        if model is None or canonical_fingerprint(_workout_from_model(model).to_payload()) != expected_fingerprint:
+            return False
+        if after.id != workout_id or after.scheduled_for != model.scheduled_for:
+            return False
+        model.workout_type = after.workout_type
+        model.planned_duration_minutes = after.planned_duration_minutes
+        model.status = after.status
+        model.details = _workout_details(after)
+        self._session.flush()
+        return True
+
     def list_active_plans_ending_on_or_before(self, ends_on: date) -> list[TrainingPlan]:
         latest_end_by_user = (
             select(
@@ -172,6 +217,8 @@ class SqlAlchemyTrainingPlanRepository:
         if plan.status != "active":
             raise ValueError("active plan must have active status")
         validate_phase_segments(plan)
+        from .coaching_repository import SqlAlchemyCoachingRepository
+        SqlAlchemyCoachingRepository(self._session)._lock_owner_version(user_id)
         conflicts = self._active_conflicts_for_plan(user_id, plan, replace_all_active=replace_all_active)
         model = self._save_plan_model(user_id, plan)
         for conflict in conflicts:
@@ -190,6 +237,8 @@ class SqlAlchemyTrainingPlanRepository:
     ) -> TrainingPlan | None:
         if plan_id is None:
             return None
+        from .coaching_repository import SqlAlchemyCoachingRepository
+        SqlAlchemyCoachingRepository(self._session)._lock_owner_version(user_id)
         draft = self._session.scalar(
             select(TrainingPlanModel)
             .options(selectinload(TrainingPlanModel.workouts))
@@ -221,6 +270,8 @@ class SqlAlchemyTrainingPlanRepository:
 
     def _save_plan_model(self, user_id: str, plan: TrainingPlan) -> TrainingPlanModel:
         _ensure_matching_user_id(user_id, plan.user_id)
+        from .coaching_repository import SqlAlchemyCoachingRepository
+        SqlAlchemyCoachingRepository(self._session)._lock_owner_version(user_id)
         model = self._get_plan_model(user_id, plan)
         was_active = model.status == "active" and model.id is not None
         old_workouts = {
@@ -238,6 +289,22 @@ class SqlAlchemyTrainingPlanRepository:
         self._session.flush()
         if plan.status == "active":
             self._record_active_history(user_id, model, was_active=was_active, old_workouts=old_workouts)
+            new_workouts = {item.id: _workout_from_model(item).to_payload() for item in model.workouts}
+            if not was_active or new_workouts != old_workouts:
+                from src.application.coaching_refresh import CoachingRefreshService
+                profile = self._session.scalar(select(AthleteProfileModel).where(
+                    AthleteProfileModel.user_id == user_id))
+                zone = ZoneInfo(profile.timezone if profile else "UTC")
+                today = datetime.now(timezone.utc).astimezone(zone).date()
+                changed_dates = {
+                    date.fromisoformat(payload["scheduled_for"])
+                    for payload in (*old_workouts.values(), *new_workouts.values())
+                    if date.fromisoformat(payload["scheduled_for"]) < today
+                }
+                CoachingRefreshService(self._session).record_change(
+                    user_id=user_id, changed_dates=changed_dates, today=today,
+                    reason="plan_prescription_changed", affects_advice=True,
+                )
         return model
 
     def _record_active_history(

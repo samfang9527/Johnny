@@ -17,6 +17,9 @@ import type {
   TrainingPlanRegenerationRequest,
   TrainingPlanRegenerationStartResponse,
   TrainingPlanResponse,
+  JohnnyOverview,
+  JohnnyHistoryEntry,
+  WorkoutAdviceConstraints,
 } from '../types'
 
 export function getApiBaseUrl(): string {
@@ -146,6 +149,23 @@ export function listTrainingPlans(): Promise<{ data: TrainingPlanResponse[] }> {
 
 export function getAgentRun(runId: string): Promise<{ data: AgentRunResponse }> {
   return getJson(`/agent-runs/${encodeURIComponent(runId)}`)
+}
+
+export function getJohnnyOverview(): Promise<{ data: JohnnyOverview }> {
+  return getJson('/johnny/overview')
+}
+
+export function listJohnnyHistory(limit = 20, offset = 0): Promise<{ data: JohnnyHistoryEntry[] }> {
+  return getJson(`/johnny/history?limit=${limit}&offset=${offset}`)
+}
+
+export function requestWorkoutAdvice(payload: { client_request_id: string; workout_id: string | null;
+  constraints: WorkoutAdviceConstraints }): Promise<{ data: { run_id: string; status: string; workflow_name: string; poll_url: string } }> {
+  return postJson('/johnny/workout-advice', payload)
+}
+
+export function retryJohnnyReview(id: string): Promise<{ data: { run_id: string; status: string; workflow_name: string; poll_url: string } }> {
+  return postJson(`/johnny/reviews/${encodeURIComponent(id)}/retry`)
 }
 
 export function getTrainingPlanRegenerationOptions(): Promise<{ data: TrainingPlanRegenerationOptions }> {

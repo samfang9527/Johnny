@@ -12,6 +12,9 @@ from src.domain.daily_advice import DailyAdvice
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.daily_advice_repository import SqlAlchemyDailyAdviceRepository
+from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
+from src.infrastructure.database.models import WorkoutAdviceModel
+from sqlalchemy import select
 from src.infrastructure.database.recommendation_repository import SqlAlchemyRecommendationRepository
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
@@ -34,6 +37,13 @@ def get_today(
     payload["current_recommendation"] = _current_recommendation_payload(session, current_user.id)
     advice = SqlAlchemyDailyAdviceRepository(session).get_for_user_date(current_user.id, anchor_date)
     payload["daily_advice"] = _daily_advice_payload(advice) if advice is not None else None
+    latest = session.scalar(select(WorkoutAdviceModel).where(
+        WorkoutAdviceModel.user_id == current_user.id,
+        WorkoutAdviceModel.advice_date == anchor_date,
+        WorkoutAdviceModel.current_revision_id.is_not(None),
+    ).order_by(WorkoutAdviceModel.updated_at.desc(), WorkoutAdviceModel.id.desc()).limit(1))
+    payload["workout_advice"] = (SqlAlchemyCoachingRepository(session).get_advice_slot(
+        current_user.id, latest.advice_date, latest.slot_key) if latest else None)
     return DataEnvelope(data=TodayContextResponse(**payload))
 
 

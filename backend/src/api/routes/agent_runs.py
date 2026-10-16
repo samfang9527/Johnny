@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import date
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import APIRouter, Query
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
-from src.api.errors import ApiNotFoundError
+from src.api.errors import ApiConflictError, ApiNotFoundError
+from src.api.routes.johnny import _local_context, request_workout_advice
+from src.api.schemas.johnny import WorkoutAdviceRequest
 from src.api.schemas.agent_runs import (
     AgentRunResponse,
     AgentRunStepResponse,
@@ -25,26 +27,22 @@ from src.infrastructure.llm.settings import resolve_queued_daily_advice_provider
 router = APIRouter(prefix="/agent-runs", tags=["agent-runs"])
 
 
-@router.post("/daily-recommendation", response_model=DataEnvelope[QueuedAgentRunResponse])
+@router.post("/daily-recommendation", response_model=DataEnvelope[QueuedAgentRunResponse], status_code=202)
 def queue_daily_recommendation(
     payload: DailyRecommendationRunRequest,
     current_user: CurrentUserDependency,
     session: SessionDependency,
 ) -> DataEnvelope[QueuedAgentRunResponse]:
     ensure_current_user(session, current_user)
-    anchor_date = payload.anchor_date or date.today()
-    idempotency_key = f"daily_recommendation:{current_user.id}:{anchor_date.isoformat()}"
-    if payload.force:
-        idempotency_key = f"{idempotency_key}:force:{uuid4()}"
-    result = _queue_handler(session, daily_advice=True).queue_run(
-        user_id=current_user.id,
-        workflow_name="daily_recommendation",
-        trigger_type="manual",
-        idempotency_key=idempotency_key,
-        payload={"anchor_date": anchor_date.isoformat(), "force": payload.force},
-        task_type="daily_advice.sync",
+    today, _ = _local_context(session, current_user.id)
+    if payload.anchor_date is not None and payload.anchor_date != today:
+        raise ApiConflictError("manual_advice_must_target_today")
+    request_id = uuid4() if payload.force else uuid5(NAMESPACE_URL,
+        f"legacy-manual-advice:{current_user.id}:{today.isoformat()}")
+    return request_workout_advice(
+        WorkoutAdviceRequest(client_request_id=request_id, workout_id=None),
+        current_user, session,
     )
-    return DataEnvelope(data=_queued_response(result))
 
 
 @router.post("/training-plan-generation", response_model=DataEnvelope[QueuedAgentRunResponse])
@@ -157,6 +155,9 @@ def _run_response(run: AgentRun) -> AgentRunResponse:
         error_message=run.error_message,
         recommendation_id=run.recommendation_id,
         daily_advice_id=run.metadata.get("daily_advice_id"),
+        training_review_id=run.metadata.get("training_review_id"),
+        workout_advice_id=run.metadata.get("workout_advice_id"),
+        result_state=run.metadata.get("result_state"),
     )
 
 

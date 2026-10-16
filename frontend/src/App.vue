@@ -33,7 +33,7 @@ import {
 import AppButton from './components/AppButton.vue'
 import EvidenceList from './components/EvidenceList.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
-import DailyAdviceCard from './components/DailyAdviceCard.vue'
+import JohnnyPage from './pages/JohnnyPage.vue'
 import SessionReviews from './components/SessionReviews.vue'
 import ProviderCard from './components/ProviderCard.vue'
 import RaceGoalModal from './components/RaceGoalModal.vue'
@@ -84,6 +84,7 @@ import type {
   SignalCoverageItem,
   WorkoutStep,
   WorkoutTarget,
+  JohnnyAdviceSlot,
 } from './types'
 
 const props = withDefaults(
@@ -154,6 +155,7 @@ const recommendationStatus = ref(fixtureRecommendation.status)
 const apiRaceSummary = ref<RaceSummary | null>(null)
 const apiTodayWorkoutPayload = ref<Record<string, unknown> | null>(null)
 const apiDailyAdvice = ref<DailyAdvice | null>(null)
+const apiManualAdvice = ref<JohnnyAdviceSlot | null>(null)
 const sessionReviewsRefreshKey = ref(0)
 const apiTodayWorkout = computed(() => {
   const raw = apiTodayWorkoutPayload.value
@@ -437,8 +439,15 @@ const recoveryFooterText = computed(() => {
 })
 const recoveryDecision = computed(() => buildRecoveryDecision(recommendation.value, recoveryEvidence.value))
 const dailyAdvice = computed(() => apiDailyAdvice.value?.adviceDate === todayIsoDate.value ? apiDailyAdvice.value : null)
+const currentManualAdvice = computed(() => {
+  const slot = apiManualAdvice.value
+  return slot?.advice_date === todayIsoDate.value && slot.freshness === 'current' &&
+    slot.current && new Date(slot.current.expires_at).getTime() > Date.now() ? slot.current : null
+})
 const todayDecision = computed<TodayDecision>(() => {
-  const decision = dailyAdvice.value ? buildAdviceDecision(dailyAdvice.value) : buildTodayDecision(recommendation.value, recoveryEvidence.value)
+  const decision = buildTodayDecision(recommendation.value, recoveryEvidence.value)
+  if (currentManualAdvice.value) return { ...decision, voice: currentManualAdvice.value.guidance,
+    actionLabel: '查看 Johnny 建議' }
   if (dailyAdvice.value?.state === 'no_plan') return { ...decision, actionLabel: '查看計畫' }
   if (dailyAdvice.value?.state === 'sync_failed') return { ...decision, actionLabel: '檢查資料' }
   if (decision.state === 'run') {
@@ -1046,6 +1055,10 @@ async function closeTodayDayPreview() {
 }
 
 function handleTodayDecisionAction() {
+  if (currentManualAdvice.value) {
+    showView('johnny')
+    return
+  }
   if (dailyAdvice.value?.state === 'no_plan') {
     showView('plan')
     return
@@ -2214,7 +2227,10 @@ function applyIntegrationsPayload(connections: IntegrationConnectionResponse[]) 
 }
 
 function applyTodayPayload(payload: Record<string, unknown>) {
-  apiDailyAdvice.value = mapDailyAdvice(payload.daily_advice)
+  // Legacy combined advice is retained in the transport for old clients only.
+  apiDailyAdvice.value = null
+  apiManualAdvice.value = (payload.workout_advice && typeof payload.workout_advice === 'object'
+    ? payload.workout_advice as JohnnyAdviceSlot : null)
   const nextRace = payload.next_race as Record<string, unknown> | null | undefined
   if (nextRace?.name && nextRace.race_date) {
     apiRaceSummary.value = {
@@ -3053,8 +3069,8 @@ function shouldRequireAuth(): boolean {
               <strong>{{ todayDecision.label }}</strong>
             </div>
             <p>{{ todayDecision.voice }}</p>
-            <p v-if="dailyAdvice" class="today-decision-card__freshness">
-              {{ dailyAdvice.dataFreshness === 'stale' ? '先前建議 · 資料可能過時' : dailyAdvice.dataFreshness === 'limited' ? '資料有限 · 依可用紀錄判斷' : '最新建議' }}
+            <p v-if="apiManualAdvice" class="today-decision-card__freshness">
+              {{ currentManualAdvice ? '今日請 Johnny 分析' : '先前建議 · 資料可能過時' }}
             </p>
             <p v-if="todayDecision.memoryInsight" class="memory-insight">{{ todayDecision.memoryInsight }}</p>
             <AppButton tone="primary" data-testid="today-decision-action" @click="handleTodayDecisionAction">{{ todayDecision.actionLabel }}</AppButton>
@@ -3117,7 +3133,6 @@ function shouldRequireAuth(): boolean {
         </div>
 
         <template v-if="effectiveTodayState === 'full'">
-        <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" collapsed class="today-grid__wide" data-testid="today-daily-advice" />
 
         <SessionReviews v-if="currentUser" :key="currentUser.id" :anchor-date="todayIsoDate" :time-zone="userTimezone" :refresh-key="sessionReviewsRefreshKey" class="today-grid__wide" @changed="handleSessionReviewChanged" @error="handleSessionExpiry" />
 
@@ -3346,109 +3361,7 @@ function shouldRequireAuth(): boolean {
 
       </section>
 
-      <section v-else-if="activeView === 'johnny'" class="page-stack johnny-page" data-testid="johnny-page" aria-labelledby="johnny-title">
-        <div class="page-heading">
-          <h2 id="johnny-title">Johnny</h2>
-          <p>需要你確認的課表調整先列在這裡；今日執行建議接在後面。</p>
-        </div>
-
-        <article v-if="props.inboxState === 'loading'" class="state-panel" aria-live="polite">
-          <p class="section-label">Loading</p>
-          <h3>正在整理 Johnny 建議</h3>
-          <p>Johnny 正在比對課表、恢復訊號和待決定建議。</p>
-        </article>
-
-        <article v-else-if="props.inboxState === 'error'" class="state-panel state-panel--danger" role="alert">
-          <p class="section-label">Error</p>
-          <h3>Johnny 建議載入失敗</h3>
-          <p>請稍後再試，或先回到今日檢查主要訓練決策。</p>
-          <AppButton tone="neutral" @click="showView('today')">回到今日</AppButton>
-        </article>
-
-        <article v-else-if="props.inboxState === 'empty' || displayInboxItems.length === 0" class="state-panel">
-          <p class="section-label">Empty</p>
-          <h3>目前沒有新的主動建議</h3>
-          <p>Johnny 之後會把需要你決定的主動建議放在 Johnny 建議，已處理的建議會保留在歷史區。</p>
-        </article>
-
-        <div v-else class="inbox-layout">
-          <section class="inbox-section" data-testid="johnny-pending" aria-labelledby="inbox-pending-title">
-            <div class="section-heading">
-              <div>
-                <p class="section-label">Pending</p>
-                <h3 id="inbox-pending-title">待決定</h3>
-              </div>
-              <StatusBadge tone="warning">{{ pendingInboxItems.length }} 項</StatusBadge>
-            </div>
-
-            <div class="inbox-list">
-              <article
-                v-for="item in pendingInboxItems"
-                :key="item.id"
-                class="recommendation-card inbox-card"
-                :data-testid="`inbox-card-${item.id}`"
-              >
-                <div class="inbox-card__meta">
-                  <StatusBadge :tone="priorityTone(item.priority)">{{ item.priorityLabel }}</StatusBadge>
-                  <StatusBadge :tone="statusTone(item.status)">{{ item.statusLabel }}</StatusBadge>
-                  <span v-if="item.expiresAtLabel" class="data-chip">{{ item.expiresAtLabel }}</span>
-                </div>
-                <h3>{{ item.title }}</h3>
-                <p>{{ item.summary }}</p>
-                <div class="decision-strip decision-strip--compact">
-                  <div>
-                    <p class="section-label">建議</p>
-                    <strong>{{ item.proposedAction }}</strong>
-                  </div>
-                  <div>
-                    <p class="section-label">決定脈絡</p>
-                    <strong>{{ item.rationale }}</strong>
-                  </div>
-                </div>
-                <EvidenceList :items="item.evidence" />
-                <p class="inbox-card__plan-note">目前課表不會在你確認前更改。</p>
-                <RecommendationActions
-                  :busy-action="inboxBusyRecommendationId === item.id ? inboxBusyAction : ''"
-                  @accept="handleInboxAccept(item)"
-                  @keep="handleInboxKeep(item)"
-                />
-              </article>
-            </div>
-          </section>
-
-          <section v-if="historicalInboxItems.length" class="inbox-section inbox-section--history" data-testid="inbox-history" aria-labelledby="inbox-history-title">
-            <div class="section-heading">
-              <div>
-                <p class="section-label">History</p>
-                <h3 id="inbox-history-title">已處理</h3>
-              </div>
-              <StatusBadge tone="info">{{ historicalInboxItems.length }} 項</StatusBadge>
-            </div>
-            <div class="inbox-list inbox-list--history">
-              <article
-                v-for="item in historicalInboxItems"
-                :key="item.id"
-                class="inbox-card inbox-card--historical"
-                :data-testid="`inbox-card-${item.id}`"
-              >
-                <div class="inbox-card__meta">
-                  <StatusBadge :tone="priorityTone(item.priority)">{{ item.priorityLabel }}</StatusBadge>
-                  <StatusBadge :tone="statusTone(item.status)">{{ item.statusLabel }}</StatusBadge>
-                </div>
-                <h3>{{ item.title }}</h3>
-                <p>{{ item.summary }}</p>
-                <EvidenceList :items="item.evidence" />
-              </article>
-            </div>
-          </section>
-        </div>
-        <DailyAdviceCard v-if="dailyAdvice" :advice="dailyAdvice" :time-zone="userTimezone" data-testid="johnny-daily-advice" />
-        <section class="surface-card johnny-review" data-testid="johnny-weekly-review" aria-labelledby="johnny-review-title">
-          <span class="card-kicker">Weekly review</span>
-          <h3 id="johnny-review-title">這週先守住連續性</h3>
-          <p>Johnny 會把待決定建議、恢復訊號和計畫變動放在這裡。Conversation 功能目前尚未公開。</p>
-        </section>
-      </section>
+      <JohnnyPage v-else-if="activeView === 'johnny'" @decision="hydrateFromBackend" @navigate-today="showView('today')" />
 
       <section v-else-if="activeView === 'conversation'" class="page-stack" aria-labelledby="conversation-title">
         <div class="page-heading">

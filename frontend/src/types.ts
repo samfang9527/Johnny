@@ -178,8 +178,101 @@ export interface AgentRunResponse {
   status: string
   workflow_name: string
   finished_at: string | null
+  training_review_id?: string | null
+  workout_advice_id?: string | null
+  result_state?: string | null
   error_message: string | null
   daily_advice_id?: string | null
+}
+
+export interface ExecutionScoreResponse {
+  value: number | null
+  completion_component: number | null
+  volume_component: number | null
+  eligible_count: number
+  completed_count: number
+  missed_count: number
+  extra_count: number
+  covered_date_count: number
+  reason: string | null
+  policy_version: string
+}
+
+export interface TrainingReviewResult {
+  kind: 'daily_review'
+  publication_date: string
+  reviewed_date: string
+  starts_on: string
+  ends_on: string
+  timezone_name: string
+  generated_at: string
+  narrative: string
+  score: ExecutionScoreResponse
+  yesterday: Array<{ workout_id: string; workout_type: string; state: string;
+    planned_duration_minutes: number | null; planned_distance_meters: number | null;
+    actual_duration_seconds: number; actual_distance_meters: number }>
+  week: Array<{ workout_id: string; scheduled_for: string; workout_type: string; state: string;
+    planned_duration_minutes: number | null; planned_distance_meters: number | null;
+    actual_duration_seconds: number; actual_distance_meters: number }>
+  coverage: { covered_dates: string[]; cutoff_at: string }
+}
+
+export interface WorkoutAdviceResult {
+  kind: 'workout_advice'
+  advice_date: string
+  workout_id: string | null
+  guidance: string
+  mode: string
+  reason_code: string
+  constraints: WorkoutAdviceConstraints
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  recommendation_id?: string | null
+  generated_at: string
+  expires_at: string
+}
+
+export interface JohnnySlot<T> {
+  id: string
+  revision_id: string | null
+  reserved_run_id: string | null
+  attempt_state: string
+  attempt_error: string | null
+  freshness: string
+  current: T | null
+}
+
+export interface JohnnyReviewSlot extends JohnnySlot<TrainingReviewResult> {
+  publication_date: string
+}
+
+export interface JohnnyAdviceSlot extends JohnnySlot<WorkoutAdviceResult> {
+  advice_date: string
+  slot_key: string
+}
+
+export interface WorkoutAdviceConstraints {
+  available_minutes: number | null
+  feeling: 'usual' | 'more_tired'
+  cannot_train_today: boolean
+}
+
+export interface JohnnyOverview {
+  local_date: string
+  timezone_name: string
+  daily_review: JohnnyReviewSlot | null
+  workout_advices: JohnnyAdviceSlot[]
+  workout_choices: Array<{ id: string; display_name: string; workout_type: string; status: string }>
+  actionable_proposals: Array<{ id: string; title: string; rationale: string;
+    evidence: Record<string, unknown>; expires_at: string | null }>
+}
+
+export interface JohnnyHistoryEntry {
+  kind: 'daily_review' | 'workout_advice' | 'recommendation_decision'
+  id: string
+  at: string
+  result?: JohnnyReviewSlot | JohnnyAdviceSlot
+  decision?: string
 }
 
 export interface DailyAdvice {

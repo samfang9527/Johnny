@@ -1,5 +1,5 @@
 ## Purpose
-Define approval behavior for proposed training-plan changes. Daily Advice is a separate read-only coaching result and does not enter this lifecycle.
+Define approval behavior for proposed training-plan changes. Current Johnny workout proposals originate only from athlete-requested Workout Advice; retrospective Daily Review never creates one.
 
 ## Requirements
 
@@ -9,7 +9,7 @@ The system SHALL store each training recommendation with structured evidence, a 
 #### Scenario: Creating a separate plan-change proposal
 - **WHEN** Johnny proposes changing a planned workout using structured evidence
 - **THEN** the system stores title, rationale, recommendation type, priority, structured evidence values, proposed action, owner user, and `pending` status
-- **AND** no Daily Advice is created from that proposal
+- **AND** no Daily Review is created from that proposal
 
 #### Scenario: Reject malformed evidence
 - **WHEN** a recommendation is created with evidence items missing required `source`, `metric`, or `value` fields
@@ -25,6 +25,8 @@ The system SHALL store each training recommendation with structured evidence, a 
 
 ### Requirement: User Decision Required For Significant Adjustments
 The system SHALL require an explicit user decision before applying significant workout adjustments to a training plan.
+
+Johnny workout-adjustment Recommendations SHALL reference a current Workout Advice revision, exact before/after canonical workout payloads, evidence and decision fingerprints, and an athlete-local expiry. Public create/edit and direct workout-status routes SHALL NOT bypass this provenance. Acceptance SHALL fail after relevant evidence, plan, workout, or date changes; repeated identical decisions are idempotent.
 
 #### Scenario: Pending recommendation does not mutate workout
 - **WHEN** a pending recommendation proposes an `adjust_workout` action

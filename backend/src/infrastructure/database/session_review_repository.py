@@ -20,7 +20,7 @@ class SessionReviewConflict(ValueError):
     pass
 
 
-REVIEW_WINDOW_DAYS = 7
+REVIEW_WINDOW_DAYS = 8
 
 
 class SqlAlchemySessionReviewRepository:
@@ -34,8 +34,8 @@ class SqlAlchemySessionReviewRepository:
         name = profile.timezone if profile else 'UTC'
         try:
             ZoneInfo(name)
-        except (ZoneInfoNotFoundError, ValueError):
-            return 'UTC'
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise SessionReviewConflict('athlete timezone is invalid') from exc
         return name
 
     def review_window(self, user_id: str) -> tuple[date, date]:
@@ -72,7 +72,7 @@ class SqlAlchemySessionReviewRepository:
         day = next(iter(dates))
         first_day, last_day = self.review_window(user_id)
         if not first_day <= day <= last_day:
-            raise SessionReviewConflict('activity pairing can only be changed within the latest seven local dates')
+            raise SessionReviewConflict('activity pairing can only be changed within the latest eight local dates')
         sessions = self.list_sessions(user_id, day, day)
         selected = set(activity_ids)
         for candidate in sessions:

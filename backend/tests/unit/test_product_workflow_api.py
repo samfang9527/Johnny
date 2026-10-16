@@ -241,17 +241,17 @@ def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_pol
     daily = client.post(
         "/api/v1/agent-runs/daily-recommendation",
         headers=headers,
-        json={"anchor_date": "2027-01-28"},
+        json={},
     )
     duplicate = client.post(
         "/api/v1/agent-runs/daily-recommendation",
         headers=headers,
-        json={"anchor_date": "2027-01-28"},
+        json={},
     )
     forced = client.post(
         "/api/v1/agent-runs/daily-recommendation",
         headers=headers,
-        json={"anchor_date": "2027-01-28", "force": True},
+        json={"force": True},
     )
     training = client.post(
         "/api/v1/agent-runs/training-plan-generation",
@@ -268,12 +268,12 @@ def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_pol
     listed = client.get("/api/v1/agent-runs?status=queued", headers=headers)
     hidden = client.get(daily.json()["data"]["poll_url"], headers={"X-Johnny-User-Id": "user-2"})
 
-    assert daily.status_code == 200
+    assert daily.status_code == 202
     assert daily.json()["data"]["status"] == "queued"
-    assert daily.json()["data"]["workflow_name"] == "daily_recommendation"
+    assert daily.json()["data"]["workflow_name"] == "workout_advice"
     assert daily.json()["data"]["poll_url"] == f"/api/v1/agent-runs/{daily.json()['data']['run_id']}"
     assert duplicate.json()["data"]["run_id"] == daily.json()["data"]["run_id"]
-    assert forced.json()["data"]["run_id"] != daily.json()["data"]["run_id"]
+    assert forced.status_code == 409
     assert training.status_code == 200
     assert training.json()["data"]["workflow_name"] == "training_plan_generation"
     assert competing_training.json()["data"]["run_id"] == training.json()["data"]["run_id"]
@@ -281,7 +281,7 @@ def test_async_agent_run_routes_queue_daily_and_training_plan_generation_and_pol
     assert polled.json()["data"]["started_at"] is None
     assert steps.json()["data"] == []
     assert {run["workflow_name"] for run in listed.json()["data"]} == {
-        "daily_recommendation",
+        "workout_advice",
         "training_plan_generation",
     }
     assert hidden.status_code == 404
@@ -752,14 +752,15 @@ def test_raw_training_plan_and_daily_advice_queues_select_configured_openai(monk
     )
     daily = client.post(
         "/api/v1/agent-runs/daily-recommendation", headers=headers,
-        json={"anchor_date": "2027-02-01"},
+        json={},
     )
 
-    assert training.status_code == daily.status_code == 200
+    assert training.status_code == 200
+    assert daily.status_code == 202
     training_run = client.get(training.json()["data"]["poll_url"], headers=headers).json()["data"]
     daily_run = client.get(daily.json()["data"]["poll_url"], headers=headers).json()["data"]
     assert (training_run["provider"], training_run["model"]) == ("openai", "test-model")
-    assert (daily_run["provider"], daily_run["model"]) == ("openai", "test-model")
+    assert (daily_run["provider"], daily_run["model"]) == ("local", "deterministic-local-companion")
 
 
 def test_training_plan_regeneration_options_returns_exhausted_quota_payload() -> None:

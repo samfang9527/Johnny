@@ -20,7 +20,7 @@ def setup():
     return client,headers,day,plan['workouts'][0]['id'],ids
 
 
-def test_review_confirm_split_unplanned_persist_and_queue_advice():
+def test_review_confirm_split_unplanned_persist_without_automatic_advice():
     client,h,day,w,ids=setup()
     url='/api/v1/activities/session-reviews'
     response=client.get(url,headers=h,params={'anchor_date':day})
@@ -37,8 +37,8 @@ def test_review_confirm_split_unplanned_persist_and_queue_advice():
     assert [x['status'] for x in cards]==['confirmed','unplanned']
     sessions=client.app.dependency_overrides[get_session]()
     s=next(sessions)
-    assert s.scalar(select(AgentTaskModel).where(AgentTaskModel.task_type=='agent.workflow')) is not None
-    assert s.scalar(select(DailyAdviceModel)).state=='pending'
+    assert s.scalar(select(AgentTaskModel).where(AgentTaskModel.task_type=='agent.workflow')) is None
+    assert s.scalar(select(DailyAdviceModel)) is None
     sessions.close()
 
 
@@ -76,7 +76,7 @@ def test_saved_partition_survives_reimport_and_is_used_by_fresh_advice_facts():
     scope.close()
 
 
-def test_repeated_review_does_not_turn_complete_sync_into_limited_recovery():
+def test_repeated_review_does_not_queue_manual_advice_after_complete_sync():
     from src.infrastructure.database.models import SyncRunModel, IntegrationConnectionModel
     client,h,day,w,ids=setup()
     url='/api/v1/activities/session-reviews'
@@ -88,25 +88,21 @@ def test_repeated_review_does_not_turn_complete_sync_into_limited_recovery():
     s.add(connection); s.flush()
     sync=SyncRunModel(integration_connection_id=connection.id,status='succeeded',finished_at=datetime.now(timezone.utc),summary={'resources':{'activities':{'failed':0},'sleep':{'failed':0}}})
     s.add(sync); s.flush()
-    advice=s.scalar(select(DailyAdviceModel))
-    advice.source_sync_run_id=sync.id
-    advice.data_freshness='stale'
     s.commit(); scope.close()
     response=client.post(url,headers=h,json=decision)
-    run=response.json()['data']['refresh_runs'][0]['run_id']
+    assert response.status_code == 200, response.text
+    assert response.json()['data']['refresh_runs'] == []
     scope=client.app.dependency_overrides[get_session]()
     s=next(scope)
-    tasks=s.scalars(select(AgentTaskModel)).all()
-    task=next(t for t in tasks if t.payload.get('run_id')==run)
-    assert task.payload['input']['limited_recovery'] is False
+    assert s.scalar(select(AgentTaskModel).where(AgentTaskModel.task_type=='agent.workflow')) is None
     scope.close()
 
 
-def test_review_window_includes_seventh_local_date_and_rejects_older_changes():
+def test_review_window_includes_eighth_local_date_and_rejects_older_changes():
     client, headers, today, _, _ = setup()
     today_date = date.fromisoformat(today)
-    seventh_day = (today_date - timedelta(days=6)).isoformat()
-    expired_day = (today_date - timedelta(days=7)).isoformat()
+    seventh_day = (today_date - timedelta(days=7)).isoformat()
+    expired_day = (today_date - timedelta(days=8)).isoformat()
     ids = {}
     for day in (seventh_day, expired_day):
         response = client.post('/api/v1/activities', headers=headers, json={

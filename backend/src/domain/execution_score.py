@@ -44,7 +44,10 @@ def score_execution(evidence: ReviewEvidence) -> ExecutionScore:
             extra_count += 1
     completed = sum(bool(matched.get(snapshot.workout_id)) for snapshot in eligible)
     missed = sum(
-        snapshot.workout.scheduled_for in evidence.covered_dates and not matched.get(snapshot.workout_id)
+        snapshot.confidence == "known"
+        and snapshot.workout.scheduled_for in evidence.covered_dates
+        and snapshot.workout.scheduled_for not in ambiguous_dates
+        and not matched.get(snapshot.workout_id)
         for snapshot in eligible
     )
     common = dict(

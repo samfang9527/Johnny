@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 
@@ -12,8 +13,10 @@ from src.api.schemas.activity_health import (
     DailyHealthMetricsResponse,
 )
 from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
+from src.application.coaching_refresh import CoachingRefreshService
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
+from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 
 
 activity_router = APIRouter(prefix="/activities", tags=["activities"])
@@ -29,6 +32,14 @@ def create_activity(
     ensure_current_user(session, current_user)
     activity = CompletedActivity.create(user_id=current_user.id, **payload.model_dump())
     saved = SqlAlchemyActivityRepository(session).save_activity(current_user.id, activity)
+    if saved is not None:
+        timezone_name = _timezone_name(session, current_user.id)
+        zone = ZoneInfo(timezone_name)
+        CoachingRefreshService(session).record_change(
+            user_id=current_user.id, changed_dates={activity.started_at.astimezone(zone).date()},
+            today=datetime.now(timezone.utc).astimezone(zone).date(),
+            reason='activity_created',
+        )
     return DataEnvelope(data=_activity_response(saved or activity))
 
 
@@ -63,7 +74,16 @@ def save_daily_health_metrics(
 ) -> DataEnvelope[DailyHealthMetricsResponse]:
     ensure_current_user(session, current_user)
     metrics = DailyHealthMetrics.create(user_id=current_user.id, **payload.model_dump())
-    saved = SqlAlchemyActivityRepository(session).save_daily_health_metrics(current_user.id, metrics)
+    repository = SqlAlchemyActivityRepository(session)
+    previous = repository.get_daily_health_metrics_for_user(current_user.id, metrics.metric_date)
+    saved = repository.save_daily_health_metrics(current_user.id, metrics)
+    if previous is None or previous.values_by_metric_type() != saved.values_by_metric_type():
+        zone = ZoneInfo(_timezone_name(session, current_user.id))
+        CoachingRefreshService(session).record_change(
+            user_id=current_user.id, changed_dates={metrics.metric_date},
+            today=datetime.now(timezone.utc).astimezone(zone).date(),
+            reason='health_changed',
+        )
     return DataEnvelope(data=_health_response(saved))
 
 
@@ -110,3 +130,8 @@ def _health_response(metrics: DailyHealthMetrics) -> DailyHealthMetricsResponse:
         source=metrics.source,
         values=metrics.values_by_metric_type(),
     )
+
+
+def _timezone_name(session, user_id: str) -> str:
+    profile = SqlAlchemyAthleteRaceRepository(session).get_profile_for_user(user_id)
+    return profile.timezone if profile else 'UTC'

@@ -184,6 +184,14 @@ def disconnect_connection(
         )
     except ValueError as exc:
         raise ApiNotFoundError("integration connection not found") from exc
+    from src.application.coaching_refresh import CoachingRefreshService
+    profile = SqlAlchemyAthleteRaceRepository(session).get_profile_for_user(current_user.id)
+    zone = ZoneInfo(profile.timezone if profile else "UTC")
+    CoachingRefreshService(session).record_change(
+        user_id=current_user.id, changed_dates=set(),
+        today=datetime.now(timezone.utc).astimezone(zone).date(),
+        reason="provider_disconnected", affects_advice=True,
+    )
     return DataEnvelope(data=_connection_response(connection))
 
 
@@ -404,24 +412,26 @@ def _queue_daily_advice_after_sync(
     session: Session, *, repository: SqlAlchemyIntegrationRepository,
     user_id: str, connection: IntegrationConnectionRef,
 ) -> QueuedAgentRunResponse | None:
+    # Compatibility response field remains null; sync never creates manual advice.
     sync_run = repository.get_latest_sync_run_for_connection(connection.id)
     if sync_run is None or sync_run.status == "started":
         return None
     profile = SqlAlchemyAthleteRaceRepository(session).get_profile_for_user(user_id)
     timezone_name = profile.timezone if profile else "UTC"
     anchor_date = datetime.now(timezone.utc).astimezone(ZoneInfo(timezone_name)).date()
-    queued = queue_after_completed_sync(
-        user_id=user_id, anchor_date=anchor_date, sync_run=sync_run, connection=connection,
-        training_plans=SqlAlchemyTrainingPlanRepository(session),
-        advice=SqlAlchemyDailyAdviceRepository(session),
-        queue_runs=lambda: _daily_advice_queue_handler(session),
-    )
-    if queued is None:
+    from src.application.coaching_refresh import CoachingRefreshService
+    if sync_run.status == "failed":
+        CoachingRefreshService(session).record_change(
+            user_id=user_id, changed_dates=set(), today=anchor_date,
+            reason="provider_sync_failed", affects_advice=True,
+        )
         return None
-    return QueuedAgentRunResponse(
-        run_id=queued.run.id, status=queued.run.status,
-        workflow_name=queued.run.workflow_name, poll_url=queued.poll_url,
+    CoachingRefreshService(session).record_sync(
+        user_id=user_id, summary=(sync_run.summary if isinstance(sync_run.summary, SyncSummary)
+                                  else SyncSummary.from_payload(sync_run.summary)),
+        today=anchor_date, timezone_name=timezone_name,
     )
+    return None
 
 
 def _daily_advice_queue_handler(session: Session) -> QueueAgentRunHandler:

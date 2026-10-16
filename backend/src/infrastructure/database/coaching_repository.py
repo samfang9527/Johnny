@@ -129,6 +129,7 @@ class SqlAlchemyCoachingRepository:
         slot.current_revision_id = existing.id
         slot.attempt_state = "ready"
         slot.attempt_error = None
+        slot.freshness = "current"
         self._session.flush()
         return True
 
@@ -143,6 +144,25 @@ class SqlAlchemyCoachingRepository:
             self._session.flush()
             return False
         payload = dict(revision)
+        if proposal is not None and self.was_decision_rejected(
+            reservation.user_id, payload.get("decision_fingerprint")
+        ):
+            proposal = None
+            payload["mode"] = "previously_declined"
+            payload["reason_code"] = "previously_rejected"
+            payload["guidance"] = f"{payload['guidance']} 你先前已婉拒這項相同調整，原課表維持不變。"
+        if slot.current_revision_id:
+            previous = self._session.get(WorkoutAdviceRevisionModel, slot.current_revision_id)
+            previous_recommendation_id = (previous.payload or {}).get("recommendation_id") if previous else None
+            if previous_recommendation_id:
+                previous_recommendation = self._session.scalar(select(RecommendationModel).where(
+                    RecommendationModel.id == previous_recommendation_id,
+                    RecommendationModel.user_id == reservation.user_id,
+                    RecommendationModel.status == "pending",
+                ))
+                if previous_recommendation is not None:
+                    previous_recommendation.status = "superseded"
+                    previous_recommendation.invalidation_reason = "newer_advice"
         if proposal is not None:
             from .recommendation_repository import SqlAlchemyRecommendationRepository
             if proposal.user_id != reservation.user_id:
@@ -167,11 +187,23 @@ class SqlAlchemyCoachingRepository:
             recommendation_model.workout_fingerprint = payload.get("workout_fingerprint")
             recommendation_model.evidence_fingerprint = payload.get("evidence_fingerprint")
             recommendation_model.decision_fingerprint = payload.get("decision_fingerprint")
+            if payload.get("expires_at"):
+                recommendation_model.expires_at = datetime.fromisoformat(payload["expires_at"])
         slot.current_revision_id = item.id
         slot.attempt_state = "ready"
         slot.attempt_error = None
+        slot.freshness = "current"
         self._session.flush()
         return True
+
+    def was_decision_rejected(self, user_id: str, fingerprint: str | None) -> bool:
+        if not fingerprint:
+            return False
+        return self._session.scalar(select(RecommendationModel.id).where(
+            RecommendationModel.user_id == user_id,
+            RecommendationModel.decision_fingerprint == fingerprint,
+            RecommendationModel.decision == "rejected",
+        ).limit(1)) is not None
 
     def mark_attempt_failed(self, reservation: GenerationReservation, state: str,
                             reason_code: str) -> None:
@@ -192,6 +224,7 @@ class SqlAlchemyCoachingRepository:
         return {"id": slot.id, "publication_date": slot.publication_date.isoformat(),
                 "attempt_state": slot.attempt_state, "attempt_error": slot.attempt_error,
                 "freshness": slot.freshness, "revision_id": slot.current_revision_id,
+                "reserved_run_id": slot.reserved_run_id,
                 "current": current.payload if current else None}
 
     def get_advice_slot(self, user_id: str, advice_date: date, slot_key: str) -> dict | None:
@@ -206,7 +239,7 @@ class SqlAlchemyCoachingRepository:
         return {"id": slot.id, "advice_date": slot.advice_date.isoformat(),
                 "slot_key": slot.slot_key, "attempt_state": slot.attempt_state,
                 "attempt_error": slot.attempt_error, "freshness": slot.freshness,
-                "revision_id": slot.current_revision_id,
+                "revision_id": slot.current_revision_id, "reserved_run_id": slot.reserved_run_id,
                 "current": current.payload if current else None}
 
     def list_review_activities(self, user_id: str, starts_on: date, ends_on: date):

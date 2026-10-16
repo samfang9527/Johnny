@@ -47,3 +47,4 @@ class TodayContextResponse(BaseModel):
     next_race: dict[str, Any] | None = None
     current_recommendation: dict[str, Any] | None = None
     daily_advice: DailyAdviceResponse | None = None
+    workout_advice: dict[str, Any] | None = None

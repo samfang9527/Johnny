@@ -226,16 +226,16 @@ The system SHALL persist local async agent work in an `agent_tasks` table with A
 - **WHEN** an async workflow is triggered
 - **THEN** the task row stores task type, payload, correlation id, idempotency key, created timestamp, and status `queued`
 
-#### Scenario: Duplicate scheduled task blocked
+#### Scenario: Duplicate scheduled review task blocked
 
-- **GIVEN** a queued or completed scheduled Daily Advice task exists for a user and athlete-local date
+- **GIVEN** a queued or completed scheduled Daily Review task exists for a user and athlete-local date
 - **WHEN** the scheduler attempts to enqueue the same idempotency key again
 - **THEN** the database-backed queue prevents a duplicate task
 
-#### Scenario: Force rerun records distinct task
+#### Scenario: Distinct manual advice request records distinct task
 
-- **WHEN** a forced daily recommendation rerun is requested
-- **THEN** the task row uses a distinct idempotency key
+- **WHEN** a new athlete-requested Workout Advice run is requested after the previous run ends
+- **THEN** the task row uses a distinct client-request UUID idempotency key
 - **AND** prior task and run history remains unchanged
 
 #### Scenario: Failed task becomes dead-lettered

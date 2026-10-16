@@ -31,7 +31,7 @@ The system SHALL render Today as a decision cockpit that prioritizes race contex
 #### Scenario: User views Today with full context
 
 - **WHEN** Today context is available from the API
-- **THEN** the user sees race countdown, recovery signals, today's unchanged workout, current Daily Advice when present, separate pending proposals, evidence, and unavailable signals in Chinese-first copy
+- **THEN** the user sees race countdown, recovery signals, today's canonical workout, concise current requested Workout Advice when present, a link to Johnny for pending proposals, evidence, and unavailable signals in Chinese-first copy
 
 #### Scenario: User views Today with sparse data
 
@@ -52,26 +52,24 @@ The system SHALL render Today as a decision cockpit that prioritizes race contex
 - **WHEN** the user opens workout details
 - **THEN** a view-only modal shows the ordered steps, nested repeat blocks, target zones, computed target snapshots, and optional coach note
 
-### Requirement: Current Daily Advice
-The system SHALL show one current Daily Advice for the athlete-local date on Today, with all three Traditional Chinese sections reachable without an approval action.
+### Requirement: Current requested Workout Advice summary
+The system SHALL show only concise current requested Workout Advice on Today and link to Johnny for the full result, review, and decisions.
 
 #### Scenario: Advice is ready
-- **WHEN** Today includes a ready Daily Advice
-- **THEN** the UI shows its plan-week execution summary, today's workout execution advice, workout guide, generation time, and source freshness
-- **AND** the Today Decision follows its validated execution mode without implying that advice changes the planned workout
+- **WHEN** Today includes current requested Workout Advice
+- **THEN** the UI shows a concise guidance line and a Johnny link while the canonical workout remains unchanged until approval
 
 #### Scenario: Advice is pending or stale
-- **WHEN** Daily Advice is pending, failed, or stale after a failed refresh
-- **THEN** the UI shows the current state and any earlier successful text with its original generation time and a freshness warning
-- **AND** the Today Decision does not contradict the uncertain advice
+- **WHEN** Workout Advice is absent, pending, failed, or stale
+- **THEN** Today uses canonical workout and conservative evidence without presenting stale guidance as current
 
-#### Scenario: Manual sync replaces advice
-- **WHEN** a manual Garmin sync returns a Daily Advice run and that run completes
-- **THEN** Today refreshes and shows only the new current advice
+#### Scenario: Manual sync leaves advice request under athlete control
+- **WHEN** a manual Garmin sync changes relevant evidence
+- **THEN** previous advice becomes stale without producing a new advice request
 
 ### Requirement: Recommendation decision strip
 
-The system SHALL display separate approval-backed Recommendation decisions using the `decision strip` pattern from `DESIGN.md`. Daily Advice has no accept or reject controls.
+The system SHALL link to owner-scoped approval-backed Recommendation decisions on Johnny. Daily Review has no accept or reject controls.
 
 #### Scenario: Pending recommendation is displayed
 
@@ -80,7 +78,7 @@ The system SHALL display separate approval-backed Recommendation decisions using
 - **AND** Johnny exposes approval actions including `接受調整` and `保留課表` where applicable
 
 #### Scenario: No advice or pending recommendation is available
-- **WHEN** Today has conservative recovery evidence but no current Daily Advice or pending Recommendation
+- **WHEN** Today has conservative recovery evidence but no current Workout Advice or pending Recommendation
 - **THEN** its decision action opens the plan rather than implying a proposal can be accepted
 
 #### Scenario: User accepts a recommendation

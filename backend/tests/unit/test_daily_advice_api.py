@@ -176,44 +176,36 @@ def test_today_exposes_limited_ready_advice_and_stale_prior_content_during_refre
     assert pending["week_summary"] == "Summary old-run"
 
 
-def test_forced_daily_run_syncs_then_replaces_one_current_advice_and_exposes_run_link(api) -> None:
+def test_legacy_manual_endpoint_adapts_to_today_workout_advice_without_writing_old_advice(api) -> None:
     from scripts.agent_runtime import work_drain
 
     client, factory = api
-    with factory() as session:
-        ensure_current_user(session, CurrentUser(id="athlete"))
-        session.add(TrainingPlanModel(
-            id="plan-1", user_id="athlete", name="Base", status="active",
-            starts_on=date(2027, 1, 1), ends_on=date(2027, 2, 1),
-        ))
-        session.commit()
-
-    first = client.post("/api/v1/agent-runs/daily-recommendation", headers=HEADERS, json={"anchor_date": str(DAY)})
-    assert first.status_code == 200
+    first = client.post("/api/v1/agent-runs/daily-recommendation", headers=HEADERS, json={})
+    assert first.status_code == 202
     first_run = first.json()["data"]
     assert set(first_run) == {"run_id", "status", "workflow_name", "poll_url"}
+    assert first_run["workflow_name"] == "workout_advice"
     with factory() as session:
         task = session.scalar(select(AgentTaskModel).where(AgentTaskModel.payload["run_id"].as_string() == first_run["run_id"]))
-        assert task.task_type == "daily_advice.sync"
+        assert task.task_type == "coaching.sync"
         assert work_drain(session) == 2
         session.commit()
     first_status = client.get(first_run["poll_url"], headers=HEADERS).json()["data"]
-    first_advice = client.get(f"/api/v1/today?anchor_date={DAY}", headers=HEADERS).json()["data"]["daily_advice"]
-    assert first_status["daily_advice_id"] == first_advice["id"]
+    today = datetime.now(timezone.utc).date()
+    first_advice = client.get(f"/api/v1/today?anchor_date={today}", headers=HEADERS).json()["data"]["workout_advice"]
+    assert first_status["workout_advice_id"] == first_advice["id"]
     assert first_status["recommendation_id"] is None
-
-    second = client.post("/api/v1/agent-runs/daily-recommendation", headers=HEADERS, json={"anchor_date": str(DAY), "force": True})
-    assert second.status_code == 200
+    assert client.get(f"/api/v1/today?anchor_date={today}", headers=HEADERS).json()["data"]["daily_advice"] is None
+    second = client.post("/api/v1/agent-runs/daily-recommendation", headers=HEADERS, json={"force": True})
+    assert second.status_code == 202
     assert second.json()["data"]["run_id"] != first_run["run_id"]
     with factory() as session:
         assert work_drain(session) == 2
         session.commit()
     second_status = client.get(second.json()["data"]["poll_url"], headers=HEADERS).json()["data"]
-    second_advice = client.get(f"/api/v1/today?anchor_date={DAY}", headers=HEADERS).json()["data"]["daily_advice"]
+    second_advice = client.get(f"/api/v1/today?anchor_date={today}", headers=HEADERS).json()["data"]["workout_advice"]
     with factory() as session:
-        assert session.scalar(select(DailyAdviceModel).where(DailyAdviceModel.user_id == "athlete")).id == first_advice["id"]
-        assert len(session.scalars(select(DailyAdviceModel).where(DailyAdviceModel.user_id == "athlete")).all()) == 1
+        assert session.scalar(select(DailyAdviceModel).where(DailyAdviceModel.user_id == "athlete")) is None
     assert second_advice["id"] == first_advice["id"]
-    assert second_advice["source_run_id"] == second_status["id"]
-    assert second_status["daily_advice_id"] == second_advice["id"]
+    assert second_status["workout_advice_id"] == second_advice["id"]
     assert second_status["recommendation_id"] is None

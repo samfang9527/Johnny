@@ -25,6 +25,10 @@ class ApiUnauthorizedError(ValueError):
     pass
 
 
+class ApiForbiddenError(ValueError):
+    pass
+
+
 class ApiUnavailableError(ValueError):
     pass
 
@@ -59,6 +63,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiUnauthorizedError)
     async def unauthorized_exception_handler(request: Request, exc: ApiUnauthorizedError) -> JSONResponse:
         return _error_response(status_code=401, code="unauthorized", message=str(exc), details=[])
+
+    @app.exception_handler(ApiForbiddenError)
+    async def forbidden_exception_handler(request: Request, exc: ApiForbiddenError) -> JSONResponse:
+        return _error_response(status_code=403, code="forbidden", message=str(exc), details=[])
 
     @app.exception_handler(ApiUnavailableError)
     async def unavailable_exception_handler(request: Request, exc: ApiUnavailableError) -> JSONResponse:

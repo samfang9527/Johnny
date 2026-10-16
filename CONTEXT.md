@@ -41,20 +41,36 @@ Johnny's deterministic display name for a workout, derived from its structured w
 _Avoid_: LLM workout title, catchy workout name
 
 **Today Decision**:
-Johnny's daily framing for whether the athlete should run, execute the planned workout more conservatively, rest, or recognize a completed session. When current Daily Advice is ready it follows the validated execution mode; pending or stale advice receives a conservative fallback. It does not itself approve a plan change.
+Johnny's compact daily framing beside the canonical workout. Current requested Workout Advice may supply a short guidance line; absent or stale advice uses a conservative fallback. It does not itself approve a plan change.
 _Avoid_: Daily status, readiness score, workout verdict
 
-**Daily Advice**:
-One current read-only coaching result for an athlete-local date. It records plan-week execution facts, today's execution guidance, and the workout's purpose, expected feel, and safe adjustments. A successful refresh replaces the visible content; a failed refresh retains earlier text with a stale state. It never changes a canonical workout or requires approval.
-_Avoid_: Pending recommendation, plan adjustment, second workout
+**Daily Review**:
+The scheduled retrospective result published after 04:00 in the athlete's local time. It reviews yesterday and scores the seven completed local dates ending yesterday. Corrections revise only its own dated review; incomplete coverage or unresolved pairing withholds a score.
+_Avoid_: Today's advice, readiness score, automatic workout adjustment
+
+**Workout Advice**:
+Guidance generated only from an athlete's request for today's workout, current activities, and optional structured constraints. A no-change answer remains useful guidance; a supported change is a separate Recommendation requiring approval. Its result and revision are independent of Daily Review.
+_Avoid_: Scheduled review, conversation, direct workout edit
+
+**Execution Score**:
+A versioned, deterministic measure of completed prescribed sessions and volume alignment over seven completed local dates. It describes execution, not fitness, readiness, or injury risk. Unknown evidence produces a null score with a reason.
+_Avoid_: Fitness score, missed workout inferred from failed sync
+
+**Prescription Snapshot**:
+An append-only record of the canonical workout that was effective when training occurred, including steps and Targets. It lets retrospective reviews survive plan replacement and later approved adjustments; uncertain legacy ordering is marked rather than guessed.
+_Avoid_: Current display-only target estimate
+
+**Legacy Daily Advice**:
+The earlier combined Today coaching result, retained internally for transition reads. No new scheduled or sync-triggered producer writes it; the public Johnny surface uses Daily Review and Workout Advice instead.
+_Avoid_: Daily Review, Workout Advice
 
 **Plan Week**:
 The owning Plan Version's seven-day block beginning at its start date plus whole seven-day intervals, truncated at the version end date. It is not a calendar Monday–Sunday week.
 _Avoid_: Calendar week, rolling seven days
 
 **Recommendation**:
-A separate evidence-backed proposal, including a possible workout adjustment, that retains owner-scoped accept, reject, edit, and history behavior. Daily Advice does not create one automatically.
-_Avoid_: Daily Advice, automatic plan change
+A separate evidence-backed proposal. A Johnny workout adjustment links to a specific current Workout Advice revision and may only be accepted or rejected by its owner while the plan and evidence remain current; it cannot be edited into an unverified change.
+_Avoid_: Daily Review, automatic plan change
 
 **Signal Coverage**:
 Johnny's view of which connected activity, recovery, health, and preference signals are available enough to support coaching recommendations.

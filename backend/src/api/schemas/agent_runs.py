@@ -49,6 +49,9 @@ class AgentRunResponse(BaseModel):
     error_message: str | None = None
     recommendation_id: str | None = None
     daily_advice_id: str | None = None
+    training_review_id: str | None = None
+    workout_advice_id: str | None = None
+    result_state: str | None = None
 
 
 class AgentRunStepResponse(BaseModel):

@@ -7,7 +7,7 @@ from src.api.dependencies import get_session
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
 
 
-@pytest.mark.parametrize("athlete_timezone", ["UTC", "Legacy/Invalid"])
+@pytest.mark.parametrize("athlete_timezone", ["UTC"])
 def test_settings_and_garmin_refresh_today_and_plan_without_regeneration(athlete_timezone):
     client = create_sqlite_test_client()
     headers = {'X-Johnny-User-Id': 'target-runner'}

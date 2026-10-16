@@ -3,13 +3,15 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, build_request_companion_agent, ensure_current_user
-from src.api.errors import ApiNotFoundError
+from src.api.errors import ApiConflictError, ApiForbiddenError, ApiNotFoundError
+from src.application.coaching_approval import CoachingApprovalService, CoachingDecisionConflict
 from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
 from src.api.schemas.conversations import ConversationMessageResponse
 from src.api.schemas.recommendations import DiscussRecommendationRequest, RecommendationRequest, RecommendationResponse
 from src.application.recommendation_approval import AcceptRecommendationHandler, EditRecommendationHandler, RejectRecommendationHandler
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
 from src.infrastructure.database.recommendation_repository import SqlAlchemyRecommendationRepository
+from src.infrastructure.database.models import RecommendationModel
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
 
@@ -34,6 +36,8 @@ def create_recommendation(
         training_plan_id=payload.training_plan_id,
         workout_id=payload.workout_id,
     )
+    if recommendation.proposed_action.action_type == "adjust_workout":
+        raise ApiForbiddenError("workout_advice_required")
     saved = SqlAlchemyRecommendationRepository(session).create_recommendation(current_user.id, recommendation)
     return DataEnvelope(data=_recommendation_response(saved))
 
@@ -59,6 +63,18 @@ def accept_recommendation(
     current_user: CurrentUserDependency,
     session: SessionDependency,
 ) -> DataEnvelope[RecommendationResponse]:
+    model = session.query(RecommendationModel).filter_by(id=recommendation_id, user_id=current_user.id).one_or_none()
+    if model is None:
+        raise ApiNotFoundError("recommendation not found")
+    if model.source_advice_revision_id:
+        try:
+            result = CoachingApprovalService(session).accept(current_user.id, recommendation_id)
+        except CoachingDecisionConflict as exc:
+            raise ApiConflictError(str(exc)) from exc
+        return DataEnvelope(data=_recommendation_response(result))
+    legacy = SqlAlchemyRecommendationRepository(session).get_recommendation_for_user(current_user.id, recommendation_id)
+    if legacy.proposed_action.action_type == "adjust_workout":
+        raise ApiForbiddenError("workout_advice_required")
     result = AcceptRecommendationHandler(
         recommendations=SqlAlchemyRecommendationRepository(session),
         training_plans=SqlAlchemyTrainingPlanRepository(session),
@@ -74,6 +90,15 @@ def reject_recommendation(
     current_user: CurrentUserDependency,
     session: SessionDependency,
 ) -> DataEnvelope[RecommendationResponse]:
+    model = session.query(RecommendationModel).filter_by(id=recommendation_id, user_id=current_user.id).one_or_none()
+    if model is None:
+        raise ApiNotFoundError("recommendation not found")
+    if model.source_advice_revision_id:
+        try:
+            result = CoachingApprovalService(session).reject(current_user.id, recommendation_id)
+        except CoachingDecisionConflict as exc:
+            raise ApiConflictError(str(exc)) from exc
+        return DataEnvelope(data=_recommendation_response(result))
     result = RejectRecommendationHandler(recommendations=SqlAlchemyRecommendationRepository(session)).handle(
         user_id=current_user.id,
         recommendation_id=recommendation_id,
@@ -90,6 +115,13 @@ def edit_recommendation(
     current_user: CurrentUserDependency,
     session: SessionDependency,
 ) -> DataEnvelope[RecommendationResponse]:
+    model = session.query(RecommendationModel).filter_by(id=recommendation_id, user_id=current_user.id).one_or_none()
+    if model is None:
+        raise ApiNotFoundError("recommendation not found")
+    if model.source_advice_revision_id:
+        raise ApiForbiddenError("workout_advice_required")
+    if ProposedAction.from_payload(payload).action_type == "adjust_workout":
+        raise ApiForbiddenError("workout_advice_required")
     result = EditRecommendationHandler(recommendations=SqlAlchemyRecommendationRepository(session)).handle(
         user_id=current_user.id,
         recommendation_id=recommendation_id,

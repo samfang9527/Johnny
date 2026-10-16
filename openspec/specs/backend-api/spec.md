@@ -1,22 +1,25 @@
 ## Purpose
-Define backend API behavior for Johnny's async agent workflow trigger and polling routes while preserving the synchronous conversation experience.
+Define backend API behavior for Johnny's async review, requested workout advice, training-plan generation, and owner-scoped polling routes.
 
 ## Requirements
 
 ### Requirement: Async Agent Trigger Routes
-The system SHALL expose dedicated async product workflow trigger routes for Daily Advice and training-plan generation.
+The system SHALL expose independent retrospective review and requested workout-advice workflows plus training-plan generation.
 
-#### Scenario: Queue Daily Advice
+#### Scenario: Legacy manual route adapts to Workout Advice
 - **WHEN** the current user posts to `/api/v1/agent-runs/daily-recommendation`
-- **THEN** the API creates a queued agent run and `daily_advice.sync` task atomically
-- **AND** returns `run_id`, status `queued`, workflow name `daily_recommendation`, and relative polling URL
-- **AND** successful completion produces Daily Advice without a pending Recommendation
+- **THEN** the API accepts only the current athlete-local date and queues the same `workout_advice` workflow as `/api/v1/johnny/workout-advice`
+- **AND** it returns a run id and relative polling URL without scheduling a legacy combined Daily Advice result
 
-#### Scenario: Queue forced daily recommendation rerun
-- **WHEN** the current user posts a daily recommendation request with `force=true`
-- **THEN** the API enqueues a distinct run with a unique idempotency key
-- **AND** does not delete or mutate prior run history
-- **AND** a successful newer run replaces the current advice for that athlete and local date
+#### Scenario: Queue requested advice
+- **WHEN** the athlete posts `/api/v1/johnny/workout-advice` with a request UUID, target workout, and structured constraints
+- **THEN** the API reserves the date/workout slot and queues sync before generation
+- **AND** a transport retry with the same request UUID/body returns the same run; conflicting body or concurrent request receives 409
+
+#### Scenario: Read independent Johnny outputs
+- **WHEN** the athlete reads `/api/v1/johnny/overview`
+- **THEN** `daily_review` and `workout_advices` are separate fields with separate revisions and attempt states, alongside current actionable proposals
+- **AND** the GET does not enqueue work
 
 #### Scenario: Queue training plan generation
 - **WHEN** the current user posts to `/api/v1/agent-runs/training-plan-generation`
@@ -29,20 +32,20 @@ The system SHALL expose user-scoped agent run polling and step inspection routes
 
 #### Scenario: Poll queued or completed run
 - **WHEN** the current user requests `/api/v1/agent-runs/{run_id}`
-- **THEN** the API returns that user's run status, workflow, timestamps, model metadata, summaries, token usage, error summary when present, recommendation id when present, and Daily Advice id when present
+- **THEN** the API returns that user's run status, workflow, timestamps, model metadata, summaries, token usage, error summary when present, and nullable review/advice/recommendation ids
 
-### Requirement: Date-scoped Daily Advice read
-The system SHALL expose one current Daily Advice through the authenticated Today context for the requested athlete-local date.
+### Requirement: Date-scoped coaching read
+The system SHALL expose a concise current Workout Advice slot through Today while retaining the old Daily Advice field as a nullable transition read.
 
 #### Scenario: Read current advice
 - **WHEN** the athlete requests `/api/v1/today?anchor_date=YYYY-MM-DD`
-- **THEN** `daily_advice` is that athlete's current advice for the requested date, or null
-- **AND** a present value includes state, freshness, generation time, source, plan week, structured facts, execution mode, and three content sections when available
+- **THEN** `workout_advice` is that athlete's latest requested advice slot for the requested date, or null
+- **AND** `daily_advice` remains nullable for transition clients but is not used by the new Johnny UI
 
 #### Scenario: Refresh fails
 - **WHEN** activity sync or advice generation fails after a prior successful version
-- **THEN** Today retains the prior content and original generation time with a stale freshness and failure state
-- **AND** no additional advice revision appears in the response
+- **THEN** the previous advice revision remains stored with a stale freshness or failure state
+- **AND** no new advice revision is published
 
 #### Scenario: Poll run steps
 - **WHEN** the current user requests `/api/v1/agent-runs/{run_id}/steps`

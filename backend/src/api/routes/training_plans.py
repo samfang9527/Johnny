@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
-from src.api.errors import ApiNotFoundError
+from src.api.errors import ApiForbiddenError, ApiNotFoundError
 from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
 from src.api.schemas.training_plans import TrainingPlanRequest, TrainingPlanResponse, WorkoutResponse, WorkoutStatusRequest
 from src.domain.training_plan import TrainingPlan, Workout
@@ -67,6 +67,8 @@ def update_workout_status(
     workout = next((item for item in plan.workouts if item.id == workout_id), None)
     if workout is None:
         raise ApiNotFoundError("workout not found")
+    if payload.status in {"adjusted", "skipped"}:
+        raise ApiForbiddenError("workout_advice_required")
     updated = workout.transition_to(payload.status)
     saved = repository.save_plan(
         current_user.id,

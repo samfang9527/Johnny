@@ -16,6 +16,7 @@ from .api.routes.auth import router as auth_router
 from .api.routes.conversations import router as conversations_router
 from .api.routes.health import router as health_router
 from .api.routes.integrations import router as integrations_router
+from .api.routes.johnny import router as johnny_router
 from .api.routes.me import router as me_router
 from .api.routes.races import router as races_router
 from .api.routes.recommendations import router as recommendations_router
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     api_v1_router.include_router(conversations_router)
     api_v1_router.include_router(health_metrics_router)
     api_v1_router.include_router(integrations_router)
+    api_v1_router.include_router(johnny_router)
     api_v1_router.include_router(me_router)
     api_v1_router.include_router(races_router)
     api_v1_router.include_router(recommendations_router)

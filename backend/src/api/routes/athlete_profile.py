@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiNotFoundError
 from src.api.schemas.athlete_profile import AthleteProfileRequest, AthleteProfileResponse
 from src.api.schemas.common import DataEnvelope
+from src.application.coaching_refresh import CoachingRefreshService
 from src.domain.athlete_race import AthleteProfile
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 
@@ -32,6 +35,10 @@ def save_profile(
 ) -> DataEnvelope[AthleteProfileResponse]:
     repository = SqlAlchemyAthleteRaceRepository(session)
     existing = repository.get_profile_for_user(current_user.id)
+    try:
+        zone = ZoneInfo(payload.timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="invalid athlete timezone") from exc
     training_preferences = dict(existing.preferences.training_preferences) if existing is not None else {}
     if "training_preferences" in payload.model_fields_set:
         training_preferences.update(payload.training_preferences)
@@ -69,6 +76,13 @@ def save_profile(
     )
     ensure_current_user(session, current_user)
     saved = repository.save_profile(current_user.id, profile)
+    if existing is not None and existing != saved:
+        today = datetime.now(timezone.utc).astimezone(zone).date()
+        CoachingRefreshService(session).record_change(
+            user_id=current_user.id,
+            changed_dates={today - timedelta(days=offset) for offset in range(1, 8)},
+            today=today, reason='athlete_profile_changed',
+        )
     return DataEnvelope(data=_profile_response(saved))
 
 

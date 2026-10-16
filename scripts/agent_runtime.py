@@ -20,6 +20,10 @@ from sqlalchemy.orm import Session
 from src.api.dependencies import build_request_companion_agent
 from src.application.async_agent_runs import QueueAgentRunHandler
 from src.application.daily_advice_generation import GenerateDailyAdviceHandler
+from src.application.training_review_generation import GenerateTrainingReviewHandler
+from src.application.workout_advice_generation import GenerateWorkoutAdviceHandler
+from src.domain.workout_advice import WorkoutAdviceConstraints
+from src.domain.training_review import review_period
 from src.application.daily_advice_sync import activity_sync_usable, recovery_data_limited
 from src.application.training_analytics import BuildTodayContextHandler
 from src.application.training_analytics import resolve_plan_for_date
@@ -34,9 +38,10 @@ from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunR
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.daily_advice_repository import SqlAlchemyDailyAdviceRepository
+from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
-from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, UserModel
+from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, TrainingReviewModel, WorkoutAdviceModel, UserModel
 from src.infrastructure.database.session import create_database_engine, create_session_factory, get_database_url
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
@@ -52,6 +57,7 @@ DEFAULT_CLAIM_TIMEOUT = timedelta(minutes=5)
 DEFAULT_RETRY_DELAY = timedelta(seconds=30)
 TRAINING_PLAN_DAILY_CHECK_TASK_TYPE = "training-plan.daily-check"
 DAILY_ADVICE_SYNC_TASK_TYPE = "daily_advice.sync"
+COACHING_SYNC_TASK_TYPE = "coaching.sync"
 logger = logging.getLogger(__name__)
 
 
@@ -61,25 +67,29 @@ def schedule_once(session: Session, *, now: datetime | None = None) -> int:
         raise ValueError("schedule_once requires a timezone-aware instant")
     instant = instant.astimezone(timezone.utc)
     before = _task_count(session)
-    handler = _daily_advice_queue_handler(session)
-    plans = SqlAlchemyTrainingPlanRepository(session)
+    handler = _queue_handler(session)
+    coaching = SqlAlchemyCoachingRepository(session)
     for user, timezone_name in _eligible_daily_users(session):
         try:
             local_date = _due_local_date(instant, timezone_name)
         except ZoneInfoNotFoundError:
             logger.warning("daily advice schedule skipped invalid timezone user_id=%s timezone=%s", user.id, timezone_name)
             continue
-        if local_date is None or resolve_plan_for_date(plans, user.id, local_date) is None:
+        if local_date is None:
             continue
-        handler.queue_run(
+        queued = handler.queue_run(
             user_id=user.id,
-            workflow_name="daily_recommendation",
+            workflow_name="daily_review",
             trigger_type="scheduled",
-            idempotency_key=f"daily_recommendation:{user.id}:{local_date.isoformat()}",
-            payload={"anchor_date": local_date.isoformat(), "force": False},
-            task_type=DAILY_ADVICE_SYNC_TASK_TYPE,
+            idempotency_key=f"daily_review:{user.id}:{local_date.isoformat()}",
+            payload={"publication_date": local_date.isoformat(), "timezone_name": timezone_name},
+            task_type=COACHING_SYNC_TASK_TYPE,
             reuse_terminal=True,
         )
+        if queued.run.status == "queued":
+            slot = coaching.get_review_slot(user.id, local_date)
+            if slot is None or slot["reserved_run_id"] != queued.run.id:
+                coaching.reserve_review(user.id, local_date, timezone_name, queued.run.id)
     anchor = instant.date()
     SqlAlchemyAgentTaskQueue(session).enqueue(
         TaskEnvelope(
@@ -126,7 +136,7 @@ def work_one(session: Session, *, now: datetime | None = None) -> bool:
     )
     try:
         _process_task(session, claimed.id)
-        if claimed.task_type == DAILY_ADVICE_SYNC_TASK_TYPE:
+        if claimed.task_type in {DAILY_ADVICE_SYNC_TASK_TYPE, COACHING_SYNC_TASK_TYPE}:
             # Imported activities and the generation task become visible together.
             session.commit()
     except Exception as exc:
@@ -173,7 +183,7 @@ def work_loop(session_factory, *, idle_timeout_seconds: float | None = None, int
 
 def smoke(
     session: Session, *, user_id: str, timeout_seconds: float = 30.0,
-    workflow: str = "conversation", live_openai: bool = False,
+    workflow: str = "daily_review", live_openai: bool = False,
 ) -> int:
     if workflow == "conversation":
         run = build_request_companion_agent(session, provider=None if live_openai else "local").run_conversation(
@@ -182,15 +192,33 @@ def smoke(
         )
         return 0 if run.status == "completed" else 1
 
-    handler = _daily_advice_queue_handler(session)
-    if workflow in {"daily_recommendation", "all"}:
-        handler.queue_run(
-            user_id=user_id,
-            workflow_name="daily_recommendation",
-            trigger_type="manual",
-            idempotency_key=f"smoke:daily:{user_id}:{date.today().isoformat()}",
-            payload={"anchor_date": date.today().isoformat(), "force": True},
-            task_type=DAILY_ADVICE_SYNC_TASK_TYPE,
+    profile = session.scalar(select(AthleteProfileModel).where(AthleteProfileModel.user_id == user_id))
+    timezone_name = profile.timezone if profile else "UTC"
+    local_date = _utc_now().astimezone(ZoneInfo(timezone_name)).date()
+    if workflow in {"daily_review", "all"}:
+        queued = _queue_handler(session).queue_run(
+            user_id=user_id, workflow_name="daily_review", trigger_type="manual",
+            idempotency_key=f"smoke:review:{user_id}:{local_date.isoformat()}",
+            payload={"publication_date": local_date.isoformat(), "timezone_name": timezone_name},
+            task_type=COACHING_SYNC_TASK_TYPE,
+        )
+        SqlAlchemyCoachingRepository(session).reserve_review(
+            user_id, local_date, timezone_name, queued.run.id)
+    if workflow in {"workout_advice", "all"}:
+        plan = SqlAlchemyTrainingPlanRepository(session).get_plan_for_date_raw(user_id, local_date)
+        workouts = tuple(item for item in plan.workouts if item.scheduled_for == local_date) if plan else ()
+        workout_id = workouts[0].id if workouts else None
+        queued = _queue_handler(session).queue_run(
+            user_id=user_id, workflow_name="workout_advice", trigger_type="manual",
+            idempotency_key=f"smoke:advice:{user_id}:{local_date.isoformat()}",
+            payload={"advice_date": local_date.isoformat(), "timezone_name": timezone_name,
+                     "workout_id": workout_id, "constraints": {
+                         "available_minutes": None, "feeling": "usual", "cannot_train_today": False,
+                     }}, task_type=COACHING_SYNC_TASK_TYPE,
+        )
+        SqlAlchemyCoachingRepository(session).reserve_advice(
+            user_id, local_date, workout_id or "no-workout", queued.run.id,
+            {"available_minutes": None, "feeling": "usual", "cannot_train_today": False},
         )
     if workflow in {"training_plan_generation", "all"}:
         (_training_plan_queue_handler(session) if live_openai else _queue_handler(session)).queue_run(
@@ -225,7 +253,7 @@ def main() -> int:
     smoke_parser = subparsers.add_parser("smoke")
     smoke_parser.add_argument("--user-id", default="local-user")
     smoke_parser.add_argument("--timeout-seconds", type=float, default=30.0)
-    smoke_parser.add_argument("--workflow", default="conversation")
+    smoke_parser.add_argument("--workflow", default="daily_review")
     smoke_parser.add_argument("--live-openai", action="store_true")
     args = parser.parse_args()
     setup_logging()
@@ -321,13 +349,7 @@ def _training_plan_regeneration_service(session: Session) -> TrainingPlanRegener
 def _eligible_daily_users(session: Session) -> list[tuple[UserModel, str]]:
     statement = select(UserModel, AthleteProfileModel.timezone).join(
         AthleteProfileModel, AthleteProfileModel.user_id == UserModel.id,
-    ).where(
-        UserModel.status == "active",
-        exists().where(
-            (TrainingPlanModel.user_id == UserModel.id)
-            & (TrainingPlanModel.status == "active")
-        ),
-    )
+    ).where(UserModel.status == "active")
     return list(session.execute(statement).all())
 
 
@@ -336,11 +358,17 @@ def _process_task(session: Session, task_id: str) -> None:
     task = session.get(AgentTaskModel, task_id)
     if task is None:
         return
+    if task.task_type == DAILY_ADVICE_SYNC_TASK_TYPE or (
+        task.task_type == "agent.workflow"
+        and (task.payload or {}).get("workflow_name") == "daily_recommendation"
+    ):
+        _retire_legacy_daily_advice_task(session, task)
+        return
     if task.task_type == TRAINING_PLAN_DAILY_CHECK_TASK_TYPE:
         _process_training_plan_daily_check(session, task)
         return
-    if task.task_type == DAILY_ADVICE_SYNC_TASK_TYPE:
-        _process_daily_advice_sync(session, task)
+    if task.task_type == COACHING_SYNC_TASK_TYPE:
+        _process_coaching_sync(session, task)
         return
     if task.task_type != "agent.workflow":
         queue.fail(
@@ -443,6 +471,26 @@ def _process_task(session: Session, task_id: str) -> None:
         )
 
 
+def _retire_legacy_daily_advice_task(session: Session, task: AgentTaskModel) -> None:
+    """Terminally retire pre-cutover work without publishing an old combined advice card."""
+    reason = "LegacyDailyAdviceRetired"
+    SqlAlchemyAgentTaskQueue(session).fail(
+        task.id, error_type=reason,
+        error_message="Legacy Daily Advice has been replaced by Johnny review and workout advice",
+        retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY,
+    )
+    run_id = (task.payload or {}).get("run_id")
+    run_model = session.get(AgentRunModel, run_id) if run_id else None
+    if run_model is not None and run_model.status not in {"completed", "failed"}:
+        runs = SqlAlchemyAgentRunRepository(session)
+        run = runs.get_run_for_user(run_model.user_id, run_id)
+        if run is not None:
+            runs.fail_run(run.fail(
+                error_type=reason,
+                error_message="Legacy Daily Advice was retired at the coaching cutover",
+            ))
+
+
 def _enqueue_daily_advice_generation(
     session: Session, *, run: AgentRun, anchor_date: date,
     source_sync_run_id: str | None, limited_recovery: bool,
@@ -462,6 +510,116 @@ def _enqueue_daily_advice_generation(
         correlation_id=run.id,
         idempotency_key=f"daily_advice.generate:{run.id}",
     ))
+
+
+def _enqueue_coaching_generation(session: Session, *, run: AgentRun,
+                                 workflow_input: dict, source_sync_run_id: str | None) -> None:
+    workflow_name = run.workflow_name
+    SqlAlchemyAgentTaskQueue(session).enqueue(TaskEnvelope(
+        task_type="agent.workflow",
+        payload={"run_id": run.id, "workflow_name": workflow_name,
+                 "input": {**workflow_input, "source_sync_run_id": source_sync_run_id}},
+        correlation_id=run.id,
+        idempotency_key=f"{workflow_name}.generate:{run.id}",
+    ))
+
+
+def _process_coaching_sync(session: Session, task: AgentTaskModel) -> None:
+    queue = SqlAlchemyAgentTaskQueue(session)
+    payload = task.payload or {}
+    run_id = payload.get("run_id")
+    workflow_input = payload.get("input") or {}
+    run_model = session.get(AgentRunModel, run_id) if run_id else None
+    if run_model is None or payload.get("workflow_name") not in {"daily_review", "workout_advice"}:
+        queue.fail(task.id, error_type="MalformedTaskPayload", error_message="coaching sync requires a linked review/advice run",
+                   retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+        return
+    runs = SqlAlchemyAgentRunRepository(session)
+    run = runs.get_run_for_user(run_model.user_id, run_id)
+    if run is None:
+        queue.fail(task.id, error_type="MalformedTaskPayload", error_message="coaching run owner mismatch",
+                   retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+        return
+    integrations = SqlAlchemyIntegrationRepository(session)
+    connections = [item for item in integrations.list_active_connections_for_user(run.user_id)
+                   if item.provider == "garmin_connect"]
+    if not connections:
+        _enqueue_coaching_generation(session, run=run,
+            workflow_input={**workflow_input, "manual_only": True}, source_sync_run_id=None)
+        queue.complete(task.id, now=_utc_now())
+        return
+    connection = connections[0]
+    if connection.sync_status == "running":
+        _defer_daily_advice_sync(session, task.id)
+        return
+    if connection.credential_status == "requires_reauth":
+        _fail_coaching_sync(session, task, run, "GarminRequiresReauth")
+        return
+    try:
+        try:
+            sync_run = integrations.start_sync_run(connection.id)
+        except SyncAlreadyRunningError:
+            _defer_daily_advice_sync(session, task.id)
+            return
+        session.commit()  # Publish the provider lease before network I/O.
+        summary = GarminInitialSyncHandler(
+            normalize_training_evidence=normalize_garmin_training_evidence,
+            integrations=integrations, activities=SqlAlchemyActivityRepository(session),
+            outbox=SqlAlchemyOutboxRepository(session), garmin=_build_garmin_sync_adapter(session, integrations),
+            athlete_profiles=SqlAlchemyAthleteRaceRepository(session),
+            normalize_activity=lambda user_id, connection_id, activity: normalize_garmin_activity(
+                user_id=user_id, provider_connection_id=connection_id, payload=activity),
+            normalize_health=lambda user_id, health: normalize_garmin_daily_health(
+                user_id=user_id, payload=health),
+        ).handle(GarminInitialSyncCommand(
+            user_id=run.user_id, connection_id=connection.id, as_of=_utc_now(), sync_run_id=sync_run.id,
+        ))
+        saved_sync = integrations.get_latest_sync_run_for_connection(connection.id)
+        refreshed = integrations.get_connection_for_user(run.user_id, connection.id)
+        if saved_sync is None or refreshed is None or not activity_sync_usable(
+            summary, saved_sync.status, refreshed.credential_status,
+        ):
+            _fail_coaching_sync(session, task, run, "ActivitySyncFailed")
+            return
+        from src.application.coaching_refresh import CoachingRefreshService
+        sync_day = _utc_now().astimezone(ZoneInfo(workflow_input["timezone_name"])).date()
+        CoachingRefreshService(session).record_sync(
+            user_id=run.user_id, summary=summary, today=sync_day,
+            timezone_name=workflow_input["timezone_name"],
+            exclude_review_date=(date.fromisoformat(workflow_input["publication_date"])
+                                 if run.workflow_name == "daily_review" else None),
+        )
+        _enqueue_coaching_generation(session, run=run, workflow_input=workflow_input,
+                                     source_sync_run_id=saved_sync.id)
+        queue.complete(task.id, now=_utc_now())
+    except Exception as exc:
+        running = integrations.get_running_sync_run_for_connection(connection.id)
+        if running is not None:
+            integrations.fail_sync_run(running.id, "Garmin sync failed")
+        _fail_coaching_sync(session, task, run, type(exc).__name__)
+
+
+def _fail_coaching_sync(session: Session, task: AgentTaskModel, run: AgentRun,
+                        reason: str) -> None:
+    if run.workflow_name == "daily_review":
+        slot = session.scalar(select(TrainingReviewModel).where(
+            TrainingReviewModel.user_id == run.user_id,
+            TrainingReviewModel.reserved_run_id == run.id,
+        ))
+    else:
+        slot = session.scalar(select(WorkoutAdviceModel).where(
+            WorkoutAdviceModel.user_id == run.user_id,
+            WorkoutAdviceModel.reserved_run_id == run.id,
+        ))
+    if slot is not None:
+        slot.attempt_state = "sync_failed"
+        slot.attempt_error = reason
+        slot.freshness = "stale"
+    queue = SqlAlchemyAgentTaskQueue(session)
+    queue.fail(task.id, error_type=reason, error_message="Activity sync failed",
+               retryable=False, now=_utc_now(), retry_delay=DEFAULT_RETRY_DELAY)
+    SqlAlchemyAgentRunRepository(session).fail_run(run.fail(
+        error_type=reason, error_message="Activity sync failed"))
 
 
 def _build_garmin_sync_adapter(session: Session, integrations: SqlAlchemyIntegrationRepository):
@@ -681,6 +839,43 @@ def _refresh_scheduled_training_plan_context(
 
 
 def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, workflow_input: dict) -> AgentRun:
+    if workflow_name == "daily_review":
+        publication_date = date.fromisoformat(workflow_input["publication_date"])
+        timezone_name = workflow_input["timezone_name"]
+        runs = SqlAlchemyAgentRunRepository(session)
+        if run.status == "queued":
+            run = runs.complete_run(run.mark_started())
+        result = GenerateTrainingReviewHandler(
+            coaching=SqlAlchemyCoachingRepository(session),
+            evidence=SqlAlchemyCoachingRepository(session),
+        ).handle(user_id=run.user_id, publication_date=publication_date,
+                 timezone_name=timezone_name, run_id=run.id)
+        slot = SqlAlchemyCoachingRepository(session).get_review_slot(run.user_id, publication_date)
+        return runs.complete_run(replace(run, metadata={
+            **run.metadata, "training_review_id": slot["id"], "result_state": "ready",
+        }).complete(output_summary=result["narrative"]))
+    if workflow_name == "workout_advice":
+        advice_date = date.fromisoformat(workflow_input["advice_date"])
+        runs = SqlAlchemyAgentRunRepository(session)
+        if run.status == "queued":
+            run = runs.complete_run(run.mark_started())
+        result = GenerateWorkoutAdviceHandler(
+            coaching=SqlAlchemyCoachingRepository(session),
+            plans=SqlAlchemyTrainingPlanRepository(session),
+            activities=SqlAlchemyActivityRepository(session),
+        ).handle(user_id=run.user_id, advice_date=advice_date,
+                 timezone_name=workflow_input["timezone_name"],
+                 workout_id=workflow_input.get("workout_id"),
+                 constraints=WorkoutAdviceConstraints(**workflow_input["constraints"]),
+                 run_id=run.id,
+                 activity_sync_usable=(workflow_input.get("source_sync_run_id") is not None
+                                       or workflow_input.get("manual_only") is True))
+        slot_key = result.get("workout_id") or "no-workout"
+        slot = SqlAlchemyCoachingRepository(session).get_advice_slot(run.user_id, advice_date, slot_key)
+        return runs.complete_run(replace(run, metadata={
+            **run.metadata, "workout_advice_id": slot["id"], "result_state": "ready",
+        }).complete(output_summary=result["guidance"],
+                    recommendation_id=result.get("recommendation_id")))
     if workflow_name == "daily_recommendation":
         anchor = workflow_input.get("anchor_date")
         anchor_date = date.fromisoformat(anchor) if isinstance(anchor, str) else date.today()
