@@ -6,12 +6,14 @@ import RecommendationActions from '../components/RecommendationActions.vue'
 import { useJohnny } from '../composables/useJohnny'
 import type { WorkoutAdviceConstraints } from '../types'
 
+const props = defineProps<{ timeZone: string }>()
 const emit = defineEmits<{ decision: []; navigateToday: [] }>()
 const johnny = useJohnny()
 const selectedWorkoutId = ref('')
 const availableInput = ref('')
 const feeling = ref<'usual' | 'more_tired'>('usual')
-const cannotTrain = ref(false)
+const trainingAvailability = ref<'can' | 'cannot'>('can')
+const cannotTrain = computed(() => trainingAvailability.value === 'cannot')
 const formError = ref('')
 const decidingId = ref('')
 const decidingAction = ref<'accept' | 'keep' | ''>('')
@@ -42,6 +44,15 @@ function executionLabel(state: string): string {
 
 function formatMinutes(value: unknown): string {
   return typeof value === 'number' ? `${value} 分鐘` : '未設定'
+}
+
+function formatDateTime(value: string): string {
+  const instant = new Date(value)
+  if (Number.isNaN(instant.getTime())) return '時間不詳'
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: props.timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(instant)
 }
 
 function proposalAction(proposal: { evidence: Record<string, unknown> }) {
@@ -79,8 +90,9 @@ function proposalDiff(proposal: { evidence: Record<string, unknown> }) {
   return changes
 }
 
-function onCannotTrainChange() {
+function onTrainingAvailabilityChange() {
   if (cannotTrain.value) availableInput.value = ''
+  formError.value = ''
 }
 
 async function submitAdvice() {
@@ -154,7 +166,7 @@ async function decide(id: string, action: 'accept' | 'keep') {
       <p v-if="johnny.reviewError.value" class="johnny-stream__error" role="alert">{{ johnny.reviewError.value }}</p>
       <template v-if="johnny.dailyReview.value?.current">
         <p class="johnny-stream__lead">{{ johnny.dailyReview.value.current.narrative }}</p>
-        <p class="johnny-stream__meta">涵蓋 {{ johnny.dailyReview.value.current.starts_on }} 至 {{ johnny.dailyReview.value.current.ends_on }} · 產生於 {{ johnny.dailyReview.value.current.generated_at }}</p>
+        <p class="johnny-stream__meta">涵蓋 {{ johnny.dailyReview.value.current.starts_on }} 至 {{ johnny.dailyReview.value.current.ends_on }} · 產生於 <time :datetime="johnny.dailyReview.value.current.generated_at">{{ formatDateTime(johnny.dailyReview.value.current.generated_at) }}</time></p>
         <div class="johnny-score" data-testid="johnny-execution-score">
           <div>
             <p class="section-label">七日課表執行分數</p>
@@ -209,34 +221,49 @@ async function decide(id: string, action: 'accept' | 'keep') {
             </div>
           </dl>
         </div>
-        <p class="johnny-stream__meta">課表只會在你接受後更新。{{ proposal.expires_at ? `有效至 ${proposal.expires_at}` : '' }}</p>
+        <p class="johnny-stream__meta">課表只會在你接受後更新。<template v-if="proposal.expires_at"> · 有效至 <time :datetime="proposal.expires_at">{{ formatDateTime(proposal.expires_at) }}</time></template></p>
         <RecommendationActions :busy-action="decidingId === proposal.id ? decidingAction : ''" @accept="decide(proposal.id, 'accept')" @keep="decide(proposal.id, 'keep')" />
       </article>
     </section>
 
     <section id="johnny-workout-advice" class="johnny-stream johnny-stream--advice" data-testid="johnny-workout-advice" aria-labelledby="workout-advice-title">
-      <div class="johnny-stream__heading"><div><p class="section-label">On request</p><h3 id="workout-advice-title">今日課表建議</h3></div></div>
-      <p>想知道今天怎麼跑，或需要縮短、略過課表時，再請 Johnny 分析一次最新活動。</p>
+      <div class="johnny-stream__heading"><h3 id="workout-advice-title">今日課表建議</h3></div>
+      <p class="johnny-advice-intro">告訴 Johnny 今天的狀況，再請他根據最新活動與課表給你建議。</p>
       <form class="johnny-advice-form" novalidate @submit.prevent="submitAdvice">
-        <label v-if="johnny.workoutChoices.value.length > 1">選擇課表
+        <label v-if="johnny.workoutChoices.value.length > 1" class="johnny-advice-form__workout">選擇課表
           <select v-model="selectedWorkoutId"><option value="">請選擇</option><option v-for="choice in johnny.workoutChoices.value" :key="choice.id" :value="choice.id">{{ choice.display_name }}</option></select>
         </label>
-        <label>今天可用時間（分鐘，可留空）<input v-model="availableInput" type="number" min="1" max="600" inputmode="numeric" :disabled="cannotTrain" /></label>
-        <label>今天的感覺<select v-model="feeling"><option value="usual">和平常差不多</option><option value="more_tired">比平常疲倦</option></select></label>
-        <label class="johnny-advice-form__check"><input v-model="cannotTrain" type="checkbox" @change="onCannotTrainChange" />今天無法訓練</label>
-        <p v-if="formError" class="johnny-stream__error" role="alert">{{ formError }}</p>
-        <AppButton tone="primary" type="submit" :busy="johnny.adviceLoading.value || !!johnny.advicePendingRunId.value">取得今日課表建議</AppButton>
+        <fieldset class="johnny-advice-form__mode">
+          <legend>今天能訓練嗎？</legend>
+          <div class="johnny-advice-form__mode-options">
+            <label class="johnny-advice-form__mode-option" :class="{ 'johnny-advice-form__mode-option--selected': !cannotTrain }"><input v-model="trainingAvailability" type="radio" name="johnny-training-availability" value="can" @change="onTrainingAvailabilityChange" />今天可以訓練</label>
+            <label class="johnny-advice-form__mode-option" :class="{ 'johnny-advice-form__mode-option--selected': cannotTrain }"><input v-model="trainingAvailability" type="radio" name="johnny-training-availability" value="cannot" @change="onTrainingAvailabilityChange" />今天無法訓練</label>
+          </div>
+        </fieldset>
+        <div class="johnny-advice-form__fields" :class="{ 'johnny-advice-form__fields--single': cannotTrain }">
+          <div v-if="!cannotTrain" class="johnny-advice-form__availability">
+            <label for="johnny-available-minutes">今天可用時間 <span class="johnny-advice-form__unit">分鐘</span></label>
+            <input id="johnny-available-minutes" v-model="availableInput" type="number" min="1" max="600" inputmode="numeric" placeholder="例：45" :aria-describedby="formError.includes('可用時間') ? 'johnny-available-hint johnny-advice-form-error' : 'johnny-available-hint'" :aria-invalid="formError.includes('可用時間') ? 'true' : undefined" />
+            <p id="johnny-available-hint" class="johnny-advice-form__hint">不填則依原課表建議</p>
+          </div>
+          <label class="johnny-advice-form__feeling">今天的感覺<select v-model="feeling"><option value="usual">和平常差不多</option><option value="more_tired">比平常疲倦</option></select></label>
+        </div>
+        <p v-if="formError" id="johnny-advice-form-error" class="johnny-stream__error" role="alert">{{ formError }}</p>
+        <div class="johnny-advice-form__action">
+          <AppButton tone="primary" type="submit" :busy="johnny.adviceLoading.value || !!johnny.advicePendingRunId.value">取得今日課表建議</AppButton>
+          <p v-if="latestAdvice" class="johnny-stream__meta">最近一次建議 · <time :datetime="latestAdvice.generated_at">{{ formatDateTime(latestAdvice.generated_at) }}</time></p>
+          <p v-else-if="johnny.adviceLoading.value || johnny.advicePendingRunId.value" class="johnny-stream__state" role="status">正在分析今天的資料</p>
+          <p v-else class="johnny-stream__empty">尚未取得今天的建議</p>
+        </div>
       </form>
-      <p v-if="johnny.advicePendingRunId.value" role="status">Johnny 正在同步並分析今天的資料；原有建議會保留。</p>
+      <p v-if="johnny.advicePendingRunId.value && latestAdvice" role="status">Johnny 正在同步並分析今天的資料；原有建議會保留。</p>
       <p v-if="johnny.adviceError.value" role="alert" class="johnny-stream__error">{{ johnny.adviceError.value }}</p>
       <article v-if="latestAdvice" class="johnny-advice-result">
-        <p class="section-label">最近一次建議 · {{ latestAdvice.generated_at }}</p>
         <p class="johnny-stream__lead">{{ latestAdvice.guidance }}</p>
         <p v-if="latestAdvice.reason_code === 'needs_pairing'">活動配對待確認。請到「今日」整理活動後再取得建議。<AppButton @click="emit('navigateToday')">前往今日整理活動</AppButton></p>
         <p v-if="latestAdvice.after" class="johnny-stream__meta">有可套用的課表調整，請在上方「待決定調整」確認。</p>
         <p v-else class="johnny-stream__meta">目前沒有需要套用的課表變更。</p>
       </article>
-      <p v-else class="johnny-stream__empty">尚未取得今天的課表建議。你可以填寫當天的條件，再請 Johnny 分析。</p>
     </section>
 
     <section class="johnny-stream johnny-stream--history" data-testid="johnny-history" aria-labelledby="johnny-history-title">
@@ -244,7 +271,7 @@ async function decide(id: string, action: 'accept' | 'keep') {
       <p v-if="johnny.historyError.value" role="alert">{{ johnny.historyError.value }}</p>
       <ol v-if="johnny.history.value.length" class="johnny-history-list">
         <li v-for="entry in johnny.history.value" :key="`${entry.kind}-${entry.id}`">
-          <span class="johnny-stream__meta">{{ entry.at }}</span>
+          <time class="johnny-stream__meta" :datetime="entry.at">{{ formatDateTime(entry.at) }}</time>
           <strong>{{ entry.kind === 'daily_review' ? '每日回顧' : entry.kind === 'workout_advice' ? '今日課表建議' : '課表調整決定' }}</strong>
           <p v-if="entry.kind === 'recommendation_decision'">{{ entry.decision === 'accepted' ? '已接受調整' : '維持原課表' }}</p>
           <p v-else-if="entry.result?.current">{{ 'narrative' in entry.result.current ? entry.result.current.narrative : entry.result.current.guidance }}</p>

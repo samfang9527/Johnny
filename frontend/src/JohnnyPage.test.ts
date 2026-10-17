@@ -52,18 +52,34 @@ describe('Johnny page', () => {
           after_payload: { display_name: '輕鬆跑', status: 'planned', planned_duration_minutes: 25,
             planned_distance_meters: null, steps: [{ duration_seconds: 1500 }] },
         } } },
-      }]), history: ref([]), historyOffset: ref(0),
+      }]), history: ref([{ kind: 'workout_advice', id: 'history-1', at: '2026-10-17T02:19:11.935335+00:00' }]), historyOffset: ref(0),
       reviewLoading: ref(false), adviceLoading: ref(false), historyLoading: ref(false),
       reviewError: ref(''), adviceError: ref(''), historyError: ref(''),
-      reviewPendingRunId: ref(null), advicePendingRunId: ref(null),
+      reviewPendingRunId: ref<string | null>(null), advicePendingRunId: ref<string | null>(null),
       refreshReview: vi.fn(), refreshAdvice: vi.fn(), loadHistory: vi.fn(),
       requestAdvice: vi.fn(), retryReview: vi.fn(), stop: vi.fn(),
     }
     vi.mocked(useJohnny).mockReturnValue(state as unknown as ReturnType<typeof useJohnny>)
-    const wrapper = mount(JohnnyPage)
+    const wrapper = mount(JohnnyPage, { props: { timeZone: 'Asia/Taipei' } })
     expect(wrapper.get('[data-testid="johnny-daily-review"]').text()).toContain('R1')
     expect(wrapper.get('[data-testid="johnny-workout-advice"]').text()).toContain('A1')
     expect(wrapper.get('[data-testid="johnny-proposals"]').text()).toContain('40 分鐘 → 25 分鐘')
+    expect(wrapper.get('[data-testid="johnny-daily-review"]').text()).toContain('2026/10/16 04:05')
+    expect(wrapper.get('[data-testid="johnny-workout-advice"]').text()).toContain('2026/10/16 06:00')
+    expect(wrapper.get('[data-testid="johnny-history"]').text()).toContain('2026/10/17 10:19')
+    expect(wrapper.get('[data-testid="johnny-proposals"]').text()).toContain('2026/10/17 00:00')
+    expect(wrapper.text()).not.toContain('T02:19:11')
+    expect(wrapper.get('.johnny-advice-form__availability').text()).toContain('不填則依原課表建議')
+    await wrapper.get('#johnny-available-minutes').setValue('45')
+    await wrapper.get('input[name="johnny-training-availability"][value="cannot"]').setValue()
+    expect(wrapper.find('#johnny-available-minutes').exists()).toBe(false)
+    expect(wrapper.get('.johnny-advice-form__feeling').text()).toContain('今天的感覺')
+    await wrapper.get('.johnny-advice-form').trigger('submit')
+    expect(state.requestAdvice).toHaveBeenCalledWith(null, {
+      available_minutes: null, feeling: 'usual', cannot_train_today: true,
+    }, expect.any(String))
+    await wrapper.get('input[name="johnny-training-availability"][value="can"]').setValue()
+    expect((wrapper.get('#johnny-available-minutes').element as HTMLInputElement).value).toBe('')
     state.workoutAdvices.value = [advice('A2')]
     state.adviceError.value = '稍後再試'
     await nextTick()
@@ -75,6 +91,11 @@ describe('Johnny page', () => {
     expect(wrapper.get('[data-testid="johnny-daily-review"]').text()).toContain('R2')
     expect(wrapper.get('[data-testid="johnny-workout-advice"]').text()).toContain('A2')
     expect(wrapper.text()).not.toContain('開始對話')
+    state.workoutAdvices.value = []
+    state.advicePendingRunId.value = 'run-1'
+    await nextTick()
+    expect(wrapper.get('.johnny-advice-form__action').text()).toContain('正在分析今天的資料')
+    expect(wrapper.get('.johnny-advice-form__action').text()).not.toContain('尚未取得今天的建議')
     wrapper.unmount()
   })
 })

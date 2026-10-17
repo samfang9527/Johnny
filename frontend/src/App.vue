@@ -3361,7 +3361,7 @@ function shouldRequireAuth(): boolean {
 
       </section>
 
-      <JohnnyPage v-else-if="activeView === 'johnny'" @decision="hydrateFromBackend" @navigate-today="showView('today')" />
+      <JohnnyPage v-else-if="activeView === 'johnny'" :time-zone="userTimezone" @decision="hydrateFromBackend" @navigate-today="showView('today')" />
 
       <section v-else-if="activeView === 'conversation'" class="page-stack" aria-labelledby="conversation-title">
         <div class="page-heading">
