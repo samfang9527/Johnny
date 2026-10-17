@@ -14,7 +14,7 @@ from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunR
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 from src.infrastructure.database.models import (
-    AgentTaskModel, RecommendationModel, TrainingReviewModel, WorkoutAdviceModel,
+    AgentRunModel, AgentTaskModel, RecommendationModel, TrainingReviewModel, WorkoutAdviceModel,
 )
 
 
@@ -29,6 +29,60 @@ class CoachingRefreshService:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.coaching = SqlAlchemyCoachingRepository(session)
+
+    def recover_failed_review(self, *, user_id: str, publication_date: date,
+                              timezone_name: str) -> str | None:
+        """Repair an unstarted review rejected by a worker predating coaching.sync."""
+        key = f"daily_review:{user_id}:{publication_date.isoformat()}"
+        tasks = SqlAlchemyAgentTaskQueue(self.session)
+        failed = tasks.get_by_idempotency_key(key)
+        if (failed is None or failed.task_type != "coaching.sync" or failed.status != "failed"
+                or failed.last_error_type != "UnknownTaskType"):
+            return None
+        runs = SqlAlchemyAgentRunRepository(self.session)
+        previous = runs.get_run_for_user(user_id, failed.payload.get("run_id"))
+        slot = self.coaching.get_review_slot(user_id, publication_date)
+        if (previous is None or previous.status != "queued"
+                or (slot is not None and (slot["current"] is not None
+                    or slot["reserved_run_id"] != previous.id))):
+            return None
+        already_retried = self.session.scalar(select(AgentRunModel.id).where(
+            AgentRunModel.user_id == user_id,
+            AgentRunModel.workflow_name == "daily_review",
+            AgentRunModel.correlation_id == previous.correlation_id,
+            AgentRunModel.error_type == "WorkerVersionMismatch",
+        ).limit(1)) is not None
+        if already_retried:
+            runs.fail_run(previous.fail(
+                error_type="WorkerVersionMismatch",
+                error_message="The active worker still cannot process coaching tasks",
+            ))
+            review = self.session.scalar(select(TrainingReviewModel).where(
+                TrainingReviewModel.user_id == user_id,
+                TrainingReviewModel.publication_date == publication_date,
+            ).with_for_update())
+            if review is not None:
+                review.attempt_state = "sync_failed"
+                review.attempt_error = "worker_version_mismatch"
+                review.freshness = "stale"
+            self.session.flush()
+            return None
+        runs.fail_run(previous.fail(
+            error_type="WorkerVersionMismatch",
+            error_message="A retired worker could not process this coaching task",
+        ))
+        queued = QueueAgentRunHandler(
+            runs=runs, queue=tasks, prompt_version="johnny-coaching-v1",
+            provider="local", model="deterministic-local-companion",
+        ).queue_run(
+            user_id=user_id, workflow_name="daily_review", trigger_type="scheduled",
+            idempotency_key=key,
+            payload={"publication_date": publication_date.isoformat(),
+                     "timezone_name": timezone_name},
+            task_type="coaching.sync", requeue_terminal=True,
+        )
+        self.coaching.reserve_review(user_id, publication_date, timezone_name, queued.run.id)
+        return queued.run.id
 
     def record_change(self, *, user_id: str, changed_dates: set[date],
                       today: date, reason: str, affects_advice: bool = True,
@@ -88,6 +142,8 @@ class CoachingRefreshService:
     def record_sync(self, *, user_id: str, summary: SyncSummary, today: date,
                     timezone_name: str,
                     exclude_review_date: date | None = None) -> RefreshEffects:
+        recovered = self.recover_failed_review(
+            user_id=user_id, publication_date=today, timezone_name=timezone_name)
         stored = (summary.resources.get("activities") or {}).get("stored", 0)
         stored_health = any((bucket or {}).get("stored", 0) for name, bucket in summary.resources.items()
                             if name != "activities")
@@ -125,7 +181,12 @@ class CoachingRefreshService:
             )):
                 dates.add(review.ends_on)
         if not dates and not stored and not stored_health:
-            return RefreshEffects()
-        return self.record_change(user_id=user_id, changed_dates=dates, today=today,
-                                  reason="provider_evidence_changed", affects_advice=bool(stored or stored_health),
-                                  exclude_review_date=exclude_review_date)
+            return RefreshEffects(review_run_ids=(recovered,) if recovered else ())
+        changed = self.record_change(user_id=user_id, changed_dates=dates, today=today,
+                                     reason="provider_evidence_changed", affects_advice=bool(stored or stored_health),
+                                     exclude_review_date=exclude_review_date)
+        return RefreshEffects(
+            review_run_ids=((recovered,) if recovered else ()) + changed.review_run_ids,
+            invalidated_advice_ids=changed.invalidated_advice_ids,
+            superseded_recommendation_ids=changed.superseded_recommendation_ids,
+        )

@@ -69,6 +69,8 @@ def schedule_once(session: Session, *, now: datetime | None = None) -> int:
     before = _task_count(session)
     handler = _queue_handler(session)
     coaching = SqlAlchemyCoachingRepository(session)
+    from src.application.coaching_refresh import CoachingRefreshService
+    refresh = CoachingRefreshService(session)
     for user, timezone_name in _eligible_daily_users(session):
         try:
             local_date = _due_local_date(instant, timezone_name)
@@ -77,11 +79,18 @@ def schedule_once(session: Session, *, now: datetime | None = None) -> int:
             continue
         if local_date is None:
             continue
+        key = f"daily_review:{user.id}:{local_date.isoformat()}"
+        recovered_run_id = refresh.recover_failed_review(
+            user_id=user.id, publication_date=local_date, timezone_name=timezone_name)
+        if recovered_run_id:
+            logger.warning("requeueing review rejected by old worker user_id=%s date=%s",
+                           user.id, local_date)
+            continue
         queued = handler.queue_run(
             user_id=user.id,
             workflow_name="daily_review",
             trigger_type="scheduled",
-            idempotency_key=f"daily_review:{user.id}:{local_date.isoformat()}",
+            idempotency_key=key,
             payload={"publication_date": local_date.isoformat(), "timezone_name": timezone_name},
             task_type=COACHING_SYNC_TASK_TYPE,
             reuse_terminal=True,
