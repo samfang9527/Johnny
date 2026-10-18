@@ -128,7 +128,7 @@ Johnny 的視覺世界是「每天站上起跑線前，身邊有一個懂你的�
 
 Johnny 不應該像一般 SaaS dashboard，也不應該像聊天機器人。它的第一印象是：今天身體狀態如何、Johnny 建議 Run / Adjust / Rest、證據是什麼、下一步要做什麼。
 
-Johnny 頁沿用深綠畫布與分隔線節奏，固定分成「每日回顧」和「今日課表建議」兩個可同時存在的區域。前者先顯示昨天、七日執行分數與逐堂紀錄；後者由跑者主動要求，顯示當日條件、建議與必要時的課表調整。待決定提案緊接回顧摘要，展示原課表與接受後的差異；明確接受前，Today 的正規課表不變。各區的 loading、錯誤、過期與產生時間獨立呈現，更新其中一區不能使另一區消失。Today 只取當日建議的一句摘要與 Johnny 連結，不複製完整回顧或對話介面。
+Johnny 頁沿用深綠畫布與分隔線節奏。待決定調整置頂，先顯示標題、原因及最重要的前後變更；完整比較與「接受調整／維持原課表」收在同一個原生揭露區，跑者查看差異後再決定。沒有待決定調整時明確顯示空狀態。下方以「今日建議／訓練回顧／歷史紀錄」分頁，一次呈現一類內容；今日建議顯示最近結果，再以揭露區收起後續輸入；訓練回顧先顯示敘述與七日分數，再以揭露區顯示計算方式及逐堂紀錄。分頁只改變可見內容，不清空表單或其他分頁的結果。各區的 loading、錯誤、過期與產生時間仍獨立維護；明確接受前，Today 的正規課表不變。Today 只取當日建議的一句摘要與 Johnny 連結，不複製完整回顧或對話介面。
 
 ### Product context and register
 
@@ -174,7 +174,7 @@ Copy 原則：
 
 - `今日`: start-line cockpit，預設入口。
 - `計畫`: current plan, inclusive training journey, and weekly schedule。The current plan reveals its included races on demand; non-race athletes still see a useful training cycle.
-- `Johnny`: pending recommendations first, weekly review/check-ins below. Conversation remains hidden until public-ready.
+- `Johnny`: pending recommendations first, then tabs for today's advice, training review, and history. Conversation remains hidden until public-ready.
 - `運動員`: Athlete Baseline snapshot first, profile/settings below. Athlete Memory is not a browsable frontend page.
 - `資料`: Signal Coverage first, provider connection details below.
 

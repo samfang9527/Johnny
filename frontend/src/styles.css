@@ -3371,7 +3371,7 @@ textarea { transition: background-color var(--motion-feedback) ease, border-colo
   .main-surface .athlete-baseline dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .main-surface .athlete-baseline dl div:nth-child(2n) { border-right: 0; }
 }
-/* Johnny review and advice share the app's continuous ruled training canvas. */
+/* Johnny keeps decisions visible while advice, review, and history occupy separate tabs. */
 .johnny-page__heading,
 .johnny-stream__heading {
   display: flex;
@@ -3380,12 +3380,79 @@ textarea { transition: background-color var(--motion-feedback) ease, border-colo
   gap: 1rem;
 }
 
-.johnny-page__jump {
-  align-self: center;
-  flex: none;
-  color: var(--color-deep-green);
+.johnny-decision {
+  min-width: 0;
+  padding: 0.5rem 0 1.5rem;
+  border-bottom: 1px solid var(--color-line-mint);
+}
+
+.johnny-decision__count {
+  color: var(--color-split-amber);
+  font-family: var(--font-data);
+  font-size: 0.78rem;
   font-weight: 700;
-  text-underline-offset: 0.25rem;
+  letter-spacing: 0.04em;
+}
+
+.johnny-decision__heading h3,
+.johnny-decision--empty h3 {
+  margin: 0.7rem 0 0;
+  color: var(--color-split-amber);
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 4vw, 2.7rem);
+  line-height: 1.2;
+}
+
+.johnny-decision--empty .johnny-decision__count,
+.johnny-decision--empty h3 {
+  color: var(--color-deep-green);
+}
+
+.johnny-decision--empty p {
+  margin-bottom: 0;
+  color: var(--color-muted-green);
+}
+
+.johnny-tabs {
+  display: flex;
+  min-width: 0;
+  margin-top: 1.6rem;
+  border-bottom: 1px solid var(--color-line-mint);
+}
+
+.johnny-tabs button {
+  flex: 1;
+  min-width: 0;
+  min-height: 3.4rem;
+  padding: 0.8rem 0.5rem;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--color-muted-green);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.johnny-tabs button:hover,
+.johnny-tabs button[aria-selected="true"] {
+  color: var(--color-deep-green);
+}
+
+.johnny-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--color-deep-green);
+}
+
+.johnny-tabs button:focus-visible,
+.johnny-page summary:focus-visible {
+  outline: 2px solid var(--color-deep-green);
+  outline-offset: 2px;
+}
+
+.johnny-tabs + .johnny-stream,
+.johnny-stream[role="tabpanel"] {
+  padding-top: 1.7rem;
+  border-top: 0;
 }
 
 .johnny-stream {
@@ -3478,8 +3545,87 @@ textarea { transition: background-color var(--motion-feedback) ease, border-colo
 }
 
 .johnny-proposal {
+  padding: 1.2rem 0 0;
+  border-top: 1px solid var(--color-line-mint);
+}
+
+.johnny-decision__heading + .johnny-proposal {
+  margin-top: 1.2rem;
+}
+
+.johnny-proposal + .johnny-proposal {
+  margin-top: 1.2rem;
+}
+
+.johnny-proposal__heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+}
+
+.johnny-proposal__heading h4 {
+  margin: 0;
+  color: var(--color-split-amber);
+  font-family: var(--font-display);
+  font-size: clamp(1.35rem, 2.5vw, 1.85rem);
+}
+
+.johnny-proposal__rationale {
+  max-width: 68ch;
+  margin: 0.65rem 0;
+}
+
+.johnny-proposal__summary {
+  margin: 1.1rem 0 0;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--color-line-mint);
+  color: var(--color-ink-green);
+  font-family: var(--font-data);
+  font-size: clamp(0.95rem, 1.8vw, 1.15rem);
+  font-weight: 650;
+}
+
+.johnny-proposal__details,
+.johnny-advice-disclosure,
+.johnny-review__details {
+  max-width: 49rem;
+  padding: 0.9rem 0 0;
+  border-top: 1px solid var(--color-line-mint);
+}
+
+.johnny-proposal__details summary,
+.johnny-advice-disclosure summary,
+.johnny-review__details > summary {
+  width: fit-content;
+  color: var(--color-deep-green);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.johnny-proposal__details[open] summary,
+.johnny-advice-disclosure[open] summary,
+.johnny-review__details[open] > summary {
+  margin-bottom: 1rem;
+}
+
+.johnny-review__score-summary {
+  margin: 1.5rem 0 0.3rem;
   padding: 1rem 0;
   border-top: 1px solid var(--color-line-mint);
+  border-bottom: 1px solid var(--color-line-mint);
+}
+
+.johnny-review__score-summary strong {
+  color: var(--color-deep-green);
+  font-family: var(--font-display);
+  font-size: clamp(1.3rem, 3vw, 1.8rem);
+}
+
+.johnny-advice-disclosure,
+.johnny-review__details {
+  margin-top: 1.5rem;
 }
 
 .johnny-proposal__diff {
@@ -3666,7 +3812,7 @@ textarea { transition: background-color var(--motion-feedback) ease, border-colo
 
 @media (max-width: 700px) {
   .johnny-page__heading { display: block; }
-  .johnny-page__jump { display: inline-block; margin-top: 0.8rem; }
+  .johnny-tabs button { font-size: 0.9rem; }
   .johnny-score,
   .johnny-advice-form__fields { grid-template-columns: minmax(0, 1fr); }
   .johnny-advice-form__mode-options { grid-template-columns: minmax(0, 1fr); }

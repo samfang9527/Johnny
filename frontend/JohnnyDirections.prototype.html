@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Johnny UX 方向示範</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      font-family: 'Noto Sans TC', sans-serif;
+      color: #eaf5ed;
+      background: #17291e;
+      --bg: #17291e;
+      --surface: #1d3525;
+      --surface-2: #203727;
+      --mint: #bde8c9;
+      --ink: #eaf5ed;
+      --muted: #b5d2bd;
+      --line: #47664e;
+      --amber: #efbc76;
+      --blue: #a9cce1;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; min-width: 320px; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+    ::selection { color: var(--bg); background: var(--mint); }
+    a { color: inherit; }
+    .shell { display: grid; grid-template-columns: 112px minmax(0, 1fr); min-height: 100vh; }
+    .rail { position: sticky; top: 0; height: 100vh; padding: 29px 12px; display: flex; flex-direction: column; background: var(--mint); color: #163c29; }
+    .brand { font: 800 26px/1 'DM Sans', sans-serif; letter-spacing: -.04em; padding: 0 8px 38px; }
+    .rail-nav { display: grid; gap: 10px; }
+    .rail-item { padding: 13px 8px; border: 0; background: transparent; color: #163c29; text-align: center; border-radius: 10px; font-size: 14px; font-weight: 700; }
+    .rail-item.active { background: #163c29; color: var(--mint); }
+    .rail-foot { margin-top: auto; padding: 10px 5px; text-align: center; font: 600 11px/1.4 'IBM Plex Mono', monospace; }
+    main { width: min(100%, 1220px); padding: 34px clamp(22px, 5vw, 78px) 145px; margin: 0 auto; }
+    .prototype-note { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 20px; padding: 0 0 15px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .prototype-note strong { color: var(--mint); }
+    .page-top { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin: 34px 0 28px; }
+    h1, h2, h3, h4, p { margin-top: 0; }
+    h1, .display { font-family: 'DM Sans', 'Noto Sans TC', sans-serif; letter-spacing: -.025em; }
+    h1 { margin-bottom: 9px; font-size: clamp(36px, 5vw, 56px); line-height: 1.05; }
+    h2 { margin-bottom: 10px; font-size: clamp(24px, 3.3vw, 38px); line-height: 1.25; letter-spacing: -.025em; }
+    h3 { margin-bottom: 10px; font-size: 20px; }
+    p { line-height: 1.65; }
+    .page-top p { margin: 0; color: var(--muted); }
+    .date { color: var(--muted); font: 500 13px/1.4 'IBM Plex Mono', monospace; white-space: nowrap; }
+    .variant-intro { margin-bottom: 28px; padding: 18px 22px; border: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 16px 30px; }
+    .variant-intro p { margin: 0; max-width: 72ch; }
+    .variant-intro strong { color: var(--mint); }
+    .variant-intro button { flex: none; }
+    .eyebrow { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .05em; }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    .mono { font-family: 'IBM Plex Mono', 'Noto Sans TC', monospace; }
+    .rule { border-top: 1px solid var(--line); }
+    .section { padding: 27px 0; border-top: 1px solid var(--line); }
+    .section-head { display: flex; align-items: start; justify-content: space-between; gap: 15px; margin-bottom: 16px; }
+    .section-head h3 { margin: 0; }
+    .section-head p { margin: 5px 0 0; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 45px; padding: 9px 17px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink); font-weight: 700; text-decoration: none; white-space: nowrap; }
+    .btn:hover { border-color: var(--mint); background: #24442f; }
+    .btn.primary { border-color: var(--mint); background: var(--mint); color: #173a27; }
+    .btn.primary:hover { background: #d3f5d9; }
+    .btn.warn { border-color: var(--amber); background: var(--amber); color: #372816; }
+    .btn.ghost { border-color: transparent; color: var(--mint); padding-inline: 4px; }
+    .btn.ghost:hover { background: transparent; text-decoration: underline; text-underline-offset: 4px; }
+    .tag { display: inline-block; padding: 5px 9px; border: 1px solid var(--line); border-radius: 100px; color: var(--muted); font-size: 12px; line-height: 1.2; }
+    .tag.amber { color: var(--amber); border-color: #8a6a41; }
+    .tag.mint { color: var(--mint); border-color: #63856b; }
+    .tag.blue { color: var(--blue); border-color: #607c86; }
+    .callout { padding: 20px 24px; background: var(--surface); }
+    .callout p:last-child { margin-bottom: 0; }
+    .proposal { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 26px 0; }
+    .proposal h2 { color: var(--amber); }
+    .proposal-summary { display: flex; flex-wrap: wrap; gap: 9px; margin: 14px 0 21px; }
+    .diff { display: grid; grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr); gap: 13px; align-items: stretch; margin: 24px 0; }
+    .diff-block { padding: 16px 18px; border: 1px solid var(--line); }
+    .diff-block.after { border-color: #9b794d; background: #302c20; }
+    .diff-block strong { display: block; font-size: 19px; margin: 6px 0; }
+    .diff-arrow { align-self: center; text-align: center; color: var(--amber); font-size: 27px; }
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 38px; }
+    .summary-row { display: flex; justify-content: space-between; gap: 14px; padding: 18px 0; border-top: 1px solid var(--line); }
+    .summary-row span:last-child { color: var(--mint); font-weight: 700; text-align: right; }
+    details { border-top: 1px solid var(--line); padding: 16px 0; }
+    details:last-child { border-bottom: 1px solid var(--line); }
+    summary { cursor: pointer; font-weight: 700; color: var(--mint); }
+    details p { padding-top: 10px; margin-bottom: 0; }
+    .score-line { display: flex; align-items: end; flex-wrap: wrap; gap: 10px 20px; }
+    .score-line strong { font: 700 clamp(34px, 5vw, 56px)/1 'DM Sans', sans-serif; color: var(--mint); }
+    .split { display: grid; grid-template-columns: 1.2fr .8fr; gap: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .split > * { padding: 24px 26px; }
+    .split > *:first-child { border-right: 1px solid var(--line); padding-left: 0; }
+    .split > *:last-child { padding-right: 0; }
+    .brief-lead { padding: 28px 0 36px; }
+    .brief-lead h2 { max-width: 18ch; font-size: clamp(31px, 4.5vw, 52px); }
+    .brief-track { display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .brief-stage { padding: 24px; min-height: 250px; }
+    .brief-stage:first-child { padding-left: 0; }
+    .brief-stage:last-child { padding-right: 0; }
+    .brief-stage + .brief-stage { border-left: 1px solid var(--line); }
+    .brief-stage h3 { font-size: 27px; margin: 16px 0 8px; }
+    .brief-stage p { margin-bottom: 16px; }
+    .brief-index { font: 600 13px/1 'IBM Plex Mono', monospace; color: var(--mint); }
+    .brief-stage.attention .brief-index, .brief-stage.attention h3 { color: var(--amber); }
+    .brief-details { margin-top: 28px; }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+    .tab { flex: 1; min-width: 135px; border: 0; border-bottom: 3px solid transparent; padding: 18px 12px; background: transparent; color: var(--muted); font-weight: 700; }
+    .tab.active { border-color: var(--mint); color: var(--mint); }
+    .tab:hover { color: var(--ink); }
+    .tab-panel { padding-top: 33px; min-height: 360px; }
+    .pending-strip { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 18px; background: #302c20; border: 1px solid #8a6a41; color: #ffe0ad; }
+    .pending-strip p { margin: 0; }
+    .pending-strip strong { color: var(--amber); }
+    .pending-strip .btn { border-color: #b3864d; }
+    .hybrid-hero { padding: 26px 0 25px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .hybrid-hero h2 { max-width: 23ch; margin: 17px 0 10px; color: var(--amber); font-size: clamp(30px, 4.2vw, 48px); }
+    .hybrid-hero--clear h2 { color: var(--mint); }
+    .hybrid-hero > p { max-width: 68ch; margin-bottom: 0; }
+    .hybrid-change { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 13px; margin-top: 23px; padding: 15px 0; border-top: 1px solid var(--line); font-size: 14px; }
+    .hybrid-change strong { font-size: 17px; }
+    .hybrid-change .arrow { color: var(--amber); font-size: 20px; }
+    .hybrid-disclosure { margin-top: 2px; padding-bottom: 0; border-bottom: 0; }
+    .hybrid-disclosure summary { width: fit-content; padding: 4px 0 13px; }
+    .hybrid-disclosure[open] summary { margin-bottom: 9px; }
+    .hybrid-disclosure .diff { margin-top: 9px; }
+    .hybrid-tabs { margin-top: 28px; }
+    .hybrid-panel { padding-top: 30px; min-height: 330px; }
+    .hybrid-panel h2 { margin: 0 0 15px; }
+    .hybrid-panel > p { max-width: 72ch; }
+    .hybrid-panel details { max-width: 760px; margin-top: 25px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 700px; }
+    .form-field { display: grid; gap: 8px; }
+    .form-field label { font-weight: 700; }
+    .form-field select, .form-field input { min-height: 45px; width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; color: var(--ink); background: var(--surface); }
+    .guide { max-width: 800px; }
+    .guide-head { margin: 28px 0 30px; }
+    .guide-head h2 { font-size: clamp(35px, 5vw, 58px); max-width: 16ch; }
+    .guide-progress { display: flex; gap: 8px; margin: 0 0 28px; }
+    .guide-progress span { height: 4px; flex: 1; background: var(--line); }
+    .guide-progress span.active { background: var(--mint); }
+    .guide-card { border-top: 1px solid var(--line); padding: 28px 0; }
+    .guide-card h3 { font-size: 28px; }
+    .choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 22px 0 28px; }
+    .choice { min-height: 96px; padding: 17px 19px; border: 1px solid var(--line); border-radius: 10px; text-align: left; background: transparent; color: var(--ink); }
+    .choice:hover, .choice.selected { border-color: var(--mint); background: var(--surface); }
+    .choice strong, .choice span { display: block; }
+    .choice span { margin-top: 5px; color: var(--muted); font-size: 13px; }
+    .guide-footer { display: flex; gap: 12px; justify-content: space-between; align-items: center; margin-top: 16px; }
+    .history-row { display: grid; grid-template-columns: 110px 1fr auto; gap: 12px; padding: 15px 0; border-top: 1px solid var(--line); align-items: start; }
+    .history-row time { color: var(--muted); font: 500 12px/1.5 'IBM Plex Mono', monospace; }
+    .history-row p { margin-bottom: 0; }
+    .switcher { position: fixed; z-index: 10; left: 50%; bottom: 25px; transform: translateX(-50%); display: flex; align-items: center; gap: 5px; padding: 6px; width: min(94vw, 560px); border: 1px solid #d2f5d9; border-radius: 16px; background: #d7f5dd; color: #153624; box-shadow: 0 14px 36px #07130ab8; }
+    .switcher button { flex: none; min-width: 42px; min-height: 42px; border: 0; border-radius: 10px; background: transparent; color: inherit; font-size: 19px; font-weight: 800; }
+    .switcher button:hover { background: #bce5c5; }
+    .switcher-label { flex: 1; min-width: 0; text-align: center; font-weight: 800; }
+    .switcher-label small { display: block; font-size: 11px; font-weight: 600; opacity: .75; }
+    .toast { position: fixed; z-index: 11; top: 20px; right: 20px; max-width: min(370px, calc(100vw - 40px)); padding: 14px 18px; background: var(--mint); color: #143322; border-radius: 10px; box-shadow: 0 10px 30px #07130a8a; font-weight: 700; }
+    @media (max-width: 820px) {
+      .shell { display: block; }
+      .rail { position: fixed; top: auto; bottom: 0; z-index: 5; height: 64px; width: 100%; padding: 5px 7px; }
+      .brand, .rail-foot { display: none; }
+      .rail-nav { height: 100%; grid-template-columns: repeat(5, 1fr); gap: 2px; }
+      .rail-item { padding: 8px 1px; font-size: 11px; }
+      main { padding: 20px 19px 180px; }
+      .switcher { bottom: 76px; }
+      .page-top { margin-top: 27px; }
+      .brief-track, .split { display: block; }
+      .brief-stage, .brief-stage:first-child, .brief-stage:last-child { padding: 22px 0; min-height: 0; }
+      .brief-stage + .brief-stage { border-left: 0; border-top: 1px solid var(--line); }
+      .split > *, .split > *:first-child, .split > *:last-child { padding: 22px 0; border-right: 0; }
+      .split > * + * { border-top: 1px solid var(--line); }
+    }
+    @media (max-width: 600px) {
+      .prototype-note span:last-child, .variant-intro p { display: none; }
+      .variant-intro { display: flex; justify-content: flex-end; margin: -3px 0 12px; padding: 0; border: 0; }
+      .variant-intro .btn { min-height: 36px; padding: 5px 10px; font-size: 12px; }
+      .page-top { display: block; }
+      .date { margin-top: 12px; display: block; }
+      .guide-head { margin: 18px 0 21px; }
+      .guide-head h2 { font-size: 32px; }
+      .diff { grid-template-columns: 1fr; gap: 5px; }
+      .diff-arrow { transform: rotate(90deg); }
+      .summary-grid, .form-grid, .choice-grid { grid-template-columns: 1fr; }
+      .pending-strip { display: block; }
+      .pending-strip .btn { margin-top: 10px; width: 100%; }
+      .history-row { grid-template-columns: 1fr; gap: 3px; }
+      .hybrid-hero { padding-top: 18px; }
+      .hybrid-hero h2 { font-size: 30px; }
+      .hybrid-change { margin-top: 16px; }
+      .hybrid-tabs { margin-top: 18px; }
+      .hybrid-tabs .tab { min-width: 0; padding: 15px 5px; font-size: 13px; }
+      .switcher-label small { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <!-- Five throwaway Johnny page variants, switchable via ?variant=A|B|C|D|E. Sample data only. -->
+  <div class="shell">
+    <aside class="rail" aria-label="示範導覽">
+      <div class="brand">Johnny</div>
+      <nav class="rail-nav" aria-label="主要導覽">
+        <span class="rail-item">今日</span><span class="rail-item">計畫</span><span class="rail-item active" aria-current="page">Johnny</span><span class="rail-item">運動員</span><span class="rail-item">資料</span>
+      </nav>
+      <div class="rail-foot">UX PROTOTYPE<br />SAMPLE DATA</div>
+    </aside>
+    <main id="app"></main>
+  </div>
+  <div id="switcher" class="switcher" aria-label="切換設計方向"></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module">
+    const names = { A: '待決定優先', B: '每日簡報', C: '分頁聚焦', D: '引導式確認', E: '決策與分頁' }
+    const keys = Object.keys(names)
+    const query = new URLSearchParams(location.search)
+    const initial = query.get('variant')?.toUpperCase()
+    const state = { variant: keys.includes(initial) ? initial : 'A', pending: true, decision: null, decisionOpen: false, tab: 'today', step: 0, canTrain: true, feeling: 'usual', minutes: '' }
+    const app = document.querySelector('#app')
+    let toastTimer
+
+    function note() {
+      return `<div class="prototype-note"><span><strong>設計示範</strong> · 所有數值與日期都是示意資料，不連接帳戶，也不會變更課表。</span><span>可用底部切換器比較五種方向</span></div>`
+    }
+    function header(subtitle) {
+      return `${note()}<header class="page-top"><div><h1>Johnny</h1><p>${subtitle}</p></div><time class="date" datetime="2026-10-17">2026.10.17 · 週六</time></header>`
+    }
+    function intro(copy) {
+      return `<div class="variant-intro"><p><strong>${names[state.variant]}</strong>　${copy}</p><button class="btn" data-action="toggle-pending">${state.pending ? '試看：無待決定' : '試看：有待決定'}</button></div>`
+    }
+    function proposal(compact = false) {
+      if (!state.pending) return ''
+      if (compact) return `<div class="pending-strip"><p><strong>1 件調整待你決定</strong> · 將今天的長跑縮短為 45 分鐘輕鬆跑。課表尚未變更。</p><button class="btn" data-action="view-proposal">查看差異</button></div>`
+      return `<section id="proposal" class="proposal" aria-labelledby="proposal-title"><div class="section-head"><span class="tag amber">1 件待決定</span><span class="small muted">有效至今天 23:59</span></div><h2 id="proposal-title">今天的長跑，建議先收一點</h2><p>昨晚睡眠較短，近七天已有兩堂強度課。Johnny 建議保留活動習慣，降低今天的負荷。</p><div class="diff"><div class="diff-block"><span class="eyebrow">目前課表</span><strong>長跑 · 80 分鐘</strong><span class="small muted">輕鬆配速，最後 15 分鐘漸進</span></div><div class="diff-arrow" aria-hidden="true">→</div><div class="diff-block after"><span class="eyebrow">接受後</span><strong>輕鬆跑 · 45 分鐘</strong><span class="small muted">維持輕鬆強度，不做漸進段</span></div></div><p class="small muted">只有接受後，今日與計畫中的正式課表才會更新。</p><div class="actions"><button class="btn warn" data-action="accept">接受調整</button><button class="btn" data-action="keep">維持原課表</button></div></section>`
+    }
+    function adviceSummary() {
+      return `<p class="eyebrow">今日課表建議 · 08:20 產生</p><h3>可以動，但不必硬撐原本的長跑。</h3><p class="muted">如果今天只有 45 分鐘，縮短跑步也能保留本週節奏。這份建議與每日回顧分開更新。</p>`
+    }
+    function reviewSummary() {
+      return `<p class="eyebrow">每日回顧 · 04:12 產生</p><h3>昨天已完成 40 分鐘輕鬆跑。</h3><p class="muted">最近七天：4 堂計畫課表中完成 3 堂。執行分數只描述課表執行，不代表身體準備度。</p>`
+    }
+    function reviewDetails() {
+      return `<div class="score-line"><strong>78 分</strong><span class="muted">七日課表執行分數 · 10/10–10/16</span></div><div class="summary-grid"><div class="summary-row"><span>計畫堂數</span><span>4 堂</span></div><div class="summary-row"><span>已完成</span><span>3 堂</span></div><div class="summary-row"><span>確認未完成</span><span>1 堂</span></div><div class="summary-row"><span>額外活動</span><span>1 次</span></div></div><details><summary>分數怎麼算</summary><p class="muted">完成率與訓練量符合度各占一半。資料不足時不把未知當成零分或漏課。</p></details><details><summary>查看七天逐堂紀錄</summary><p class="muted">10/16 輕鬆跑 · 已完成 40 分鐘<br />10/14 間歇跑 · 已完成 50 分鐘<br />10/12 長跑 · 已完成 75 分鐘<br />10/10 恢復跑 · 確認未完成</p></details>`
+    }
+    function history() {
+      return `<div class="history-row"><time>10/17 08:20</time><div><strong>今日課表建議</strong><p class="small muted">建議縮短長跑，保留輕鬆活動。</p></div><span class="tag ${state.pending ? 'amber' : 'mint'}">${state.pending ? '待決定' : '已處理'}</span></div><div class="history-row"><time>10/17 04:12</time><div><strong>每日回顧</strong><p class="small muted">昨天完成 40 分鐘輕鬆跑；七日執行分數 78 分。</p></div><span class="tag mint">已產生</span></div><div class="history-row"><time>10/16 09:04</time><div><strong>課表調整決定</strong><p class="small muted">維持原課表。</p></div><span class="tag">已決定</span></div>`
+    }
+    function variantA() {
+      return `${header('先處理需要你決定的事，再看 Johnny 的分析。')}${intro('把有截止時間的調整放在第一焦點；其餘資訊逐層展開。')}${state.pending ? proposal() : `<section class="callout"><span class="tag mint">目前沒有待決定調整</span><h2 style="margin-top:14px">今天先照原課表走。</h2><p class="muted">如果狀態有變化，可以重新請 Johnny 給建議。</p></section>`}<div class="split"><section>${adviceSummary()}<button class="btn primary" data-action="request-advice">重新取得今日建議</button></section><section>${reviewSummary()}<details><summary>查看回顧與分數</summary>${reviewDetails()}</details></section></div><section class="section"><div class="section-head"><h3>歷史紀錄</h3><span class="small muted">需要時再查</span></div>${history()}</section>`
+    }
+    function variantB() {
+      return `${header('一段從昨天走到今天的訓練簡報。')}${intro('把回顧、建議、決定連成可掃讀的三段故事。')}<div class="brief-lead"><span class="tag mint">今天的簡報</span><h2 style="margin-top:18px">昨天有完成，今天可以跑得更聰明。</h2><p class="muted">先看訓練脈絡，再決定要不要調整。約 20 秒讀完重點。</p></div><div class="brief-track"><section class="brief-stage"><span class="brief-index">01 / 昨天</span><h3>完成 40 分鐘</h3><p class="muted">輕鬆跑已記錄。最近七天的課表執行分數為 78 分。</p><button class="btn ghost" data-action="scroll-review">看回顧證據 →</button></section><section class="brief-stage"><span class="brief-index">02 / 今天</span><h3>保留活動，降低負荷</h3><p class="muted">Johnny 建議依今天的狀態縮短長跑，不必硬撐 80 分鐘。</p><button class="btn ghost" data-action="request-advice">重新取得建議 →</button></section><section class="brief-stage attention"><span class="brief-index">03 / 下一步</span><h3>${state.pending ? '調整等你確認' : '照原課表進行'}</h3><p class="muted">${state.pending ? '正式課表仍是 80 分鐘；接受後才會改為 45 分鐘。' : '目前沒有需要你確認的課表調整。'}</p><button class="btn ghost" data-action="scroll-proposal">${state.pending ? '查看前後差異 →' : '查看今日建議 →'}</button></section></div><div class="brief-details"><section id="review" class="section"><div class="section-head"><h3>回顧證據</h3><span class="small muted">10/10–10/16</span></div>${reviewDetails()}</section>${state.pending ? proposal() : ''}<section class="section"><h3>歷史紀錄</h3>${history()}</section></div>`
+    }
+    function variantC() {
+      const panels = {
+        today: `<div class="section-head"><div><span class="tag mint">今天</span><h2 style="margin-top:15px">今天怎麼跑？</h2></div><span class="small muted">08:20 更新</span></div>${adviceSummary()}<div class="actions"><button class="btn primary" data-action="request-advice">取得新的今日建議</button></div><div class="section" style="margin-top:28px"><h3>提供今天的狀況</h3><div class="form-grid"><div class="form-field"><label for="tab-availability">今天能訓練嗎？</label><select id="tab-availability"><option>今天可以訓練</option><option>今天無法訓練</option></select></div><div class="form-field"><label for="tab-feeling">今天的感覺</label><select id="tab-feeling"><option>和平常差不多</option><option>比平常疲倦</option></select></div></div></div>`,
+        review: `<div class="section-head"><div><span class="tag blue">回顧</span><h2 style="margin-top:15px">昨天與最近七天</h2></div><span class="small muted">04:12 更新</span></div>${reviewSummary()}${reviewDetails()}`,
+        history: `<div class="section-head"><div><span class="tag">紀錄</span><h2 style="margin-top:15px">歷史紀錄</h2></div></div>${history()}`
+      }
+      return `${header('一次只處理一種資訊。')}${intro('今日、回顧、歷史各有自己的空間；待決定調整始終可見。')}${proposal(true)}<div class="tabs" role="tablist" aria-label="Johnny 內容"><button class="tab ${state.tab === 'today' ? 'active' : ''}" role="tab" aria-selected="${state.tab === 'today'}" data-tab="today">今日建議</button><button class="tab ${state.tab === 'review' ? 'active' : ''}" role="tab" aria-selected="${state.tab === 'review'}" data-tab="review">訓練回顧</button><button class="tab ${state.tab === 'history' ? 'active' : ''}" role="tab" aria-selected="${state.tab === 'history'}" data-tab="history">歷史紀錄</button></div><div class="tab-panel" role="tabpanel">${panels[state.tab]}</div>${state.pending ? `<details style="margin-top:22px"><summary>查看待決定調整的前後差異</summary>${proposal()}</details>` : ''}`
+    }
+    function variantD() {
+      let content
+      if (state.step === 0) content = `<div class="guide-card"><span class="tag mint">第 1 步，共 3 步</span><h3 style="margin-top:20px">今天能訓練嗎？</h3><p class="muted">先告訴 Johnny 今天的基本狀況。</p><div class="choice-grid"><button class="choice ${state.canTrain ? 'selected' : ''}" data-can-train="yes"><strong>可以訓練</strong><span>依今天的狀態調整強度或時間</span></button><button class="choice ${!state.canTrain ? 'selected' : ''}" data-can-train="no"><strong>今天無法訓練</strong><span>取得休息與課表安排建議</span></button></div><button class="btn primary" data-action="next-step">下一步：今天的感覺</button></div>`
+      if (state.step === 1) content = `<div class="guide-card"><span class="tag mint">第 2 步，共 3 步</span><h3 style="margin-top:20px">今天感覺如何？</h3><div class="choice-grid"><button class="choice ${state.feeling === 'usual' ? 'selected' : ''}" data-feeling="usual"><strong>和平常差不多</strong><span>沒有特別疲倦</span></button><button class="choice ${state.feeling === 'tired' ? 'selected' : ''}" data-feeling="tired"><strong>比平常疲倦</strong><span>希望 Johnny 考慮恢復狀態</span></button></div>${state.canTrain ? `<div class="form-field" style="max-width:260px"><label for="guide-minutes">今天可用時間（選填）</label><input id="guide-minutes" type="number" min="1" max="600" placeholder="例：45" value="${state.minutes}" /><span class="small muted">不填則依原課表建議。</span></div>` : ''}<div class="guide-footer"><button class="btn ghost" data-action="previous-step">← 上一步</button><button class="btn primary" data-action="next-step">取得示範建議</button></div></div>`
+      if (state.step === 2) content = `<div class="guide-card"><span class="tag mint">第 3 步，共 3 步</span><h3 style="margin-top:20px">Johnny 的建議</h3><p style="font-size:20px;font-weight:700">${state.canTrain ? '可以動，但不必硬撐原本的長跑。' : '今天先休息，讓訓練在下一堂接得上。'}</p><p class="muted">${state.feeling === 'tired' ? '你提到比平常疲倦；' : ''}這是根據示意活動與課表做的設計展示。正式課表需要你另行確認才會變更。</p>${state.pending && state.canTrain ? `<div class="pending-strip"><p><strong>有一件調整待確認</strong> · 查看 80 分鐘與 45 分鐘的差異。</p><button class="btn" data-action="view-proposal">查看差異</button></div>` : ''}${state.pending && !state.canTrain ? `<p class="small muted">先前的跑步調整仍待處理；今天無法訓練時，需要重新評估這份提案。</p>` : ''}<div class="guide-footer"><button class="btn ghost" data-action="previous-step">← 修改狀況</button><button class="btn" data-action="restart">重新開始</button></div></div>`
+      return `${header('把取得建議變成一段清楚的對話式流程。')}${intro('先顯示已有建議；需要更新時，再逐步詢問必要條件。')}<div class="guide"><div class="guide-head"><span class="tag blue">最近一次建議 · 08:20</span><h2 style="margin-top:20px">今天跑得保守一點，仍然算前進。</h2><p class="muted">目前的課表是長跑 80 分鐘。這份建議尚未改動正式課表。</p></div><div class="guide-progress" aria-label="流程進度"><span class="${state.step >= 0 ? 'active' : ''}"></span><span class="${state.step >= 1 ? 'active' : ''}"></span><span class="${state.step >= 2 ? 'active' : ''}"></span></div>${content}<details><summary>查看昨天與七天回顧</summary>${reviewSummary()}${reviewDetails()}</details><details><summary>查看歷史紀錄</summary>${history()}</details>${state.pending ? `<details><summary>查看完整待決定調整</summary>${proposal()}</details>` : ''}</div>`
+    }
+    function variantE() {
+      const decision = state.pending
+        ? `<section class="hybrid-hero" aria-labelledby="hybrid-decision-title">
+            <div class="section-head"><span class="tag amber">1 件需要你決定</span><span class="small muted">有效至今天 23:59</span></div>
+            <h2 id="hybrid-decision-title">今天的長跑，建議先收一點</h2>
+            <p>昨晚睡眠較短，近七天已有兩堂強度課。Johnny 建議降低今天的負荷。</p>
+            <div class="hybrid-change"><span>目前</span><strong>長跑 80 分鐘</strong><span class="arrow" aria-hidden="true">→</span><span>建議</span><strong>輕鬆跑 45 分鐘</strong></div>
+            <details id="hybrid-decision-details" class="hybrid-disclosure" ${state.decisionOpen ? 'open' : ''}><summary>查看完整變更並做決定</summary>
+              <div class="diff"><div class="diff-block"><span class="eyebrow">目前課表</span><strong>長跑 · 80 分鐘</strong><span class="small muted">輕鬆配速，最後 15 分鐘漸進</span></div><div class="diff-arrow" aria-hidden="true">→</div><div class="diff-block after"><span class="eyebrow">接受後</span><strong>輕鬆跑 · 45 分鐘</strong><span class="small muted">維持輕鬆強度，不做漸進段</span></div></div>
+              <p class="small muted">只有接受後，今日與計畫中的正式課表才會更新。</p>
+              <div class="actions"><button class="btn warn" data-action="accept">接受調整</button><button class="btn" data-action="keep">維持原課表</button></div>
+            </details>
+          </section>`
+        : `<section class="hybrid-hero hybrid-hero--clear" aria-labelledby="hybrid-decision-title"><span class="tag mint">目前沒有待決定調整</span><h2 id="hybrid-decision-title">${state.decision === 'accepted' ? '調整已接受，今天改跑 45 分鐘。' : state.decision === 'kept' ? '已維持原課表，今天仍是 80 分鐘長跑。' : '今天沒有需要你處理的事。'}</h2><p class="muted">你可以從下方分頁查看今日建議、訓練回顧或歷史紀錄。</p></section>`
+      const panels = {
+        today: `<section class="hybrid-panel" aria-labelledby="hybrid-today-title"><div class="section-head"><h2 id="hybrid-today-title">今日課表建議</h2><time class="small muted" datetime="2026-10-17T08:20:00+08:00">08:20 產生</time></div><p style="font-size:21px;font-weight:700">可以動，但不必硬撐原本的長跑。</p><p class="muted">如果今天只有 45 分鐘，縮短跑步也能保留本週節奏。正式課表仍以你最後確認的決定為準。</p><details><summary>更新今天的狀況並取得新建議</summary><p class="small muted">只問 Johnny 產生建議所需的條件。</p><div class="form-grid" style="margin:18px 0"><div class="form-field"><label for="hybrid-availability">今天能訓練嗎？</label><select id="hybrid-availability"><option>今天可以訓練</option><option>今天無法訓練</option></select></div><div class="form-field"><label for="hybrid-feeling">今天的感覺</label><select id="hybrid-feeling"><option>和平常差不多</option><option>比平常疲倦</option></select></div></div><button class="btn primary" data-action="request-advice">取得新的今日建議</button></details></section>`,
+        review: `<section class="hybrid-panel" aria-labelledby="hybrid-review-title"><div class="section-head"><h2 id="hybrid-review-title">訓練回顧</h2><time class="small muted" datetime="2026-10-17T04:12:00+08:00">04:12 產生</time></div><p style="font-size:21px;font-weight:700">昨天已完成 40 分鐘輕鬆跑。</p><p class="muted">最近七天：4 堂計畫課表中完成 3 堂。執行分數為 78 分，只描述課表執行。</p><details><summary>查看分數、計算方式與逐堂紀錄</summary>${reviewDetails()}</details></section>`,
+        history: `<section class="hybrid-panel" aria-labelledby="hybrid-history-title"><h2 id="hybrid-history-title">歷史紀錄</h2><p class="muted">按時間查看 Johnny 的回顧、建議與你的決定。</p>${history()}</section>`
+      }
+      return `${header('需要決定的事留在最前面；其他功能各有自己的分頁。')}${intro('A 的決策優先與逐層揭露，加上 C 的功能分頁。')}${decision}<div class="tabs hybrid-tabs" role="tablist" aria-label="Johnny 功能"><button id="hybrid-tab-today" class="tab ${state.tab === 'today' ? 'active' : ''}" type="button" role="tab" aria-controls="hybrid-panel" aria-selected="${state.tab === 'today'}" data-tab="today">今日建議</button><button id="hybrid-tab-review" class="tab ${state.tab === 'review' ? 'active' : ''}" type="button" role="tab" aria-controls="hybrid-panel" aria-selected="${state.tab === 'review'}" data-tab="review">訓練回顧</button><button id="hybrid-tab-history" class="tab ${state.tab === 'history' ? 'active' : ''}" type="button" role="tab" aria-controls="hybrid-panel" aria-selected="${state.tab === 'history'}" data-tab="history">歷史紀錄</button></div><div id="hybrid-panel" role="tabpanel" aria-labelledby="hybrid-tab-${state.tab}" tabindex="0">${panels[state.tab]}</div>`
+    }
+    function render() {
+      app.innerHTML = ({ A: variantA, B: variantB, C: variantC, D: variantD, E: variantE })[state.variant]()
+      const index = keys.indexOf(state.variant)
+      document.querySelector('#switcher').innerHTML = `<button data-switch="${keys[(index + keys.length - 1) % keys.length]}" aria-label="上一個設計方向">←</button><div class="switcher-label">${state.variant} · ${names[state.variant]}<small>${index + 1} / ${keys.length}　方向鍵也可切換</small></div><button data-switch="${keys[(index + 1) % keys.length]}" aria-label="下一個設計方向">→</button>`
+      document.title = `${names[state.variant]} — Johnny UX 方向示範`
+    }
+    function switchVariant(variant) {
+      state.variant = variant
+      const url = new URL(location.href)
+      url.searchParams.set('variant', variant)
+      window.history.replaceState({}, '', url)
+      render()
+      window.scrollTo({ top: 0, behavior: 'instant' })
+    }
+    function toast(message) {
+      const element = document.querySelector('#toast')
+      element.textContent = message
+      element.hidden = false
+      clearTimeout(toastTimer)
+      toastTimer = setTimeout(() => { element.hidden = true }, 3500)
+    }
+    document.addEventListener('click', event => {
+      const target = event.target.closest('button')
+      if (!target) return
+      if (target.dataset.switch) return switchVariant(target.dataset.switch)
+      if (target.dataset.tab) { state.decisionOpen = document.querySelector('#hybrid-decision-details')?.open ?? state.decisionOpen; state.tab = target.dataset.tab; render(); document.querySelector('.tab.active')?.focus(); return }
+      if (target.dataset.canTrain) { state.canTrain = target.dataset.canTrain === 'yes'; return render() }
+      if (target.dataset.feeling) { state.feeling = target.dataset.feeling; return render() }
+      const action = target.dataset.action
+      if (action === 'toggle-pending') { state.pending = !state.pending; state.decision = null; state.decisionOpen = false; return render() }
+      if (action === 'next-step') { const field = document.querySelector('#guide-minutes'); if (field) state.minutes = field.value; state.step = Math.min(2, state.step + 1); return render() }
+      if (action === 'previous-step') { state.step = Math.max(0, state.step - 1); return render() }
+      if (action === 'restart') { state.step = 0; return render() }
+      if (action === 'view-proposal' || action === 'scroll-proposal') { const element = document.querySelector('#proposal'); const disclosure = element?.closest('details'); if (disclosure) disclosure.open = true; element?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return }
+      if (action === 'scroll-review') { document.querySelector('#review')?.scrollIntoView({ behavior: 'smooth' }); return }
+      if (action === 'accept' || action === 'keep') { state.pending = false; state.decision = action === 'accept' ? 'accepted' : 'kept'; state.decisionOpen = false; render(); toast(action === 'accept' ? '示範：調整已接受。這裡沒有連接真實課表。' : '示範：維持原課表。這裡沒有連接真實課表。'); return }
+      if (action === 'request-advice') toast('示範：這裡會依你今天的狀態產生新建議。')
+    })
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+      if (event.target.matches('[role="tab"]')) {
+        event.preventDefault()
+        const tabs = [...event.target.closest('[role="tablist"]').querySelectorAll('[role="tab"]')]
+        const index = tabs.indexOf(event.target)
+        tabs[(index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length].click()
+        return
+      }
+      if (event.target.closest('input, select, textarea, [contenteditable="true"], [role="tablist"]')) return
+      event.preventDefault()
+      const index = keys.indexOf(state.variant)
+      switchVariant(keys[(index + (event.key === 'ArrowRight' ? 1 : keys.length - 1)) % keys.length])
+    })
+    window.addEventListener('popstate', () => {
+      const key = new URLSearchParams(location.search).get('variant')?.toUpperCase()
+      if (keys.includes(key)) { state.variant = key; render() }
+    })
+    render()
+  </script>
+</body>
+</html>
