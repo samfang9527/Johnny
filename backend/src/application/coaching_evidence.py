@@ -29,7 +29,7 @@ def build_review_evidence(
         )
         if activity.user_id == user_id
         and utc(activity.started_at) <= cutoff
-        and period.starts_on <= utc(activity.started_at).astimezone(zone).date() <= period.ends_on
+        and period.starts_on - timedelta(days=1) <= utc(activity.started_at).astimezone(zone).date() <= period.ends_on + timedelta(days=1)
     )
     starts: dict[str, datetime] = {}
     for activity in recordings:
@@ -53,6 +53,11 @@ def build_review_evidence(
             user_id, period.starts_on, period.ends_on, timezone_name, starts,
         )
         sessions = match_sessions(recordings, tuple(p.workout for p in prescriptions), timezone_name)
+    sessions = tuple(session for session in sessions
+                     if period.starts_on <= session.local_date <= period.ends_on
+                     or any(p.workout_id == session.workout_id for p in prescriptions)
+                     or any(period.starts_on <= candidate.scheduled_for <= period.ends_on
+                            for candidate in session.candidates))
     covered = store.covered_review_dates(
         user_id, period.starts_on, period.ends_on, timezone_name, cutoff,
     )

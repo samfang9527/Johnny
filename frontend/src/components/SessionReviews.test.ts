@@ -1,8 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SessionReviews from './SessionReviews.vue'
-import { listSessionReviews, saveSessionReviews, type SessionReview } from '../api/client'
-vi.mock('../api/client', () => ({ listSessionReviews: vi.fn(), saveSessionReviews: vi.fn() }))
+import { listSessionReviews, saveSessionReviews, swapSessionReviews, type SessionReview } from '../api/client'
+vi.mock('../api/client', () => ({ listSessionReviews: vi.fn(), saveSessionReviews: vi.fn(), swapSessionReviews: vi.fn() }))
 const review: SessionReview = {
   id: 's1', local_date: '2026-10-14', status: 'automatic', workout_id: 'w1',
   activities: [
@@ -27,7 +27,7 @@ async function click(wrapper: ReturnType<typeof mount>, label: string) {
   else await button!.trigger('click')
   await flushPromises()
 }
-beforeEach(() => { vi.clearAllMocks(); vi.mocked(saveSessionReviews).mockResolvedValue({ data: { saved: true } }) })
+beforeEach(() => { vi.clearAllMocks(); vi.mocked(saveSessionReviews).mockResolvedValue({ data: { saved: true } }); vi.mocked(swapSessionReviews).mockResolvedValue({ data: { saved: true } }) })
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 describe('SessionReviews', () => {
   it('shows original recordings, local times, totals and confirms automatic matching', async () => {
@@ -64,7 +64,33 @@ describe('SessionReviews', () => {
     await click(wrapper, '修正配對')
     expect(wrapper.find('select').exists()).toBe(true)
   })
-  it('only offers pairing controls for the latest seven athlete-local dates', async () => {
+  it('offers the next-day workout with the actual and planned dates clearly labeled', async () => {
+    const adjacent = { ...review, candidates: [
+      ...review.candidates,
+      { id: 'w2', scheduled_for: '2026-10-15', workout_type: 'long_run', purpose: '長跑' },
+    ] }
+    const wrapper = await render(adjacent)
+    await click(wrapper, '修正配對')
+    expect(wrapper.text()).toContain('實際訓練日期')
+    expect(wrapper.text()).toContain('課表日期')
+    expect(wrapper.findAll('option').some(option => option.text().includes('2026-10-15 · 長跑'))).toBe(true)
+    await wrapper.find('select').setValue('w2')
+    await click(wrapper, '儲存配對')
+    expect(saveSessionReviews).toHaveBeenCalledWith({ activity_ids: ['a1', 'a2'], groups: [{ activity_ids: ['a1', 'a2'], workout_id: 'w2' }] })
+  })
+  it('exchanges two occupied adjacent workouts with an explicit action', async () => {
+    const occupied = { ...review, swap_candidates: [
+      { id: 'w2', scheduled_for: '2026-10-15', workout_type: 'long_run', purpose: '長跑', activity_date: '2026-10-15' },
+    ] }
+    const wrapper = await render(occupied)
+    await click(wrapper, '修正配對')
+    await wrapper.find('select').setValue('w2')
+    expect(wrapper.text()).toContain('將交換兩天的課表配對')
+    await click(wrapper, '交換配對')
+    expect(swapSessionReviews).toHaveBeenCalledWith({ activity_ids: ['a1', 'a2'], workout_id: 'w2' })
+    expect(saveSessionReviews).not.toHaveBeenCalled()
+  })
+  it('offers pairing controls for the latest seven athlete-local dates', async () => {
     const withinWindow = { ...review, id: 'seventh', local_date: '2026-10-08', status: 'confirmed' as const }
     const expired = { ...review, id: 'expired', local_date: '2026-10-07', status: 'confirmed' as const }
     vi.mocked(listSessionReviews).mockResolvedValue({ data: [expired, withinWindow] })

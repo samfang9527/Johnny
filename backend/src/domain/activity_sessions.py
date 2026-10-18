@@ -21,6 +21,7 @@ class ActivitySession:
     status: str
     workout_id: str | None = None
     candidates: tuple[Workout, ...] = ()
+    swap_candidates: tuple[tuple[Workout, date], ...] = ()
 
     @property
     def duration_seconds(self) -> int:
@@ -58,20 +59,31 @@ def match_sessions(activities: tuple[CompletedActivity, ...], workouts: tuple[Wo
     for group in groups:
         first = group[0]
         day = utc(first.started_at).astimezone(zone).date()
-        candidates = tuple(w for w in workouts if w.scheduled_for == day and w.workout_type in RUNNING_WORKOUT_TYPES)
+        candidates = tuple(w for w in workouts if w.workout_type in RUNNING_WORKOUT_TYPES
+                           and (w.scheduled_for == day or
+                                (w.workout_type != 'race' and abs((w.scheduled_for - day).days) == 1)))
         # Stable identity for the same recordings, independent of input ordering.
         identity = first.session_group_id or sha256('|'.join(a.id or f'{utc(a.started_at)}:{a.duration_seconds}' for a in group).encode()).hexdigest()[:24]
         explicit = first.match_reviewed or first.matched_workout_id is not None
         status = ('confirmed' if first.matched_workout_id else 'unplanned') if explicit else 'pending'
         sessions.append(ActivitySession(identity, day, tuple(group), status, first.matched_workout_id, candidates))
     claimed = {s.workout_id for s in sessions if s.workout_id}
-    for day in {s.local_date for s in sessions}:
+    for day in sorted({s.local_date for s in sessions}):
         pending = [s for s in sessions if s.local_date == day and s.status == 'pending']
         candidates = tuple(w for w in workouts if w.scheduled_for == day and w.workout_type in RUNNING_WORKOUT_TYPES and w.id not in claimed)
         for s in pending:
             if len(pending) == len(candidates) == 1:
                 resolved = replace(s, status='automatic', workout_id=candidates[0].id)
+                claimed.add(candidates[0].id)
             else:
-                resolved = replace(s, status='needs_review' if candidates else 'unplanned')
+                resolved = replace(s, status='needs_review'
+                                   if any(w.id not in claimed for w in s.candidates) else 'unplanned')
             sessions[sessions.index(s)] = resolved
-    return tuple(sorted(sessions, key=lambda s: utc(s.activities[0].started_at)))
+    assigned = {s.workout_id for s in sessions if s.workout_id}
+    available_sessions = []
+    for session in sessions:
+        candidates = tuple(w for w in session.candidates
+                           if w.id == session.workout_id or w.id not in assigned)
+        status = 'unplanned' if session.status == 'needs_review' and not candidates else session.status
+        available_sessions.append(replace(session, candidates=candidates, status=status))
+    return tuple(sorted(available_sessions, key=lambda s: utc(s.activities[0].started_at)))

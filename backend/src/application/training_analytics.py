@@ -44,6 +44,10 @@ class BuildTodayContextHandler:
             )
         )
         plan = resolve_plan_for_date(self._training_plans, user_id, anchor_date)
+        completed_workout_ids = {
+            activity.matched_workout_id for activity in activities
+            if activity.user_id == user_id and activity.matched_workout_id
+        }
 
         training_load = self._training_load_service.calculate(
             user_id=user_id,
@@ -61,7 +65,9 @@ class BuildTodayContextHandler:
             user_id=user_id,
             anchor_date=anchor_date,
             scheduled_workouts=tuple(
-                workout.to_payload()
+                {**workout.to_payload(), 'status': 'completed'}
+                if workout.id in completed_workout_ids and workout.status == 'planned'
+                else workout.to_payload()
                 for workout in (plan.workouts if plan is not None else ())
                 if workout.scheduled_for == anchor_date
             ),

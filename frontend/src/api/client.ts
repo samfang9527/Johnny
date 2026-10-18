@@ -247,6 +247,7 @@ export interface SessionReview {
   workout_id: string | null
   activities: Array<{ id: string; started_at: string; sport_type: string; duration_seconds: number; distance_meters: number }>
   candidates: Array<{ id: string; scheduled_for: string; workout_type: string; purpose: string }>
+  swap_candidates?: Array<{ id: string; scheduled_for: string; workout_type: string; purpose: string; activity_date: string }>
   duration_seconds: number
   distance_meters: number
 }
@@ -267,4 +268,8 @@ export interface SessionReviewSaveResult {
 
 export function saveSessionReviews(payload: SessionReviewDecision): Promise<{ data: SessionReviewSaveResult }> {
   return postJson('/activities/session-reviews', payload)
+}
+
+export function swapSessionReviews(payload: { activity_ids: string[]; workout_id: string }): Promise<{ data: SessionReviewSaveResult }> {
+  return postJson('/activities/session-reviews/swap', payload)
 }

@@ -37,7 +37,7 @@ def score_execution(evidence: ReviewEvidence) -> ExecutionScore:
     extra_count = 0
     for session in evidence.sessions:
         if session.status == "needs_review":
-            ambiguous_dates.add(session.local_date)
+            ambiguous_dates.update(workout.scheduled_for for workout in session.candidates)
         elif session.workout_id is not None:
             matched.setdefault(session.workout_id, []).append(session)
         elif session.status == "unplanned":

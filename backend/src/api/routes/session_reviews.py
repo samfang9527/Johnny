@@ -24,6 +24,11 @@ class ReviewDecision(BaseModel):
     groups: list[ReviewGroup] = Field(min_length=1, max_length=100)
 
 
+class SwapDecision(BaseModel):
+    activity_ids: list[str] = Field(min_length=1, max_length=100)
+    workout_id: str
+
+
 @router.get('')
 def list_reviews(current_user: CurrentUserDependency, session: SessionDependency, anchor_date: date):
     repository = SqlAlchemySessionReviewRepository(session)
@@ -39,14 +44,30 @@ def list_reviews(current_user: CurrentUserDependency, session: SessionDependency
 def save_reviews(payload: ReviewDecision, current_user: CurrentUserDependency, session: SessionDependency):
     repository = SqlAlchemySessionReviewRepository(session)
     try:
-        day = repository.save_decisions(current_user.id, payload.activity_ids, [g.model_dump() for g in payload.groups])
+        changed_dates = repository.save_decisions(current_user.id, payload.activity_ids, [g.model_dump() for g in payload.groups])
     except LookupError as error:
         raise ApiNotFoundError(str(error)) from error
     except SessionReviewConflict as error:
         raise ApiConflictError(str(error)) from error
-    today = datetime.now(timezone.utc).astimezone(ZoneInfo(repository.timezone_for(current_user.id))).date()
+    return _refresh_after_pairing(repository, current_user.id, session, changed_dates)
+
+
+@router.post('/swap')
+def swap_reviews(payload: SwapDecision, current_user: CurrentUserDependency, session: SessionDependency):
+    repository = SqlAlchemySessionReviewRepository(session)
+    try:
+        changed_dates = repository.swap_decisions(current_user.id, payload.activity_ids, payload.workout_id)
+    except LookupError as error:
+        raise ApiNotFoundError(str(error)) from error
+    except SessionReviewConflict as error:
+        raise ApiConflictError(str(error)) from error
+    return _refresh_after_pairing(repository, current_user.id, session, changed_dates)
+
+
+def _refresh_after_pairing(repository, user_id: str, session, changed_dates: set[date]):
+    today = datetime.now(timezone.utc).astimezone(ZoneInfo(repository.timezone_for(user_id))).date()
     effects = CoachingRefreshService(session).record_change(
-        user_id=current_user.id, changed_dates={day}, today=today,
+        user_id=user_id, changed_dates=changed_dates, today=today,
         reason='activity_pairing_changed', affects_advice=True,
     )
     return DataEnvelope(data={'saved': True, 'refresh_runs': [

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -157,14 +157,16 @@ def build_week_execution(
     week_start, week_end = plan_week_for_date(plan, anchor_date)
     local_zone = ZoneInfo(timezone_name)
     cutoff = _as_utc(as_of)
-    week_activities = tuple(
+    matching_activities = tuple(
         activity
         for activity in activities
         if activity.user_id == plan.user_id
         and activity.sport_type.lower() in RUNNING_SPORTS
         and (started := _as_utc(activity.started_at)) <= cutoff
-        and week_start <= started.astimezone(local_zone).date() <= week_end
+        and week_start - timedelta(days=1) <= started.astimezone(local_zone).date() <= week_end + timedelta(days=1)
     )
+    week_activities = tuple(activity for activity in matching_activities
+                            if week_start <= _as_utc(activity.started_at).astimezone(local_zone).date() <= week_end)
     workouts = tuple(
         workout for workout in plan.workouts
         if week_start <= workout.scheduled_for <= week_end and workout.workout_type in RUNNING_WORKOUT_TYPES
@@ -172,7 +174,7 @@ def build_week_execution(
     workouts_by_id = {workout.id: workout for workout in workouts if workout.id is not None}
     matched: dict[int, Workout] = {}
     completed_ids: set[int] = set()
-    sessions = match_sessions(week_activities, workouts, timezone_name)
+    sessions = match_sessions(matching_activities, workouts, timezone_name)
     ambiguous_dates: set[date] = set()
     for session in sessions:
         workout = workouts_by_id.get(session.workout_id)
@@ -181,7 +183,7 @@ def build_week_execution(
                 matched[id(activity)] = workout
             completed_ids.add(id(workout))
         elif session.status == "needs_review":
-            ambiguous_dates.add(session.local_date)
+            ambiguous_dates.update(workout.scheduled_for for workout in session.candidates)
 
     elapsed = tuple(
         workout for workout in workouts
@@ -194,7 +196,8 @@ def build_week_execution(
         and workout.scheduled_for not in ambiguous_dates
         and activity_coverage_complete
     )
-    extra_sessions = tuple(s for s in sessions if s.workout_id is None and s.status == "unplanned")
+    extra_sessions = tuple(s for s in sessions if week_start <= s.local_date <= week_end
+                           and s.workout_id is None and s.status == "unplanned")
     extra = tuple(activity for session in extra_sessions for activity in session.activities)
     comparable_workouts = tuple(workout for workout in elapsed if workout.planned_duration_minutes is not None)
     planned_minutes = sum(workout.planned_duration_minutes or 0 for workout in comparable_workouts) if comparable_workouts else None

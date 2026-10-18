@@ -51,6 +51,19 @@ def test_unknown_coverage_and_ambiguous_pairing_withhold_score() -> None:
     assert score_execution(ambiguous).reason == "ambiguous_pairing"
 
 
+def test_adjacent_pending_activity_withholds_sundays_score() -> None:
+    sunday = Workout.create(id='sunday', scheduled_for=date(2026, 10, 11),
+                            workout_type='easy_run', purpose='Sunday', planned_duration_minutes=40)
+    snapshot = PrescriptionSnapshot('athlete', 'plan', 'sunday', sunday,
+                                    datetime(2026, 10, 1, tzinfo=timezone.utc), 'generation', 'known')
+    saturday = CompletedActivity.create(
+        id='saturday', user_id='athlete', source='manual',
+        started_at=datetime(2026, 10, 10, 8, tzinfo=timezone.utc),
+        sport_type='running', duration_seconds=2400, distance_meters=6000,
+    )
+    assert score_execution(evidence((snapshot,), (saturday,))).reason == 'ambiguous_pairing'
+
+
 def test_rest_week_has_no_denominator_and_extra_does_not_fill_missing() -> None:
     assert score_execution(evidence(())).reason == "no_prescribed_sessions"
     planned = workout("one", 30)

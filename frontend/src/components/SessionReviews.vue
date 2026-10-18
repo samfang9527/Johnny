@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { vMotionDetails } from '../motionDetails'
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { listSessionReviews, saveSessionReviews, type SessionReview, type SessionReviewDecision, type SessionReviewSaveResult } from '../api/client'
+import { listSessionReviews, saveSessionReviews, swapSessionReviews, type SessionReview, type SessionReviewDecision, type SessionReviewSaveResult } from '../api/client'
 import AppButton from './AppButton.vue'
 
 const props = defineProps<{ anchorDate: string; timeZone: string; refreshKey?: number }>()
@@ -69,7 +69,12 @@ async function save(review: SessionReview, decisions: SessionReviewDecision['gro
   saveError.value = ''
   message.value = ''
   try {
-    const response = await saveSessionReviews({ activity_ids: review.activities.map(item => item.id), groups: decisions.map(group => ({ ...group, workout_id: group.workout_id || null })) })
+    const swapTarget = decisions.length === 1 && groups.value.length === 1
+      ? review.swap_candidates?.find(candidate => candidate.id === decisions[0].workout_id)
+      : undefined
+    const response = swapTarget
+      ? await swapSessionReviews({ activity_ids: review.activities.map(item => item.id), workout_id: swapTarget.id })
+      : await saveSessionReviews({ activity_ids: review.activities.map(item => item.id), groups: decisions.map(group => ({ ...group, workout_id: group.workout_id || null })) })
     if (disposed || current !== generation) return
     editingId.value = ''
     message.value = '配對已儲存，Johnny 正在更新建議。'
@@ -102,6 +107,10 @@ function workoutLabel(review: SessionReview) {
   const workout = review.candidates.find(item => item.id === review.workout_id)
   return workout ? `${workout.scheduled_for} · ${workout.purpose || workout.workout_type}` : review.workout_id ? '已配對課表' : '課表外活動'
 }
+const selectedSwap = computed(() => {
+  const review = reviews.value.find(item => item.id === editingId.value)
+  return groups.value.length === 1 ? review?.swap_candidates?.find(item => item.id === groups.value[0].workout_id) : undefined
+})
 </script>
 
 <template>
@@ -127,18 +136,22 @@ function workoutLabel(review: SessionReview) {
             <li v-for="activity in review.activities" :key="activity.id"><time :datetime="activity.started_at">{{ timestamp(activity.started_at) }}</time> · {{ sportLabel(activity.sport_type) }}<br>{{ summary(activity.duration_seconds, activity.distance_meters) }}</li>
           </ul>
           <form v-if="editingId === review.id" novalidate @submit.prevent="save(review, groups)">
-            <p class="inline-note">選擇對應課表；若是不同訓練，可先拆成獨立活動。</p>
+            <p class="inline-note">實際訓練日期：{{ review.local_date }}。可選擇當天或前後一天的課表日期；賽事限當天。若是不同訓練，可先拆成獨立活動。</p>
             <label v-for="(group, index) in groups" :key="index" class="session-reviews__field">
               {{ groups.length > 1 ? `活動 ${index + 1} · ${timestamp(review.activities[index].started_at)}` : '這堂訓練的課表' }}
               <select v-model="group.workout_id" :disabled="Boolean(busyId)">
                 <option :value="null">課表外活動</option>
                 <option v-if="review.workout_id && !review.candidates.some(item => item.id === review.workout_id)" :value="review.workout_id">目前配對課表</option>
                 <option v-for="candidate in review.candidates" :key="candidate.id" :value="candidate.id">{{ candidate.scheduled_for }} · {{ candidate.purpose || candidate.workout_type }}</option>
+                <optgroup v-if="groups.length === 1 && review.swap_candidates?.length" label="已配對，可交換">
+                  <option v-for="candidate in review.swap_candidates" :key="`swap-${candidate.id}`" :value="candidate.id">{{ candidate.scheduled_for }} · {{ candidate.purpose || candidate.workout_type }}</option>
+                </optgroup>
               </select>
             </label>
+            <p v-if="selectedSwap" class="inline-note" role="status">將交換兩天的課表配對：{{ review.local_date }} 的活動對應 {{ selectedSwap.scheduled_for }} 課表，{{ selectedSwap.activity_date }} 的活動對應目前配對的課表。活動日期不會變更。</p>
             <div class="session-reviews__actions">
               <AppButton v-if="review.activities.length > 1 && groups.length === 1" :disabled="Boolean(busyId)" @click="split(review)">拆成獨立活動</AppButton>
-              <AppButton tone="primary" type="submit" :busy="busyId === review.id" :disabled="Boolean(busyId)">儲存配對</AppButton>
+              <AppButton tone="primary" type="submit" :busy="busyId === review.id" :disabled="Boolean(busyId)">{{ selectedSwap ? '交換配對' : '儲存配對' }}</AppButton>
               <AppButton :disabled="Boolean(busyId)" @click="editingId = ''; saveError = ''">取消</AppButton>
             </div>
           </form>

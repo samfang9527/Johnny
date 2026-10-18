@@ -123,6 +123,23 @@ def _plan(user_id: str = "user-1") -> TrainingPlan:
     )
 
 
+def test_today_shows_manually_paired_workout_completed_when_run_yesterday() -> None:
+    yesterday = date(2027, 1, 27)
+    early = CompletedActivity.create(
+        id='early', user_id='user-1', source='manual',
+        started_at=datetime(2027, 1, 27, 7, 30, tzinfo=timezone.utc),
+        sport_type='running', duration_seconds=2700, distance_meters=8000,
+        matched_workout_id='workout-today', match_reviewed=True,
+    )
+    handler = BuildTodayContextHandler(
+        training_data=FakeTrainingAnalyticsDataProvider(activities=(early,)),
+        training_plans=FakeCurrentTrainingPlanProvider(_plan()),
+    )
+    context = handler.handle(user_id='user-1', anchor_date=ANCHOR)
+    assert yesterday < ANCHOR
+    assert context.scheduled_workouts[0]['status'] == 'completed'
+
+
 def test_today_context_aggregates_plan_activity_health_and_metrics_without_prose() -> None:
     handler = BuildTodayContextHandler(
         training_data=FakeTrainingAnalyticsDataProvider(

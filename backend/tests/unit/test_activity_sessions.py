@@ -50,6 +50,24 @@ def test_multiple_workouts_need_review_and_explicit_decisions_win():
     assert sessions[0].workout_id=='w'
 
 
+def test_adjacent_only_candidate_requests_review_without_automatic_match():
+    tomorrow = Workout.create(id='tomorrow', scheduled_for=DAY + timedelta(days=1),
+                              workout_type='easy_run', purpose='Easy', planned_duration_minutes=30)
+    session = match_sessions((run('a', 0),), (tomorrow,), 'UTC')[0]
+    assert session.status == 'needs_review'
+    assert session.workout_id is None
+    assert [candidate.id for candidate in session.candidates] == ['tomorrow']
+
+
+def test_adjacent_candidate_claimed_on_its_day_leaves_extra_session_unplanned():
+    tomorrow = Workout.create(id='tomorrow', scheduled_for=DAY + timedelta(days=1),
+                              workout_type='easy_run', purpose='Easy', planned_duration_minutes=30)
+    next_day = replace(run('next', 0), started_at=datetime(2026, 10, 14, 10, tzinfo=timezone.utc))
+    sessions = match_sessions((run('earlier', 0), next_day), (tomorrow,), 'UTC')
+    assert [session.status for session in sessions] == ['unplanned', 'automatic']
+    assert sessions[0].candidates == ()
+
+
 def test_explicit_extra_stays_counted_when_other_sessions_need_review():
     recordings=(run('extra',0,match_reviewed=True,session_group_id='extra'),run('a',180),run('b',360))
     p=TrainingPlan.create(user_id='u',name='p',starts_on=DAY,ends_on=DAY+timedelta(days=6),workouts=(workout(),))
@@ -79,3 +97,33 @@ def test_actual_three_recording_regression():
         for i,(stamp,duration) in enumerate([('2026-10-13T10:35:12+00:00',928),('2026-10-13T10:53:56+00:00',1225),('2026-10-13T11:15:57+00:00',924)]))
     session=match_sessions(recordings,(workout(),),'Asia/Taipei')[0]
     assert len(session.activities)==3 and session.duration_seconds==3077 and session.workout_id=='w'
+
+
+def test_early_workout_completion_crosses_plan_week_without_moving_training_load():
+    planned_day = DAY + timedelta(days=7)
+    planned = Workout.create(id='next-week', scheduled_for=planned_day, workout_type='easy_run',
+                             purpose='Early run', planned_duration_minutes=30)
+    plan = TrainingPlan.create(user_id='u', name='p', starts_on=DAY,
+                               ends_on=DAY + timedelta(days=13), workouts=(planned,))
+    early = replace(run('early', 0, duration=30, match_reviewed=True,
+                        matched_workout_id='next-week'),
+                    started_at=datetime(2026, 10, 19, 10, tzinfo=timezone.utc))
+    facts = build_week_execution(plan, (early,), anchor_date=planned_day + timedelta(days=1),
+                                 as_of=datetime(2026, 10, 21, tzinfo=timezone.utc),
+                                 timezone_name='UTC', activity_coverage_complete=True)
+    assert (facts.completed_count, facts.missed_count, facts.actual_minutes) == (1, 0, 0)
+
+
+def test_pending_early_activity_prevents_false_miss_across_plan_week():
+    planned_day = DAY + timedelta(days=7)
+    planned = Workout.create(id='next-week', scheduled_for=planned_day, workout_type='easy_run',
+                             purpose='Early run', planned_duration_minutes=30)
+    plan = TrainingPlan.create(user_id='u', name='p', starts_on=DAY,
+                               ends_on=DAY + timedelta(days=13), workouts=(planned,))
+    early = replace(run('early', 0, duration=30),
+                    started_at=datetime(2026, 10, 19, 10, tzinfo=timezone.utc))
+    facts = build_week_execution(plan, (early,), anchor_date=planned_day + timedelta(days=1),
+                                 as_of=datetime(2026, 10, 21, tzinfo=timezone.utc),
+                                 timezone_name='UTC', activity_coverage_complete=True)
+    assert facts.missed_count == 0
+    assert facts.status == 'insufficient_evidence'

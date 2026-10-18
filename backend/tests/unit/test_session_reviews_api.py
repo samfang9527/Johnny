@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from tests.unit.api_test_helpers import create_sqlite_test_client
 from src.api.dependencies import get_session
@@ -18,6 +19,138 @@ def setup():
         assert result.status_code==200,result.text
         ids.append(result.json()['data']['id'])
     return client,headers,day,plan['workouts'][0]['id'],ids
+
+
+def setup_adjacent():
+    client = create_sqlite_test_client()
+    headers = {'X-Johnny-User-Id': 'adjacent-athlete'}
+    today = datetime.now(timezone.utc).date()
+    tomorrow = today + timedelta(days=1)
+    client.put('/api/v1/athlete/profile', headers=headers, json={
+        'timezone': 'UTC', 'current_weekly_mileage_km': 20,
+        'preferred_training_days': ['saturday', 'sunday'],
+        'preferred_long_run_day': 'sunday', 'max_runs_per_week': 3,
+    })
+    plan = client.post('/api/v1/training-plans', headers=headers, json={
+        'name': 'weekend', 'starts_on': today.isoformat(), 'ends_on': tomorrow.isoformat(),
+        'workouts': [
+            {'scheduled_for': today.isoformat(), 'workout_type': 'easy_run', 'purpose': 'Saturday easy', 'planned_duration_minutes': 30},
+            {'scheduled_for': tomorrow.isoformat(), 'workout_type': 'long_run', 'purpose': 'Sunday long', 'planned_duration_minutes': 60},
+        ],
+    })
+    assert plan.status_code == 200, plan.text
+    workouts = {item['scheduled_for']: item['id'] for item in plan.json()['data']['workouts']}
+    activity = client.post('/api/v1/activities', headers=headers, json={
+        'source': 'manual', 'started_at': f'{today.isoformat()}T10:00:00Z',
+        'sport_type': 'running', 'distance_meters': 10000, 'duration_seconds': 3600,
+    })
+    assert activity.status_code == 200, activity.text
+    return client, headers, today, workouts, activity.json()['data']['id']
+
+
+def test_adjacent_workout_can_be_manually_paired_without_changing_activity_date():
+    client, headers, today, workouts, activity_id = setup_adjacent()
+    url = '/api/v1/activities/session-reviews'
+    card = client.get(url, headers=headers, params={'anchor_date': today.isoformat()}).json()['data'][0]
+    assert card['status'] == 'automatic'
+    assert {item['scheduled_for'] for item in card['candidates']} == {today.isoformat(), (today + timedelta(days=1)).isoformat()}
+    response = client.post(url, headers=headers, json={
+        'activity_ids': [activity_id],
+        'groups': [{'activity_ids': [activity_id], 'workout_id': workouts[(today + timedelta(days=1)).isoformat()]}],
+    })
+    assert response.status_code == 200, response.text
+    saved = client.get(url, headers=headers, params={'anchor_date': today.isoformat()}).json()['data'][0]
+    assert saved['local_date'] == today.isoformat()
+    assert saved['workout_id'] == workouts[(today + timedelta(days=1)).isoformat()]
+    assert saved['status'] == 'confirmed'
+
+
+def test_one_workout_cannot_be_claimed_by_two_sessions():
+    client, headers, today, workouts, first_id = setup_adjacent()
+    second = client.post('/api/v1/activities', headers=headers, json={
+        'source': 'manual', 'started_at': f'{today.isoformat()}T15:00:00Z',
+        'sport_type': 'running', 'distance_meters': 5000, 'duration_seconds': 1800,
+    })
+    assert second.status_code == 200, second.text
+    second_id = second.json()['data']['id']
+    url = '/api/v1/activities/session-reviews'
+    target = workouts[(today + timedelta(days=1)).isoformat()]
+    duplicate = client.post(url, headers=headers, json={
+        'activity_ids': [first_id, second_id],
+        'groups': [
+            {'activity_ids': [first_id], 'workout_id': target},
+            {'activity_ids': [second_id], 'workout_id': target},
+        ],
+    })
+    assert duplicate.status_code == 409
+    first = client.post(url, headers=headers, json={
+        'activity_ids': [first_id], 'groups': [{'activity_ids': [first_id], 'workout_id': target}],
+    })
+    assert first.status_code == 200, first.text
+    cards = client.get(url, headers=headers, params={'anchor_date': today.isoformat()}).json()['data']
+    second_card = next(card for card in cards if second_id in {item['id'] for item in card['activities']})
+    assert target not in {candidate['id'] for candidate in second_card['candidates']}
+    claimed = client.post(url, headers=headers, json={
+        'activity_ids': [second_id], 'groups': [{'activity_ids': [second_id], 'workout_id': target}],
+    })
+    assert claimed.status_code == 409
+
+
+def test_adjacent_claimed_sessions_can_exchange_workouts_atomically():
+    client = create_sqlite_test_client()
+    headers = {'X-Johnny-User-Id': 'swap-athlete'}
+    sunday = datetime.now(ZoneInfo('Asia/Taipei')).date()
+    saturday = sunday - timedelta(days=1)
+    client.put('/api/v1/athlete/profile', headers=headers, json={
+        'timezone': 'Asia/Taipei', 'current_weekly_mileage_km': 20,
+        'preferred_training_days': ['saturday', 'sunday'],
+        'preferred_long_run_day': 'sunday', 'max_runs_per_week': 3,
+    })
+    response = client.post('/api/v1/training-plans', headers=headers, json={
+        'name': 'weekend', 'starts_on': saturday.isoformat(), 'ends_on': sunday.isoformat(),
+        'workouts': [
+            {'scheduled_for': saturday.isoformat(), 'workout_type': 'easy_run', 'purpose': 'Easy', 'planned_duration_minutes': 30},
+            {'scheduled_for': sunday.isoformat(), 'workout_type': 'long_run', 'purpose': 'Long', 'planned_duration_minutes': 60},
+        ],
+    })
+    assert response.status_code == 200, response.text
+    workouts = {item['scheduled_for']: item['id'] for item in response.json()['data']['workouts']}
+    ids = []
+    for day, minute in ((saturday, 0), (saturday, 20), (sunday, 0)):
+        activity = client.post('/api/v1/activities', headers=headers, json={
+            'source': 'manual', 'started_at': f'{day.isoformat()}T08:{minute:02d}:00Z',
+            'sport_type': 'running', 'distance_meters': 4000, 'duration_seconds': 900,
+        })
+        assert activity.status_code == 200, activity.text
+        ids.append(activity.json()['data']['id'])
+    url = '/api/v1/activities/session-reviews'
+    for group_ids, workout_id in ((ids[:2], workouts[saturday.isoformat()]), ([ids[2]], workouts[sunday.isoformat()])):
+        response = client.post(url, headers=headers, json={
+            'activity_ids': group_ids, 'groups': [{'activity_ids': group_ids, 'workout_id': workout_id}],
+        })
+        assert response.status_code == 200, response.text
+    cards = client.get(url, headers=headers, params={'anchor_date': sunday.isoformat()}).json()['data']
+    saturday_card = next(card for card in cards if card['local_date'] == saturday.isoformat())
+    assert [candidate['id'] for candidate in saturday_card['swap_candidates']] == [workouts[sunday.isoformat()]]
+    swapped = client.post(f'{url}/swap', headers=headers, json={
+        'activity_ids': ids[:2], 'workout_id': workouts[sunday.isoformat()],
+    })
+    assert swapped.status_code == 200, swapped.text
+    cards = client.get(url, headers=headers, params={'anchor_date': sunday.isoformat()}).json()['data']
+    by_day = {card['local_date']: card for card in cards}
+    assert by_day[saturday.isoformat()]['workout_id'] == workouts[sunday.isoformat()]
+    assert by_day[sunday.isoformat()]['workout_id'] == workouts[saturday.isoformat()]
+    assert {item['id'] for item in by_day[saturday.isoformat()]['activities']} == set(ids[:2])
+    assert by_day[sunday.isoformat()]['activities'][0]['id'] == ids[2]
+    assert by_day[saturday.isoformat()]['swap_candidates'][0]['activity_date'] == sunday.isoformat()
+    undone = client.post(f'{url}/swap', headers=headers, json={
+        'activity_ids': ids[:2], 'workout_id': workouts[saturday.isoformat()],
+    })
+    assert undone.status_code == 200, undone.text
+    cards = client.get(url, headers=headers, params={'anchor_date': sunday.isoformat()}).json()['data']
+    by_day = {card['local_date']: card for card in cards}
+    assert by_day[saturday.isoformat()]['workout_id'] == workouts[saturday.isoformat()]
+    assert by_day[sunday.isoformat()]['workout_id'] == workouts[sunday.isoformat()]
 
 
 def test_review_confirm_split_unplanned_persist_without_automatic_advice():
@@ -98,11 +231,11 @@ def test_repeated_review_does_not_queue_manual_advice_after_complete_sync():
     scope.close()
 
 
-def test_review_window_includes_eighth_local_date_and_rejects_older_changes():
+def test_review_window_includes_seventh_local_date_and_rejects_older_changes():
     client, headers, today, _, _ = setup()
     today_date = date.fromisoformat(today)
-    seventh_day = (today_date - timedelta(days=7)).isoformat()
-    expired_day = (today_date - timedelta(days=8)).isoformat()
+    seventh_day = (today_date - timedelta(days=6)).isoformat()
+    expired_day = (today_date - timedelta(days=7)).isoformat()
     ids = {}
     for day in (seventh_day, expired_day):
         response = client.post('/api/v1/activities', headers=headers, json={
