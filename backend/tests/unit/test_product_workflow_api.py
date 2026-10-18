@@ -1135,7 +1135,8 @@ def test_manual_garmin_sync_endpoint_returns_summary_and_uses_existing_import_pa
     data = response.json()["data"]
     assert data["sync_status"] == "idle"
     assert data["sync_summary"]["resources"]["activities"]["duplicates"] == 1
-    assert data["sync_summary"]["resources"]["sleep"]["stored"] == 1
+    assert data["sync_summary"]["resources"]["sleep"]["stored"] == 0
+    assert data["sync_summary"]["resources"]["sleep"]["duplicates"] == 1
     assert data["last_sync_started_at"] is not None
     assert data["last_sync_completed_at"] is not None
     assert "garmin-password" not in response.text

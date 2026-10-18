@@ -522,9 +522,17 @@ class GarminInitialSyncHandler:
             payload = items[0] if items else {}
             value = self._normalize_training_evidence(resource_type,
                 payload.get("profiles") if resource_type == "heart_rate_zones" else payload)
+            previous = ((self._integrations.get_connection_for_user(user_id, connection_id)
+                         .provider_metadata or {}).get("training_evidence") or {}).get(resource_type) or {}
             self._integrations.update_training_evidence(user_id, connection_id, resource_type, value,
                 checked_at=datetime.now(timezone.utc))
-            return summary.record_stored(resource_type) if value is not None else summary
+            if value is None:
+                return summary
+            previous_value = {key: item for key, item in previous.items()
+                              if key not in {"source", "synced_at", "checked_at", "status"}}
+            if previous.get("status") == "ready" and previous_value == value:
+                return summary.record_duplicate(resource_type)
+            return summary.record_stored(resource_type)
         if resource_type == "activities":
             return self._store_activities(user_id, connection_id, items, summary)
         return self._store_health_resource(user_id, connection_id, resource_type, items, summary)
@@ -585,6 +593,13 @@ class GarminInitialSyncHandler:
         for payload in items:
             try:
                 metrics = self._normalize_health(user_id, payload)
+                previous = self._activities.get_daily_health_metrics_for_user(user_id, metrics.metric_date)
+                if previous is not None and all(
+                    previous.values_by_metric_type().get(metric_type) == value
+                    for metric_type, value in metrics.values_by_metric_type().items()
+                ):
+                    summary = summary.record_duplicate(resource_type)
+                    continue
                 self._activities.save_daily_health_metrics(user_id, metrics)
                 summary = summary.record_stored(resource_type)
             except Exception as exc:  # noqa: BLE001

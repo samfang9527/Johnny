@@ -78,6 +78,44 @@ def test_garmin_initial_sync_imports_each_resource_with_independent_cursors_and_
     assert len(outbox.events) == 1
 
 
+def test_repeated_garmin_evidence_does_not_report_unchanged_health_or_targets_as_stored() -> None:
+    integrations = _FakeIntegrationStore()
+    activities = _FakeActivityStore()
+    handler = GarminInitialSyncHandler(
+        integrations=integrations,
+        activities=activities,
+        outbox=_FakeOutboxStore(),
+        garmin=_FakeGarminResourceAdapter(results={}),
+        athlete_profiles=_FakeAthleteProfileStore("UTC"),
+        normalize_activity=_normalize_activity,
+        normalize_health=lambda user_id, payload: DailyHealthMetrics.create(
+            user_id=user_id, metric_date=date(2027, 1, 1), source="garmin_connect",
+            hrv_ms=payload["hrv_ms"],
+        ),
+        normalize_training_evidence=lambda resource, payload: payload,
+    )
+
+    first_health = handler._store_resource(
+        "user-1", "conn-1", "hrv", ({"hrv_ms": 42},), SyncSummary.empty())
+    repeated_health = handler._store_resource(
+        "user-1", "conn-1", "hrv", ({"hrv_ms": 42},), SyncSummary.empty())
+    changed_health = handler._store_resource(
+        "user-1", "conn-1", "hrv", ({"hrv_ms": 43},), SyncSummary.empty())
+    first_target = handler._store_resource(
+        "user-1", "conn-1", "heart_rate_zones", ({"profiles": {"easy": [120, 140]}},), SyncSummary.empty())
+    repeated_target = handler._store_resource(
+        "user-1", "conn-1", "heart_rate_zones", ({"profiles": {"easy": [120, 140]}},), SyncSummary.empty())
+    changed_target = handler._store_resource(
+        "user-1", "conn-1", "heart_rate_zones", ({"profiles": {"easy": [125, 145]}},), SyncSummary.empty())
+
+    assert first_health.resources["hrv"]["stored"] == 1
+    assert repeated_health.resources["hrv"]["stored"] == 0
+    assert changed_health.resources["hrv"]["stored"] == 1
+    assert first_target.resources["heart_rate_zones"]["stored"] == 1
+    assert repeated_target.resources["heart_rate_zones"]["stored"] == 0
+    assert changed_target.resources["heart_rate_zones"]["stored"] == 1
+
+
 def test_garmin_initial_sync_falls_back_to_garmin_profile_timezone_then_utc() -> None:
     for profile_timezone, provider_timezone, expected in [
         (None, "America/Los_Angeles", "America/Los_Angeles"),
@@ -458,7 +496,13 @@ class _FakeIntegrationStore:
         self.started_count = 0
 
     def update_training_evidence(self, *args, **kwargs):
-        pass
+        resource = args[2]
+        value = args[3]
+        metadata = dict(self.connection.provider_metadata)
+        evidence = dict(metadata.get("training_evidence") or {})
+        evidence[resource] = {**(value or {}), "source": "garmin", "status": "ready"}
+        metadata["training_evidence"] = evidence
+        self.connection = replace(self.connection, provider_metadata=metadata)
 
     def get_connection_for_user(self, user_id: str, connection_id: str) -> IntegrationConnectionRef | None:
         if user_id == self.connection.user_id and connection_id == self.connection.id:
@@ -529,6 +573,16 @@ class _FakeActivityStore:
     def save_daily_health_metrics(self, user_id: str, metrics: DailyHealthMetrics) -> DailyHealthMetrics:
         self.health.append(metrics)
         return metrics
+
+    def get_daily_health_metrics_for_user(self, user_id: str, metric_date: date) -> DailyHealthMetrics | None:
+        values = {}
+        for metrics in self.health:
+            if metrics.user_id == user_id and metrics.metric_date == metric_date:
+                values.update(metrics.values_by_metric_type())
+        if not values:
+            return None
+        return DailyHealthMetrics.create(
+            user_id=user_id, metric_date=metric_date, source="garmin_connect", **values)
 
 
 class _FakeOutboxStore:

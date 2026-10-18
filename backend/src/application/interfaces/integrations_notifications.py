@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Protocol
 
 from src.domain.activity_health import CompletedActivity, DailyHealthMetrics
@@ -35,6 +35,9 @@ class ProviderActivityStore(Protocol):
         ...
 
     def save_daily_health_metrics(self, user_id: str, metrics: DailyHealthMetrics) -> DailyHealthMetrics:
+        ...
+
+    def get_daily_health_metrics_for_user(self, user_id: str, metric_date: date) -> DailyHealthMetrics | None:
         ...
 
 
