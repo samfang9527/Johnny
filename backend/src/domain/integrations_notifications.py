@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 from typing import Any
 
 
@@ -245,6 +245,7 @@ class NormalizedProviderRecord:
 class SyncSummary:
     resources: dict[str, dict[str, Any]]
     activity_coverage: dict[str, Any] | None = None
+    stored_dates: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @classmethod
     def empty(cls) -> SyncSummary:
@@ -253,8 +254,13 @@ class SyncSummary:
     def record_fetched(self, resource_type: str, count: int = 1) -> SyncSummary:
         return self._increment(resource_type, "fetched", count)
 
-    def record_stored(self, resource_type: str, count: int = 1) -> SyncSummary:
-        return self._increment(resource_type, "stored", count)
+    def record_stored(self, resource_type: str, count: int = 1, *, on_date: date | None = None) -> SyncSummary:
+        summary = self._increment(resource_type, "stored", count)
+        if on_date is None or count == 0:
+            return summary
+        stored_dates = dict(summary.stored_dates)
+        stored_dates[resource_type] = stored_dates.get(resource_type, ()) + (on_date.isoformat(),) * count
+        return replace(summary, stored_dates=stored_dates)
 
     def record_duplicate(self, resource_type: str, count: int = 1) -> SyncSummary:
         return self._increment(resource_type, "duplicates", count)
@@ -274,12 +280,15 @@ class SyncSummary:
         safe_backoff = _safe_backoff_metadata(backoff or {})
         if safe_backoff:
             bucket["backoff"] = safe_backoff
-        return SyncSummary(resources=resources, activity_coverage=self.activity_coverage)
+        return SyncSummary(resources=resources, activity_coverage=self.activity_coverage,
+                           stored_dates=self.stored_dates)
 
     def to_payload(self) -> dict[str, Any]:
         payload = {"resources": _copy_resources(self.resources)}
         if self.activity_coverage is not None:
             payload["activity_coverage"] = dict(self.activity_coverage)
+        if self.stored_dates:
+            payload["stored_dates"] = {resource: list(dates) for resource, dates in self.stored_dates.items()}
         return payload
 
     def with_activity_coverage(
@@ -309,14 +318,25 @@ class SyncSummary:
             if safe_backoff:
                 bucket["backoff"] = safe_backoff
         coverage = (payload or {}).get("activity_coverage")
-        return cls(resources=resources, activity_coverage=dict(coverage) if isinstance(coverage, dict) else None)
+        stored_dates: dict[str, tuple[str, ...]] = {}
+        raw_stored_dates = (payload or {}).get("stored_dates")
+        for resource, values in (raw_stored_dates if isinstance(raw_stored_dates, dict) else {}).items():
+            if not isinstance(values, list):
+                continue
+            try:
+                stored_dates[resource] = tuple(date.fromisoformat(value).isoformat() for value in values)
+            except (TypeError, ValueError):
+                continue
+        return cls(resources=resources, activity_coverage=dict(coverage) if isinstance(coverage, dict) else None,
+                   stored_dates=stored_dates)
 
     def _increment(self, resource_type: str, field: str, count: int) -> SyncSummary:
         if count < 0:
             raise DomainValidationError("sync summary count cannot be negative")
         resources = _copy_resources(self.resources)
         _bucket(resources, resource_type)[field] += count
-        return SyncSummary(resources=resources, activity_coverage=self.activity_coverage)
+        return SyncSummary(resources=resources, activity_coverage=self.activity_coverage,
+                           stored_dates=self.stored_dates)
 
 
 @dataclass(frozen=True)

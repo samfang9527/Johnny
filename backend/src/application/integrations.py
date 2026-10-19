@@ -601,7 +601,7 @@ class GarminInitialSyncHandler:
                     summary = summary.record_duplicate(resource_type)
                     continue
                 self._activities.save_daily_health_metrics(user_id, metrics)
-                summary = summary.record_stored(resource_type)
+                summary = summary.record_stored(resource_type, on_date=metrics.metric_date)
             except Exception as exc:  # noqa: BLE001
                 reason_code = _skippable_health_record_error_code(exc)
                 if reason_code is not None:

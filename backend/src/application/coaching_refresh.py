@@ -161,7 +161,7 @@ class CoachingRefreshService:
                     current += timedelta(days=1)
             except (KeyError, ValueError, TypeError):
                 pass
-        if not stored and not stored_health:
+        if not stored:
             # Coverage only changes a review when it adds dates not in its published evidence.
             reviews = self.session.scalars(select(TrainingReviewModel).where(
                 TrainingReviewModel.user_id == user_id,
@@ -174,7 +174,19 @@ class CoachingRefreshService:
                 newly_covered.update(day for day in dates if review.starts_on <= day <= review.ends_on
                                      and day.isoformat() not in previous)
             dates = newly_covered
-        if stored_health or (stored and not dates):
+        undated_stored = False
+        for resource_type, bucket in summary.resources.items():
+            if resource_type == "activities":
+                continue
+            count = int(bucket.get("stored", 0))
+            if not count:
+                continue
+            recorded_dates = summary.stored_dates.get(resource_type, ())
+            if len(recorded_dates) != count:
+                undated_stored = True
+                continue
+            dates.update(date.fromisoformat(value) for value in recorded_dates)
+        if undated_stored or (stored and not dates):
             for review in self.session.scalars(select(TrainingReviewModel).where(
                 TrainingReviewModel.user_id == user_id,
                 TrainingReviewModel.current_revision_id.is_not(None),
