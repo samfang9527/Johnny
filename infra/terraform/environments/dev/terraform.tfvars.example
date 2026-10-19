@@ -1,7 +1,0 @@
-environment_name = "dev"
-aws_region       = "ap-northeast-1"
-project_name     = "Johnny"
-service_name_api = "Johnny-api"
-api_min_capacity = 1
-api_max_capacity = 2
-

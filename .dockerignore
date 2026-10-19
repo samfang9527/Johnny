@@ -1,0 +1,18 @@
+# Build only the backend runtime. In particular, no local .env or workspace files.
+*
+!backend/
+!backend/requirements/
+!backend/requirements/*.txt
+!backend/src/
+!backend/src/**
+!backend/migrations/
+!backend/migrations/**
+!backend/alembic.ini
+!scripts/
+!scripts/agent_runtime.py
+
+# Exclude generated files even when they appear below included directories.
+**/__pycache__/
+**/*.pyc
+**/.env
+**/.env.*

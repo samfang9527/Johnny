@@ -227,3 +227,12 @@ __marimo__/
 
 # Recoverable local environment cleanup archives
 .local-backups/
+
+# Terraform local state and provider cache (keep .terraform.lock.hcl)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.production-setup.env
+infra/terraform/environments/production/backend.hcl
+infra/terraform/environments/production/terraform.tfvars.json

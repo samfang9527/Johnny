@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DATA_VOLUME_ID="${data_volume_id}"
+API_HOST="${api_host}"
+
+dnf install -y docker nginx certbot python3-certbot-nginx python3 xfsprogs util-linux
+systemctl enable --now docker
+install -d -m 0755 /usr/local/lib/docker/cli-plugins /opt/johnny/releases /etc/johnny /srv/johnny/data
+cat > /etc/johnny/production.env <<EOF
+ENV=production
+AWS_REGION=${aws_region}
+FRONTEND_URL=${frontend_url}
+API_URL=${api_url}
+GOOGLE_OAUTH_CLIENT_ID=${google_client_id}
+LLM_MODEL=${llm_model}
+GARMIN_CREDENTIAL_KEY_ID=production-fernet
+EOF
+chmod 0644 /etc/johnny/production.env
+printf '%s\n' '${cert_email}' > /etc/johnny/cert-email
+curl -fsSL https://github.com/docker/compose/releases/download/v5.6.0/docker-compose-linux-aarch64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+
+# Give the 2 GiB host a small disk-backed cushion during short memory spikes.
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+  chmod 0600 /swapfile
+  mkswap /swapfile
+fi
+if ! grep -q '^/swapfile ' /etc/fstab; then
+  printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
+fi
+swapon /swapfile
+
+# Amazon Linux maps the requested /dev/sdf attachment to its NVMe device.
+for attempt in $(seq 1 120); do
+  if [ -e /dev/sdf ]; then break; fi
+  sleep 2
+done
+test -e /dev/sdf
+DEVICE=$(readlink -f /dev/sdf)
+SERIAL=$(lsblk -dn -o SERIAL "$DEVICE" | tr -d ' -')
+EXPECTED=$(printf '%s' "$DATA_VOLUME_ID" | tr -d '-')
+test "$SERIAL" = "$EXPECTED"
+if ! blkid "$DEVICE" >/dev/null 2>&1; then
+  mkfs.xfs "$DEVICE"
+fi
+UUID=$(blkid -s UUID -o value "$DEVICE")
+if ! grep -q "UUID=$UUID " /etc/fstab; then
+  printf 'UUID=%s /srv/johnny/data xfs defaults,nofail 0 2\n' "$UUID" >> /etc/fstab
+fi
+mount /srv/johnny/data || mountpoint -q /srv/johnny/data
+install -d -m 0700 /srv/johnny/data/postgres
+
+cat > /etc/nginx/conf.d/johnny.conf <<EOF
+server {
+    listen 80;
+    server_name $API_HOST;
+    location / { return 503; }
+}
+EOF
+systemctl enable --now nginx
+systemctl enable --now amazon-ssm-agent

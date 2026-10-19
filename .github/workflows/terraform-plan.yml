@@ -1,19 +1,24 @@
-name: Terraform Plan
+name: Terraform Validate and Plan
 
 on:
   pull_request:
     paths:
       - "infra/terraform/**"
+      - "deploy/v1/bootstrap.sh.tftpl"
   push:
     branches:
       - main
     paths:
       - "infra/terraform/**"
+      - "deploy/v1/bootstrap.sh.tftpl"
+
+permissions:
+  contents: read
 
 jobs:
   validate:
-    if: ${{ hashFiles('infra/terraform/main.tf') != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -23,3 +28,38 @@ jobs:
         run: terraform -chdir=infra/terraform init -backend=false
       - name: Terraform validate
         run: terraform -chdir=infra/terraform validate
+
+  plan:
+    if: github.event_name == 'push' && vars.AWS_TERRAFORM_PLAN_ROLE_ARN != ''
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+      TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+      TF_VAR_route53_zone_id: ${{ vars.ROUTE53_ZONE_ID }}
+      TF_VAR_certificate_email: ${{ vars.CERTIFICATE_EMAIL }}
+      TF_VAR_google_oauth_client_id: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+      TF_VAR_llm_model: ${{ vars.LLM_MODEL }}
+      TF_VAR_github_repository: ${{ github.repository }}
+      STATE_BUCKET: ${{ vars.STATE_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+      - uses: hashicorp/setup-terraform@v3
+      - name: Initialize remote state
+        run: |
+          terraform -chdir=infra/terraform init -input=false \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=johnny/production/terraform.tfstate" \
+            -backend-config="region=$TF_VAR_aws_region" \
+            -backend-config="use_lockfile=true" \
+            -backend-config="encrypt=true"
+      - name: Show infrastructure plan
+        run: terraform -chdir=infra/terraform plan -input=false -no-color

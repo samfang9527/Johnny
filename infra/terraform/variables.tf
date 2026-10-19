@@ -1,58 +1,37 @@
 variable "aws_region" {
   type    = string
   default = "ap-northeast-1"
+  validation {
+    condition     = var.aws_region == "ap-northeast-1"
+    error_message = "The production v1 deployment runs in ap-northeast-1 (Tokyo)."
+  }
 }
-
 variable "project_name" {
   type    = string
-  default = "Johnny"
+  default = "johnny"
 }
-
 variable "environment_name" {
   type    = string
-  default = "dev"
+  default = "production"
 }
-
-variable "service_name_api" {
+variable "domain_name" { type = string }
+variable "route53_zone_id" { type = string }
+variable "certificate_email" { type = string }
+variable "google_oauth_client_id" { type = string }
+variable "llm_model" { type = string }
+variable "github_repository" { type = string }
+variable "github_oidc_provider_arn" {
   type    = string
-  default = "Johnny-api"
+  default = ""
 }
-
-variable "api_min_capacity" {
-  type    = number
-  default = 1
-}
-
-variable "api_max_capacity" {
-  type    = number
-  default = 2
-}
-
-variable "api_cpu" {
-  type    = number
-  default = 256
-}
-
-variable "api_memory" {
-  type    = number
-  default = 512
-}
-
-variable "api_container_port" {
-  type    = number
-  default = 8000
-}
-
-variable "api_health_check_path" {
+variable "instance_type" {
   type    = string
-  default = "/health"
+  default = "t4g.small"
 }
-
-variable "api_image_tag" {
-  type    = string
-  default = "latest"
+variable "data_volume_gb" {
+  type    = number
+  default = 30
 }
-
 variable "tags" {
   type    = map(string)
   default = {}

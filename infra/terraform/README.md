@@ -1,16 +1,11 @@
-# Terraform
+# Johnny production infrastructure v1
 
-This template provides a more realistic Terraform layout for an AWS ECS deployment:
+Terraform provisions one `t4g.small` ARM64 EC2 instance in a public subnet, an encrypted and retained EBS data volume, a static public IP, private S3 buckets for the frontend/releases/backups, CloudFront with origin access control, Route 53 records, ECR, and IAM roles for EC2 and GitHub Actions. Nginx on EC2 proxies requests to the API container. No NAT gateway, load balancer, RDS, or always-on staging environment is created.
 
-- root composition under `infra/terraform`
-- reusable child modules under `infra/terraform/modules`
-- environment overlays under `infra/terraform/environments/dev` and `infra/terraform/environments/prod`
+The first setup is driven by [`scripts/setup-production.sh`](../../scripts/setup-production.sh). Run it from the repository root after configuring AWS CLI, `gh`, and Terraform 1.10 or newer. The wizard creates a private S3 state bucket with native S3 locking, asks for the non-secret Terraform inputs, shows a plan, and requires an explicit confirmation before applying it. It then stores the five application secrets in SSM Parameter Store and configures the GitHub Actions variables. Terraform never receives secret values.
 
-Current scope:
-- VPC and subnet layout
-- ECS cluster and API service shape
-- ALB skeleton
-- ECR repository
-- CloudWatch log group
+Regional infrastructure runs in `ap-northeast-1` (Tokyo). The domain must use a Route 53 hosted zone in the AWS account. The wizard configures `app.<domain>` for CloudFront and `api.<domain>` for EC2. CloudFront requires its ACM certificate in `us-east-1`, so that certificate is the sole regional exception. Nginx obtains the API certificate using Certbot after DNS resolves. Google OAuth must authorize `https://api.<domain>/api/v1/auth/google/callback`.
 
-The API service defaults to ECS Fargate with `min_capacity = 1` to avoid scale-from-zero cold starts.
+The EC2 data volume has Terraform `prevent_destroy` and is mounted at `/srv/johnny/data`. PostgreSQL data is bind-mounted there. The S3 backup bucket also has `prevent_destroy`. Review the Terraform plan carefully if replacing the instance or changing disk settings. An existing state from the old ECS scaffold requires an explicit state migration or import; do not run this configuration against an old state expecting an in-place ECS update.
+
+Application releases are built in GitHub Actions after CI passes on `main`. The manual **Deploy production v1** workflow selects a full commit SHA, runs the EC2 deployment through SSM, then publishes the frontend to S3 and invalidates CloudFront. See [`docs/deployment-v1.md`](../../docs/deployment-v1.md) for the release and recovery procedure.

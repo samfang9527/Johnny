@@ -1,0 +1,17 @@
+[Unit]
+Description=Johnny production
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+RequiresMountsFor=/srv/johnny/data
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/johnny-start
+ExecStop=/usr/local/bin/johnny-stop
+TimeoutStartSec=600
+TimeoutStopSec=660
+
+[Install]
+WantedBy=multi-user.target

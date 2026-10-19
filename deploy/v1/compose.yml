@@ -1,0 +1,68 @@
+name: johnny-production
+
+x-log-rotation: &log-rotation
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    mem_limit: 512m
+    logging: *log-rotation
+    env_file:
+      - path: /run/johnny/postgres.env
+        format: raw
+    volumes:
+      - /srv/johnny/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U johnny -d johnny"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    restart: unless-stopped
+    mem_limit: 384m
+    logging: *log-rotation
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - path: /run/johnny/api.env
+        format: raw
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 60s
+
+  worker:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    restart: unless-stopped
+    mem_limit: 640m
+    logging: *log-rotation
+    command: ["python", "/app/scripts/agent_runtime.py", "work-loop"]
+    env_file:
+      - path: /run/johnny/worker.env
+        format: raw
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 10m
+
+  scheduler:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    restart: unless-stopped
+    mem_limit: 160m
+    logging: *log-rotation
+    command: ["python", "/app/scripts/agent_runtime.py", "schedule-loop"]
+    env_file:
+      - path: /run/johnny/scheduler.env
+        format: raw
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 90s

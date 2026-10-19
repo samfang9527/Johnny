@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import logging
+import signal
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -118,10 +120,10 @@ def _due_local_date(now: datetime, timezone_name: str) -> date | None:
     return local.date() if local.hour >= 4 else None
 
 
-def schedule_loop(session_factory, *, max_iterations: int | None = None, interval_seconds: float = 60.0) -> int:
+def schedule_loop(session_factory, *, max_iterations: int | None = None, interval_seconds: float = 60.0, should_stop: Callable[[], bool] = lambda: False) -> int:
     iterations = 0
     enqueued = 0
-    while max_iterations is None or iterations < max_iterations:
+    while (max_iterations is None or iterations < max_iterations) and not should_stop():
         with session_factory() as session:
             enqueued += schedule_once(session)
             session.commit()
@@ -174,10 +176,12 @@ def work_drain(session: Session, *, max_tasks: int | None = None) -> int:
     return processed
 
 
-def work_loop(session_factory, *, idle_timeout_seconds: float | None = None, interval_seconds: float = 1.0) -> int:
+def work_loop(session_factory, *, idle_timeout_seconds: float | None = None, interval_seconds: float = 1.0, should_stop: Callable[[], bool] = lambda: False) -> int:
     started = time.monotonic()
     processed = 0
     while True:
+        if should_stop():
+            return processed
         with session_factory() as session:
             did_work = work_one(session)
             session.commit()
@@ -279,11 +283,21 @@ def main() -> int:
         Base.metadata.create_all(engine)
     session_factory = create_session_factory(database_url)
 
+    stop_requested = False
+    if args.command in {"schedule-loop", "work-loop"}:
+        def request_stop(_signum: int, _frame: object) -> None:
+            nonlocal stop_requested
+            stop_requested = True
+            logger.info("agent runtime shutdown requested command=%s", args.command)
+
+        signal.signal(signal.SIGTERM, request_stop)
+        signal.signal(signal.SIGINT, request_stop)
+
     if args.command == "schedule-loop":
-        print(f"enqueued={schedule_loop(session_factory, max_iterations=args.max_iterations, interval_seconds=args.interval_seconds)}")
+        print(f"enqueued={schedule_loop(session_factory, max_iterations=args.max_iterations, interval_seconds=args.interval_seconds, should_stop=lambda: stop_requested)}")
         return 0
     if args.command == "work-loop":
-        print(f"processed={work_loop(session_factory, idle_timeout_seconds=args.idle_timeout_seconds, interval_seconds=args.interval_seconds)}")
+        print(f"processed={work_loop(session_factory, idle_timeout_seconds=args.idle_timeout_seconds, interval_seconds=args.interval_seconds, should_stop=lambda: stop_requested)}")
         return 0
 
     with session_factory() as session:

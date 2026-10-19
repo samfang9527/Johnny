@@ -1,0 +1,77 @@
+name: Deploy production v1
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full 40-character SHA of a validated main-branch release
+        required: true
+        type: string
+      mode:
+        description: Deploy with migrations, or roll back code without downgrading the database
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - rollback
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      - name: Verify selected release is on main
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+      - name: Deploy backend with SSM
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+          RELEASE_BUCKET: ${{ vars.RELEASE_BUCKET }}
+          BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          DEPLOY_MODE: ${{ inputs.mode }}
+        run: |
+          python3 deploy/v1/send_deploy_command.py \
+            --sha "$RELEASE_SHA" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --release-bucket "$RELEASE_BUCKET" \
+            --backup-bucket "$BACKUP_BUCKET" \
+            --region "$AWS_REGION" \
+            --mode "$DEPLOY_MODE"
+      - name: Publish frontend assets, then entry page
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          RELEASE_BUCKET: ${{ vars.RELEASE_BUCKET }}
+          FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          set -euo pipefail
+          aws s3 sync "s3://$RELEASE_BUCKET/production/v1/$RELEASE_SHA/frontend/" production-frontend --only-show-errors
+          test -s production-frontend/index.html
+          aws s3 sync production-frontend "s3://$FRONTEND_BUCKET/" \
+            --exclude "index.html" --cache-control "public,max-age=31536000,immutable" --only-show-errors
+          aws s3 cp production-frontend/index.html "s3://$FRONTEND_BUCKET/index.html" \
+            --content-type "text/html; charset=utf-8" --cache-control "no-cache,max-age=0" --only-show-errors
+          aws cloudfront create-invalidation --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --paths "/*" >/dev/null

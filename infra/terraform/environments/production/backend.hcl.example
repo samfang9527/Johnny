@@ -1,0 +1,5 @@
+bucket       = "johnny-production-terraform-state-123456789012-ap-northeast-1"
+key          = "johnny/production/terraform.tfstate"
+region       = "ap-northeast-1"
+encrypt      = true
+use_lockfile = true

@@ -1,16 +1,12 @@
-output "alb_dns_name" {
-  value = module.alb.dns_name
-}
-
-output "api_repository_url" {
-  value = module.ecr_api.repository_url
-}
-
-output "api_service_name" {
-  value = module.ecs_service_api.service_name
-}
-
-output "api_cluster_name" {
-  value = module.ecs_service_api.cluster_name
-}
-
+output "ec2_instance_id" { value = aws_instance.production.id }
+output "api_ip" { value = aws_eip.production.public_ip }
+output "api_url" { value = "https://api.${var.domain_name}" }
+output "frontend_url" { value = "https://app.${var.domain_name}" }
+output "frontend_bucket" { value = aws_s3_bucket.frontend.bucket }
+output "release_bucket" { value = aws_s3_bucket.releases.bucket }
+output "backup_bucket" { value = aws_s3_bucket.backups.bucket }
+output "cloudfront_distribution_id" { value = aws_cloudfront_distribution.frontend.id }
+output "api_repository_url" { value = module.ecr_api.repository_url }
+output "github_build_role_arn" { value = aws_iam_role.github_build.arn }
+output "github_deploy_role_arn" { value = aws_iam_role.github_deploy.arn }
+output "github_terraform_plan_role_arn" { value = aws_iam_role.github_terraform_plan.arn }

@@ -1,8 +1,20 @@
-FROM python:3.14-slim
+FROM python:3.14-alpine AS dependencies
+
+RUN python -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+COPY backend/requirements /app/backend/requirements
+RUN pip install --no-cache-dir --only-binary=:all: -r /app/backend/requirements/runtime.txt
+
+FROM python:3.14-alpine
 
 WORKDIR /app
-ENV PYTHONPATH=/app/src
-COPY requirements /app/requirements
-RUN pip install --no-cache-dir -r /app/requirements/api.txt
-COPY src /app/src
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONPATH=/app/backend \
+    PYTHONDONTWRITEBYTECODE=1
+RUN apk add --no-cache ca-certificates tzdata libstdc++
+COPY --from=dependencies /opt/venv /opt/venv
+COPY backend/src /app/backend/src
+COPY backend/alembic.ini /app/backend/alembic.ini
+COPY backend/migrations /app/backend/migrations
+COPY scripts/agent_runtime.py /app/scripts/agent_runtime.py
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
