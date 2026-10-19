@@ -4,6 +4,8 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict
 from dataclasses import replace
 from datetime import date, timedelta
+import logging
+import time
 from typing import Callable, Iterable, Sequence
 
 from src.application.training_plan_generation import PlanRace, _template_steps, build_plan_skeleton, projection_window, race_default_rpe, select_race_strategy
@@ -18,6 +20,9 @@ from src.domain.agent_runtime import (
     SafetyDecision,
 )
 from src.domain.training_plan import workout_purpose_zh
+
+
+logger = logging.getLogger(__name__)
 
 
 PRODUCT_RUN_METADATA_KEYS = (
@@ -258,6 +263,10 @@ class RunningCompanionAgent:
                 source_summary=input_summary,
             )
         )
+        logger.info(
+            "agent run started run_id=%s workflow=%s trigger_type=%s provider=%s model=%s",
+            run.id, workflow_name, run.trigger_type, run.provider, run.model,
+        )
         return run
 
     def _run_model_workflow(
@@ -281,7 +290,25 @@ class RunningCompanionAgent:
                 transaction = self._transaction_factory if repair_validation_once else nullcontext
                 # Roll back a failed generation attempt before logging or repairing it.
                 with transaction():
-                    response = self._model_gateway.complete(request)
+                    model_started = time.monotonic()
+                    logger.info(
+                        "agent model call started run_id=%s workflow=%s repair_attempted=%s",
+                        run.id, request.workflow_name, repair_attempted,
+                    )
+                    try:
+                        response = self._model_gateway.complete(request)
+                    except Exception as exc:
+                        logger.warning(
+                            "agent model call failed run_id=%s workflow=%s error_type=%s duration_ms=%s",
+                            run.id, request.workflow_name, type(exc).__name__,
+                            round((time.monotonic() - model_started) * 1000),
+                        )
+                        raise
+                    logger.info(
+                        "agent model call finished run_id=%s workflow=%s tool_calls=%s duration_ms=%s",
+                        run.id, request.workflow_name, len(response.tool_calls),
+                        round((time.monotonic() - model_started) * 1000),
+                    )
                     run = _merge_model_metadata(run, response)
                     token_usage = _sum_token_usage(token_usage, response.token_usage)
                     tool_results = []
@@ -328,7 +355,25 @@ class RunningCompanionAgent:
                             context={**(request.context or {}), "tool_results": tool_results},
                             require_tool_call=True,
                         )
-                        response = self._model_gateway.complete(follow_up)
+                        model_started = time.monotonic()
+                        logger.info(
+                            "agent follow-up model call started run_id=%s workflow=%s",
+                            run.id, request.workflow_name,
+                        )
+                        try:
+                            response = self._model_gateway.complete(follow_up)
+                        except Exception as exc:
+                            logger.warning(
+                                "agent follow-up model call failed run_id=%s workflow=%s error_type=%s duration_ms=%s",
+                                run.id, request.workflow_name, type(exc).__name__,
+                                round((time.monotonic() - model_started) * 1000),
+                            )
+                            raise
+                        logger.info(
+                            "agent follow-up model call finished run_id=%s workflow=%s tool_calls=%s duration_ms=%s",
+                            run.id, request.workflow_name, len(response.tool_calls),
+                            round((time.monotonic() - model_started) * 1000),
+                        )
                         run = _merge_model_metadata(run, response)
                         token_usage = _sum_token_usage(token_usage, response.token_usage)
                         (
@@ -357,14 +402,23 @@ class RunningCompanionAgent:
                     completed_run = run
                     if training_plan_id:
                         completed_run = _with_created_training_plan_id(run, training_plan_id)
-                    return self._run_store.complete_run(
+                    result = self._run_store.complete_run(
                         completed_run.complete(
                             output_summary=output_summary,
                             token_usage=token_usage,
                             recommendation_id=recommendation_id,
                         )
                     )
+                logger.info(
+                    "agent run finished run_id=%s workflow=%s status=%s recommendation_id=%s training_plan_id=%s",
+                    run.id, request.workflow_name, result.status, recommendation_id, training_plan_id,
+                )
+                return result
             except Exception as exc:
+                logger.warning(
+                    "agent run attempt failed run_id=%s workflow=%s error_type=%s repair_attempted=%s",
+                    run.id, request.workflow_name, type(exc).__name__, repair_attempted,
+                )
                 if repair_validation_once:
                     training_plan_id = None
                 self._run_store.record_step(
@@ -380,6 +434,7 @@ class RunningCompanionAgent:
                 sequence_number += 1
                 if repair_validation_once and not repair_attempted and isinstance(exc, ValueError):
                     repair_attempted = True
+                    logger.info("agent run repairing run_id=%s workflow=%s", run.id, request.workflow_name)
                     request = _repair_request(request, exc)
                     continue
                 if (
@@ -391,6 +446,7 @@ class RunningCompanionAgent:
                         or isinstance((request.context or {}).get("preserved_generation"), dict)
                     )
                 ):
+                    logger.info("agent run fallback started run_id=%s workflow=%s", run.id, request.workflow_name)
                     fallback = self._run_fallback_training_plan(
                         run=run,
                         request=request,
@@ -399,13 +455,22 @@ class RunningCompanionAgent:
                         token_usage=token_usage,
                     )
                     if fallback is not None:
+                        logger.info(
+                            "agent run fallback finished run_id=%s workflow=%s status=%s",
+                            run.id, request.workflow_name, fallback.status,
+                        )
                         return fallback
-                return self._run_store.fail_run(
+                result = self._run_store.fail_run(
                     run.fail(
                         error_type=exc.__class__.__name__,
                         error_message=str(exc),
                     )
                 )
+                logger.error(
+                    "agent run finished run_id=%s workflow=%s status=%s error_type=%s",
+                    run.id, request.workflow_name, result.status, type(exc).__name__,
+                )
+                return result
 
     def _run_tool_calls(
         self,
@@ -423,6 +488,10 @@ class RunningCompanionAgent:
         tool_results = []
         for tool_call in response.tool_calls:
             if tool_call.tool_name not in allowed_tools:
+                logger.warning(
+                    "agent tool blocked run_id=%s tool=%s reason=unauthorized",
+                    run.id, tool_call.tool_name,
+                )
                 self._run_store.record_step(
                     AgentRunStep(
                         agent_run_id=run.id,
@@ -438,6 +507,10 @@ class RunningCompanionAgent:
                 sequence_number += 1
                 continue
             if safety is not None and _blocked_by_safety(safety, tool_call.tool_name, tool_call.arguments):
+                logger.warning(
+                    "agent tool blocked run_id=%s tool=%s reason=safety",
+                    run.id, tool_call.tool_name,
+                )
                 self._run_store.record_step(
                     AgentRunStep(
                         agent_run_id=run.id,
@@ -458,7 +531,21 @@ class RunningCompanionAgent:
             arguments.setdefault("agent_run_id", run.id)
             if tool_call.tool_name == "createTrainingPlan":
                 _inject_training_plan_trusted_context(arguments, request_context or {})
-            payload = tool.run(user_id=user_id, arguments=arguments)
+            tool_started = time.monotonic()
+            logger.info("agent tool started run_id=%s tool=%s", run.id, tool_call.tool_name)
+            try:
+                payload = tool.run(user_id=user_id, arguments=arguments)
+            except Exception as exc:
+                logger.warning(
+                    "agent tool failed run_id=%s tool=%s error_type=%s duration_ms=%s",
+                    run.id, tool_call.tool_name, type(exc).__name__,
+                    round((time.monotonic() - tool_started) * 1000),
+                )
+                raise
+            logger.info(
+                "agent tool finished run_id=%s tool=%s duration_ms=%s",
+                run.id, tool_call.tool_name, round((time.monotonic() - tool_started) * 1000),
+            )
             tool_results.append(
                 {
                     "tool_name": tool_call.tool_name,

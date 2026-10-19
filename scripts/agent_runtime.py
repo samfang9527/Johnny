@@ -68,6 +68,8 @@ def schedule_once(session: Session, *, now: datetime | None = None) -> int:
     if instant.tzinfo is None or instant.utcoffset() is None:
         raise ValueError("schedule_once requires a timezone-aware instant")
     instant = instant.astimezone(timezone.utc)
+    started = time.monotonic()
+    logger.info("agent scheduler started instant=%s", instant.isoformat())
     before = _task_count(session)
     handler = _queue_handler(session)
     coaching = SqlAlchemyCoachingRepository(session)
@@ -97,12 +99,16 @@ def schedule_once(session: Session, *, now: datetime | None = None) -> int:
             task_type=COACHING_SYNC_TASK_TYPE,
             reuse_terminal=True,
         )
+        logger.info(
+            "agent scheduler review task task_id=%s run_id=%s user_id=%s date=%s status=%s",
+            queued.task.id, queued.run.id, user.id, local_date, queued.task.status,
+        )
         if queued.run.status == "queued":
             slot = coaching.get_review_slot(user.id, local_date)
             if slot is None or slot["reserved_run_id"] != queued.run.id:
                 coaching.reserve_review(user.id, local_date, timezone_name, queued.run.id)
     anchor = instant.date()
-    SqlAlchemyAgentTaskQueue(session).enqueue(
+    daily_check = SqlAlchemyAgentTaskQueue(session).enqueue(
         TaskEnvelope(
             task_type=TRAINING_PLAN_DAILY_CHECK_TASK_TYPE,
             payload={"anchor_date": anchor.isoformat()},
@@ -110,7 +116,13 @@ def schedule_once(session: Session, *, now: datetime | None = None) -> int:
             idempotency_key=f"training-plan.daily-check:{anchor.isoformat()}",
         )
     )
-    return _task_count(session) - before
+    enqueued = _task_count(session) - before
+    logger.info(
+        "agent scheduler finished instant=%s daily_check_task_id=%s daily_check_status=%s enqueued=%s duration_ms=%s",
+        instant.isoformat(), daily_check.id, daily_check.status, enqueued,
+        round((time.monotonic() - started) * 1000),
+    )
+    return enqueued
 
 
 def _due_local_date(now: datetime, timezone_name: str) -> date | None:
