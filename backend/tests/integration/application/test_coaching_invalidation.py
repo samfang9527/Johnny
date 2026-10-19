@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -69,6 +69,97 @@ def test_noop_sync_does_not_invalidate_either_stream():
     assert effects.invalidated_advice_ids == ()
     assert store.get_review_slot("noop-athlete", today)["freshness"] == "current"
     assert store.get_advice_slot("noop-athlete", today, "no-workout")["freshness"] == "current"
+    scope.close()
+
+
+def test_today_health_change_does_not_correct_older_reviews():
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "dated-health-athlete"}
+    client.get("/api/v1/johnny/overview", headers=headers)
+    scope = client.app.dependency_overrides[get_session]()
+    session = next(scope)
+    today = date(2026, 10, 19)
+    store = SqlAlchemyCoachingRepository(session)
+    for publication_date in (date(2026, 10, 17), date(2026, 10, 18)):
+        review = store.reserve_review("dated-health-athlete", publication_date, "Asia/Taipei", "initial-run")
+        assert store.publish_review(review, {
+            "narrative": "Earlier review",
+            "coverage": {"covered_dates": [
+                f"2026-10-{day:02d}" for day in range(10, publication_date.day)
+            ]},
+        })
+    advice = store.reserve_advice("dated-health-athlete", today, "no-workout", "advice-run", {})
+    assert store.publish_advice(advice, {"guidance": "Today's advice"}, None)
+    session.commit()
+
+    summary = SyncSummary.from_payload({
+        "resources": {"stress": {"stored": 1}, "body_battery": {"stored": 1}},
+        "stored_dates": {"stress": ["2026-10-19"], "body_battery": ["2026-10-19"]},
+        "activity_coverage": {
+            "starts_on": "2026-09-20", "ends_on": "2026-10-19",
+            "timezone_name": "Asia/Taipei", "pagination_complete": True, "skipped_count": 0,
+        },
+    })
+    effects = CoachingRefreshService(session).record_sync(
+        user_id="dated-health-athlete", summary=summary, today=today,
+        timezone_name="Asia/Taipei", exclude_review_date=today,
+    )
+
+    assert effects.review_run_ids == ()
+    assert len(effects.invalidated_advice_ids) == 1
+    assert session.scalars(select(AgentTaskModel)).all() == []
+    for publication_date in (date(2026, 10, 17), date(2026, 10, 18)):
+        assert store.get_review_slot("dated-health-athlete", publication_date)["freshness"] == "current"
+    scope.close()
+
+
+def test_prior_day_health_change_corrects_only_review_covering_that_date():
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "prior-health-athlete"}
+    client.get("/api/v1/johnny/overview", headers=headers)
+    scope = client.app.dependency_overrides[get_session]()
+    session = next(scope)
+    store = SqlAlchemyCoachingRepository(session)
+    for publication_date in (date(2026, 10, 17), date(2026, 10, 18)):
+        review = store.reserve_review("prior-health-athlete", publication_date, "Asia/Taipei", "initial-run")
+        assert store.publish_review(review, {"narrative": "Earlier review"})
+    session.commit()
+
+    summary = SyncSummary.from_payload({
+        "resources": {"stress": {"stored": 1}},
+        "stored_dates": {"stress": ["2026-10-17"]},
+    })
+    effects = CoachingRefreshService(session).record_sync(
+        user_id="prior-health-athlete", summary=summary, today=date(2026, 10, 19),
+        timezone_name="Asia/Taipei",
+    )
+
+    assert len(effects.review_run_ids) == 1
+    task = session.scalars(select(AgentTaskModel)).one()
+    assert task.payload["input"]["publication_date"] == "2026-10-18"
+    assert store.get_review_slot("prior-health-athlete", date(2026, 10, 17))["freshness"] == "current"
+    scope.close()
+
+
+def test_undated_evidence_change_keeps_conservative_review_correction():
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "undated-evidence-athlete"}
+    client.get("/api/v1/johnny/overview", headers=headers)
+    scope = client.app.dependency_overrides[get_session]()
+    session = next(scope)
+    store = SqlAlchemyCoachingRepository(session)
+    review = store.reserve_review("undated-evidence-athlete", date(2026, 10, 18), "Asia/Taipei", "initial-run")
+    assert store.publish_review(review, {"narrative": "Earlier review"})
+    session.commit()
+
+    effects = CoachingRefreshService(session).record_sync(
+        user_id="undated-evidence-athlete",
+        summary=SyncSummary.empty().record_stored("heart_rate_zones"),
+        today=date(2026, 10, 19), timezone_name="Asia/Taipei",
+    )
+
+    assert len(effects.review_run_ids) == 1
+    assert store.get_review_slot("undated-evidence-athlete", date(2026, 10, 18))["freshness"] == "stale"
     scope.close()
 
 

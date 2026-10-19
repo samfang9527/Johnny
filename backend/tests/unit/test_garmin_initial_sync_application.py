@@ -109,6 +109,8 @@ def test_repeated_garmin_evidence_does_not_report_unchanged_health_or_targets_as
         "user-1", "conn-1", "heart_rate_zones", ({"profiles": {"easy": [125, 145]}},), SyncSummary.empty())
 
     assert first_health.resources["hrv"]["stored"] == 1
+    assert first_health.to_payload()["stored_dates"] == {"hrv": ["2027-01-01"]}
+    assert SyncSummary.from_payload(first_health.to_payload()).stored_dates == {"hrv": ("2027-01-01",)}
     assert repeated_health.resources["hrv"]["stored"] == 0
     assert changed_health.resources["hrv"]["stored"] == 1
     assert first_target.resources["heart_rate_zones"]["stored"] == 1
