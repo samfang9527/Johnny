@@ -12,6 +12,7 @@ import {
   disconnectIntegrationConnection,
   discussRecommendation,
   getAgentRun,
+  listAgentRuns,
   getAthleteProfile,
   getCurrentUser,
   getGoogleSignInRedirectUrl,
@@ -40,6 +41,8 @@ import RaceGoalModal from './components/RaceGoalModal.vue'
 import RecommendationActions from './components/RecommendationActions.vue'
 import StatusBadge from './components/StatusBadge.vue'
 import TrainingPlanRegenerationSheet from './components/TrainingPlanRegenerationSheet.vue'
+import ActivityCenter from './components/ActivityCenter.vue'
+import { useActivityCenter, type ActivityWorkflow } from './composables/useActivityCenter'
 import { vMotionDetails } from './motionDetails'
 import { formatRaceDistance, formatRacePriority } from './raceGoalForm'
 import {
@@ -150,6 +153,14 @@ function viewFromHash(): ViewKey | undefined {
 }
 
 const activeView = ref<ViewKey>(props.initialView ?? viewFromHash() ?? 'today')
+const activityCenter = useActivityCenter()
+const activityRefreshError = ref(false)
+const johnnyActivityNavigation = ref<{ tab: 'advice' | 'review'; version: number } | undefined>()
+let activityPollTimer: ReturnType<typeof setTimeout> | undefined
+let activityToastTimer: ReturnType<typeof setTimeout> | undefined
+let activityPollVersion = 0
+let activityPollInFlight = false
+const syncStartBaselines = new Map<string, string | null>()
 const busyAction = ref('')
 const recommendationStatus = ref(fixtureRecommendation.status)
 const apiRaceSummary = ref<RaceSummary | null>(null)
@@ -268,6 +279,18 @@ const documentTitleLabel = computed(() => {
 })
 watch(documentTitleLabel, updateDocumentTitle, { immediate: true })
 const isAuthenticated = computed(() => authStatus.value === 'authenticated')
+watch(() => authStatus.value, status => {
+  if (status === 'authenticated' && shouldRequireAuth()) {
+    void refreshActivityCenter()
+  } else {
+    stopActivityPolling()
+    activityCenter.clear()
+  }
+})
+watch(activityCenter.currentToast, toast => {
+  if (activityToastTimer) clearTimeout(activityToastTimer)
+  if (toast) activityToastTimer = setTimeout(() => activityCenter.dismissToast(), toast.tone === 'danger' ? 10_000 : 6_000)
+})
 const hasActiveDataProvider = computed(() =>
   Boolean(garminConnection.value && garminConnection.value.status !== 'disconnected' && garminConnection.value.credential_status !== 'deleted'),
 )
@@ -1007,6 +1030,8 @@ async function handleGoogleSignIn() {
 
 async function handleSignOut() {
   stopPlanRegenerationObservation()
+  stopActivityPolling()
+  activityCenter.clear()
   await signOut()
   currentUser.value = null
   authStatus.value = shouldRequireAuth() ? 'anonymous' : 'authenticated'
@@ -1015,6 +1040,8 @@ async function handleSignOut() {
 function handleSessionExpiry(error: unknown): boolean {
   if (shouldRequireAuth() && error instanceof ApiRequestError && error.status === 401) {
     stopPlanRegenerationObservation()
+    stopActivityPolling()
+    activityCenter.clear()
     currentUser.value = null
     authStatus.value = 'anonymous'
     authError.value = '登入已過期，請重新登入。'
@@ -1032,6 +1059,81 @@ function showView(view: ViewKey) {
   activeView.value = view
   if (typeof window !== 'undefined') {
     window.history.replaceState(null, '', `#${view}`)
+  }
+}
+
+function handleActivityNavigate(view: ViewKey, workflow: ActivityWorkflow) {
+  if (view === 'johnny') {
+    johnnyActivityNavigation.value = { tab: workflow === 'daily_review' ? 'review' : 'advice',
+      version: (johnnyActivityNavigation.value?.version ?? 0) + 1 }
+  }
+  showView(view)
+}
+
+function handleJohnnyRunObserved(runId: string, workflow: 'daily_review' | 'workout_advice') {
+  activityCenter.registerRun(runId, workflow)
+  void refreshActivityCenter()
+}
+
+function scheduleActivityRefresh(version: number) {
+  if (isUnmounted || version !== activityPollVersion || !shouldRequireAuth() || !isAuthenticated.value) return
+  if (activityPollTimer) clearTimeout(activityPollTimer)
+  activityPollTimer = setTimeout(() => { void refreshActivityCenter() }, activityCenter.activeCount.value ? 6_000 : 60_000)
+}
+
+function stopActivityPolling() {
+  activityPollVersion += 1
+  if (activityPollTimer) clearTimeout(activityPollTimer)
+  activityPollTimer = undefined
+  activityPollInFlight = false
+  syncStartBaselines.clear()
+}
+
+async function refreshActivityCenter() {
+  if (isUnmounted || !shouldRequireAuth() || !isAuthenticated.value || activityPollInFlight) return
+  activityPollInFlight = true
+  const version = activityPollVersion
+  try {
+    const result = await listAgentRuns()
+    if (isUnmounted || version !== activityPollVersion) return
+    activityCenter.applyRuns(Array.isArray(result.data) ? result.data : [])
+    const activePlanRun = activityCenter.tasks.value.find(item => item.workflow === 'training_plan_generation'
+      && (item.status === 'queued' || item.status === 'running'))
+    if (activePlanRun && !inFlightPlanRegeneration.value) {
+      observePlanRegeneration({ run_id: activePlanRun.id, status: activePlanRun.status,
+        workflow_name: 'training_plan_generation', poll_url: `/api/v1/agent-runs/${activePlanRun.id}` })
+    }
+    if (providerBusy.value !== 'sync' && activityCenter.tasks.value.some(item => item.workflow === 'garmin_sync' && item.status === 'running')) {
+      const connections = await listIntegrationConnections()
+      if (isUnmounted || version !== activityPollVersion) return
+      const connection = connections.data.find(item => item.provider === 'garmin_connect')
+      if (connection) {
+        garminConnection.value = connection
+        if (connection.sync_status !== 'running') {
+          const baseline = syncStartBaselines.get(connection.id)
+          const didNotStart = baseline !== undefined && baseline === (connection.last_sync_started_at ?? null)
+          const result = connection.sync_status === 'failed' || didNotStart ? 'failed'
+            : connection.has_partial_failures ? 'partial' : 'completed'
+          activityCenter.finishSync(connection.id, result)
+          syncStartBaselines.delete(connection.id)
+          void refreshGarminTrainingEvidence()
+          sessionReviewsRefreshKey.value += 1
+          void refreshCalendarPayloads(todayIsoDate.value)
+          if (providerError.value === '暫時無法確認 Garmin 同步結果，Johnny 會再檢查狀態。') {
+            providerError.value = ''
+            providerMessage.value = result === 'failed' ? '' : result === 'partial'
+              ? 'Garmin 手動同步完成，部分資料需要處理。' : 'Garmin 手動同步完成'
+          }
+        }
+      }
+    }
+    activityRefreshError.value = false
+  } catch (error) {
+    if (isUnmounted || version !== activityPollVersion) return
+    if (!handleSessionExpiry(error)) activityRefreshError.value = true
+  } finally {
+    activityPollInFlight = false
+    scheduleActivityRefresh(version)
   }
 }
 
@@ -1216,17 +1318,24 @@ async function syncGarminConnection(connection: IntegrationConnectionResponse) {
   providerMessage.value = ''
   pendingDisconnectConnectionId.value = ''
   providerBusy.value = 'sync'
+  syncStartBaselines.set(connection.id, connection.last_sync_started_at ?? null)
+  activityCenter.startSync(connection.id)
   try {
     const response = await syncIntegrationConnection(connection.id)
     garminConnection.value = response.data
     await refreshGarminTrainingEvidence()
     sessionReviewsRefreshKey.value += 1
     providerMessage.value = response.data.has_partial_failures ? 'Garmin 手動同步完成，部分資料需要處理。' : 'Garmin 手動同步完成'
+    activityCenter.finishSync(connection.id, response.data.has_partial_failures ? 'partial' : 'completed')
+    syncStartBaselines.delete(connection.id)
     await refreshCalendarPayloads(todayIsoDate.value)
     if (response.data.daily_advice_run) observeDailyAdviceRun(response.data.daily_advice_run.run_id)
   } catch (error) {
     if (!handleSessionExpiry(error)) {
-      providerError.value = error instanceof ApiRequestError && error.status === 409 ? 'Garmin 同步已在進行中，請稍後再試。' : 'Garmin 手動同步失敗。請稍後再試。'
+      providerError.value = error instanceof ApiRequestError && error.status === 409
+        ? 'Garmin 同步已在進行中，請稍後再試。'
+        : '暫時無法確認 Garmin 同步結果，Johnny 會再檢查狀態。'
+      void refreshActivityCenter()
       await refreshCalendarPayloads(todayIsoDate.value)
     }
   } finally {
@@ -1656,6 +1765,8 @@ function observePlanRegeneration(run: TrainingPlanRegenerationRun) {
   clearPlanRegenerationPollTimer()
   planRegenerationObservation += 1
   inFlightPlanRegeneration.value = run
+  activityCenter.registerRun(run.run_id, 'training_plan_generation')
+  void refreshActivityCenter()
   planRegenerationPollAttempts = 0
   schedulePlanRegenerationPoll(run.run_id, planRegenerationObservation)
 }
@@ -1869,15 +1980,19 @@ async function handleInboxDiscuss(item: InboxRecommendation) {
 onMounted(() => {
   calendarTimer = setInterval(refreshCalendarDate, 60_000)
   window.addEventListener('focus', refreshCalendarDate)
+  window.addEventListener('focus', refreshActivityCenter)
   void initializeAuth()
 })
 
 onUnmounted(() => {
   isUnmounted = true
   stopPlanRegenerationObservation()
+  stopActivityPolling()
   clearInterval(calendarTimer)
   if (raceSuccessTimer) clearTimeout(raceSuccessTimer)
+  if (activityToastTimer) clearTimeout(activityToastTimer)
   window.removeEventListener('focus', refreshCalendarDate)
+  window.removeEventListener('focus', refreshActivityCenter)
 })
 
 function refreshCalendarDate() {
@@ -2227,6 +2342,15 @@ function applyIntegrationsPayload(connections: IntegrationConnectionResponse[]) 
   const garmin = connections.find((connection) => connection.provider === 'garmin_connect')
   if (garmin) {
     garminConnection.value = garmin
+    if (garmin.sync_status === 'running') {
+      activityCenter.startSync(garmin.id)
+      void refreshActivityCenter()
+    } else if (providerBusy.value !== 'sync' && activityCenter.tasks.value.some(item => item.id === `sync:${garmin.id}` && item.status === 'running')) {
+      const baseline = syncStartBaselines.get(garmin.id)
+      const didNotStart = baseline !== undefined && baseline === (garmin.last_sync_started_at ?? null)
+      activityCenter.finishSync(garmin.id, garmin.sync_status === 'failed' || didNotStart ? 'failed' : garmin.has_partial_failures ? 'partial' : 'completed')
+      syncStartBaselines.delete(garmin.id)
+    }
   }
 }
 
@@ -2961,6 +3085,9 @@ function shouldRequireAuth(): boolean {
         <div class="brand-lockup">
           <h1>Johnny<span>Running</span></h1>
         </div>
+        <ActivityCenter :tasks="activityCenter.tasks.value" :active-count="activityCenter.activeCount.value"
+          :toast="activityCenter.currentToast.value" :refresh-error="activityRefreshError"
+          @navigate="handleActivityNavigate" @dismiss-toast="activityCenter.dismissToast" @refresh="refreshActivityCenter" />
         <nav class="top-nav" aria-label="主要導覽">
           <button
             v-for="item in navItems"
@@ -3177,7 +3304,7 @@ function shouldRequireAuth(): boolean {
 
           <article v-if="inFlightPlanRegeneration" class="state-panel" data-testid="training-plan-regeneration-in-flight" aria-live="polite">
             <p class="section-label">計畫更新中</p>
-            <h3>正在重新產生訓練計畫</h3>
+            <h3 class="activity-inline-status">正在重新產生訓練計畫</h3>
             <p>目前課表會繼續保留，完成後才會顯示新的安排。</p>
           </article>
 
@@ -3365,7 +3492,8 @@ function shouldRequireAuth(): boolean {
 
       </section>
 
-      <JohnnyPage v-else-if="activeView === 'johnny'" :time-zone="userTimezone" @decision="hydrateFromBackend" @navigate-today="showView('today')" />
+      <JohnnyPage v-else-if="activeView === 'johnny'" :time-zone="userTimezone" :activity-navigation="johnnyActivityNavigation"
+        @decision="hydrateFromBackend" @navigate-today="showView('today')" @run-observed="handleJohnnyRunObserved" />
 
       <section v-else-if="activeView === 'conversation'" class="page-stack" aria-labelledby="conversation-title">
         <div class="page-heading">

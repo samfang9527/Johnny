@@ -10,6 +10,7 @@
 | Confirmation Dialog | Reusable `ConfirmDialog` component in `frontend/src/components/ConfirmDialog.vue` | `DESIGN.md` Forms and overlays | discard confirmation, provider disconnect, race deletion | component test, premium audit |
 | Scrollbar | Global application stylesheet in `frontend/src/styles.css` | `DESIGN.md` token mapping and CSS custom properties | global baseline | token verifier, premium audit |
 | Button | Reusable `AppButton` component in `frontend/src/components/AppButton.vue` | `DESIGN.md` Components | primary, neutral, warning, danger | component test, build |
+| Background work and toast | Shared `ActivityCenter` in the application shell, with task state from `useActivityCenter` | `DESIGN.md` Motion and the workflow rules below | plan generation, Daily Review, Workout Advice, Garmin sync | component and flow tests, build |
 
 ## Workflow Rules
 
@@ -60,6 +61,9 @@
 - Empty, loading, and error states keep the same page footprint where possible.
 - Important values wrap instead of clipping on narrow viewports.
 - No product flow calls browser-native `alert()`, `confirm()`, or `prompt()`.
+- Long-running work keeps a named status beside its initiating action and in the app-wide `工作狀態` control. The control shows one task name or an active count and opens a list with truthful queued/running/completed/failed states and a route to the result. It does not show a fabricated percentage.
+- Completion and failure show a brief app-wide toast with a result link. The destination keeps the result or actionable error after the toast disappears. The activity list restores server-backed run state after reload and never announces old completed runs as new successes.
+- Web background work does not request browser notification permission or send device notifications. The app-wide control is in the top bar on desktop and above the five-item navigation on narrow screens.
 
 ## Target race management
 

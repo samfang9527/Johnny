@@ -178,6 +178,7 @@ export interface AgentRunResponse {
   status: string
   workflow_name: string
   finished_at: string | null
+  trigger_type?: string
   training_review_id?: string | null
   workout_advice_id?: string | null
   result_state?: string | null

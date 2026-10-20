@@ -178,7 +178,7 @@ Copy 原則：
 - `運動員`: Athlete Baseline snapshot first, profile/settings below. Athlete Memory is not a browsable frontend page.
 - `資料`: Signal Coverage first, provider connection details below.
 
-Mobile 使用固定底部 navigation，label 為 `今日`、`計畫`、`Johnny`、`運動員`、`資料`。Desktop 使用 compact side rail。兩者都以文字與形狀標示目前頁面，並為底部安全區留足內容空間。
+Mobile 使用固定底部 navigation，label 為 `今日`、`計畫`、`Johnny`、`運動員`、`資料`。Desktop 使用 12rem side rail；帳號名稱可以換行，登出按鈕保持單行且不縮小。兩者都以文字與形狀標示目前頁面，並為底部安全區留足內容空間。
 
 Today mobile follows the Split Board reading order:
 
@@ -239,6 +239,8 @@ Use lucide-style outline icons if an icon library is introduced; otherwise keep 
 ### Motion
 
 Motion should feel like a training state change: short, useful, and stateful. Control and selection feedback uses a shared 140 ms rhythm; inline previews, native disclosures, and overlays enter within 240 ms and leave within 180 ms. The seven-day strip's selected state responds first, then the preview reveals beneath it. Run/Adjust/Rest may use a quick tone shift. Page-to-page transitions are a separate future layer. Respect `prefers-reduced-motion`; no continuous floating backgrounds.
+
+Background work uses a compact amber status mark beside the local status and in the shared top-bar control. A subtle pulse is reserved for active work; text carries the state and remains static under reduced motion. The activity list follows the ruled dark surface vocabulary, while completion toasts may use the permitted raised overlay treatment. On narrow screens, both sit above the fixed navigation rail.
 
 ### Data visualization
 

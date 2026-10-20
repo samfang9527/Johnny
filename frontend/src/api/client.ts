@@ -151,6 +151,10 @@ export function getAgentRun(runId: string): Promise<{ data: AgentRunResponse }> 
   return getJson(`/agent-runs/${encodeURIComponent(runId)}`)
 }
 
+export function listAgentRuns(limit = 50): Promise<{ data: AgentRunResponse[] }> {
+  return getJson(`/agent-runs?limit=${limit}`)
+}
+
 export function getJohnnyOverview(): Promise<{ data: JohnnyOverview }> {
   return getJson('/johnny/overview')
 }

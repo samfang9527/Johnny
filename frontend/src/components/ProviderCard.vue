@@ -128,5 +128,6 @@ function selectProvider() {
         中斷連接
       </AppButton>
     </div>
+    <p v-if="isSyncing" class="activity-inline-status provider-card__activity" role="status">正在同步 Garmin 資料。你可以繼續使用 Johnny。</p>
   </article>
 </template>

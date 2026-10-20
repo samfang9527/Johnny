@@ -2,7 +2,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { getAgentRun, getJohnnyOverview, listJohnnyHistory, requestWorkoutAdvice, retryJohnnyReview } from '../api/client'
 import type { JohnnyAdviceSlot, JohnnyHistoryEntry, JohnnyReviewSlot, WorkoutAdviceConstraints } from '../types'
 
-export function useJohnny() {
+export function useJohnny(onRunObserved?: (runId: string, workflow: 'daily_review' | 'workout_advice') => void) {
   const dailyReview = ref<JohnnyReviewSlot | null>(null)
   const workoutAdvices = ref<JohnnyAdviceSlot[]>([])
   const workoutChoices = ref<Array<{ id: string; display_name: string; workout_type: string; status: string }>>([])
@@ -52,6 +52,7 @@ export function useJohnny() {
       if (slot?.reserved_run_id && ['queued', 'syncing', 'analyzing'].includes(slot.attempt_state)
           && reviewPendingRunId.value !== slot.reserved_run_id) {
         reviewPendingRunId.value = slot.reserved_run_id
+        onRunObserved?.(slot.reserved_run_id, 'daily_review')
         observeRun(slot.reserved_run_id, 'review')
       }
     } catch {
@@ -76,6 +77,7 @@ export function useJohnny() {
         ['queued', 'syncing', 'analyzing'].includes(item.attempt_state))
       if (active?.reserved_run_id && advicePendingRunId.value !== active.reserved_run_id) {
         advicePendingRunId.value = active.reserved_run_id
+        onRunObserved?.(active.reserved_run_id, 'workout_advice')
         observeRun(active.reserved_run_id, 'advice')
       }
     } catch {
@@ -139,6 +141,7 @@ export function useJohnny() {
       const response = await requestWorkoutAdvice({ client_request_id: clientRequestId,
         workout_id: workoutId, constraints })
       advicePendingRunId.value = response.data.run_id
+      onRunObserved?.(response.data.run_id, 'workout_advice')
       observeRun(response.data.run_id, 'advice')
     } catch {
       adviceError.value = '無法取得今日建議。請檢查資料連線或稍後再試。'
@@ -153,6 +156,7 @@ export function useJohnny() {
     try {
       const response = await retryJohnnyReview(dailyReview.value.id)
       reviewPendingRunId.value = response.data.run_id
+      onRunObserved?.(response.data.run_id, 'daily_review')
       observeRun(response.data.run_id, 'review')
     } catch {
       reviewError.value = '無法重新產生每日回顧，請稍後再試。'

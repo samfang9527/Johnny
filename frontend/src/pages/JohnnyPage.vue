@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { acceptRecommendation, rejectRecommendation } from '../api/client'
 import AppButton from '../components/AppButton.vue'
 import RecommendationActions from '../components/RecommendationActions.vue'
 import { useJohnny } from '../composables/useJohnny'
 import type { WorkoutAdviceConstraints } from '../types'
 
-const props = defineProps<{ timeZone: string }>()
-const emit = defineEmits<{ decision: []; navigateToday: [] }>()
-const johnny = useJohnny()
+const props = defineProps<{ timeZone: string; activityNavigation?: { tab: 'advice' | 'review'; version: number } }>()
+const emit = defineEmits<{ decision: []; navigateToday: []; runObserved: [runId: string, workflow: 'daily_review' | 'workout_advice'] }>()
+const johnny = useJohnny((runId, workflow) => emit('runObserved', runId, workflow))
 const selectedWorkoutId = ref('')
 const availableInput = ref('')
 const feeling = ref<'usual' | 'more_tired'>('usual')
@@ -19,7 +19,13 @@ const decidingId = ref('')
 const decidingAction = ref<'accept' | 'keep' | ''>('')
 const decisionError = ref('')
 type JohnnyTab = 'advice' | 'review' | 'history'
-const activeTab = ref<JohnnyTab>('advice')
+const activeTab = ref<JohnnyTab>(props.activityNavigation?.tab ?? 'advice')
+watch(() => props.activityNavigation?.version, () => {
+  if (!props.activityNavigation) return
+  activeTab.value = props.activityNavigation.tab
+  if (props.activityNavigation.tab === 'review') void johnny.refreshReview()
+  else void johnny.refreshAdvice()
+})
 const tabs: JohnnyTab[] = ['advice', 'review', 'history']
 let retryRequestId: string | null = null
 let retryBody = ''
@@ -226,7 +232,7 @@ async function decide(id: string, action: 'accept' | 'keep') {
 
     <section v-show="activeTab === 'advice'" id="johnny-workout-advice" class="johnny-stream johnny-stream--advice" data-testid="johnny-workout-advice" role="tabpanel" aria-labelledby="johnny-tab-advice" tabindex="0">
       <div class="johnny-stream__heading"><h3>今日課表建議</h3></div>
-      <p v-if="johnny.adviceLoading.value || johnny.advicePendingRunId.value" class="johnny-stream__state" role="status">正在分析今天的資料；已有建議會保留。</p>
+      <p v-if="johnny.adviceLoading.value || johnny.advicePendingRunId.value" class="johnny-stream__state activity-inline-status" role="status">正在分析今天的資料；已有建議會保留。</p>
       <p v-if="johnny.adviceError.value" class="johnny-stream__error" role="alert">{{ johnny.adviceError.value }}</p>
       <article v-if="latestAdvice" class="johnny-advice-result">
         <p class="johnny-stream__lead">{{ latestAdvice.guidance }}</p>
@@ -271,7 +277,7 @@ async function decide(id: string, action: 'accept' | 'keep') {
         <h3>訓練回顧</h3>
         <span v-if="johnny.dailyReview.value?.current" class="data-chip">{{ johnny.dailyReview.value.current.reviewed_date }}</span>
       </div>
-      <p v-if="johnny.reviewLoading.value || johnny.reviewPendingRunId.value" class="johnny-stream__state" role="status">正在更新每日回顧，先保留上次結果。</p>
+      <p v-if="johnny.reviewLoading.value || johnny.reviewPendingRunId.value" class="johnny-stream__state activity-inline-status" role="status">正在更新每日回顧，先保留上次結果。</p>
       <p v-if="johnny.reviewError.value" class="johnny-stream__error" role="alert">{{ johnny.reviewError.value }}</p>
       <template v-if="johnny.dailyReview.value?.current">
         <p class="johnny-stream__lead">{{ johnny.dailyReview.value.current.narrative }}</p>
