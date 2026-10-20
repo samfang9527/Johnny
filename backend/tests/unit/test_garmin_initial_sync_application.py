@@ -21,7 +21,8 @@ def test_garmin_initial_sync_imports_each_resource_with_independent_cursors_and_
     outbox = _FakeOutboxStore()
     adapter = _FakeGarminResourceAdapter(
         results={
-            "activities": GarminResourceFetchResult(items=[{"id": "activity-1"}], cursor={"after": "activity-1"}),
+            "activities": GarminResourceFetchResult(
+                items=[{"id": "activity-1"}], cursor={"after": "activity-1"}, pagination_complete=True),
             "sleep": GarminResourceFetchResult(items=[{"date": "2027-01-01", "kind": "sleep"}], cursor={"date": "2027-01-01"}),
             "hrv": GarminResourceFetchResult(items=[{"date": "2027-01-01", "kind": "hrv"}], cursor={"date": "2027-01-01"}),
             "resting_heart_rate": GarminResourceFetchResult(
@@ -53,6 +54,7 @@ def test_garmin_initial_sync_imports_each_resource_with_independent_cursors_and_
     payload = summary.to_payload()["resources"]
     assert payload["activities"]["fetched"] == 1
     assert payload["activities"]["stored"] == 1
+    assert summary.to_payload()["stored_dates"]["activities"] == ["2027-01-10"]
     assert payload["sleep"]["stored"] == 1
     assert payload["hrv"]["stored"] == 1
     assert payload["resting_heart_rate"]["stored"] == 1
@@ -64,14 +66,15 @@ def test_garmin_initial_sync_imports_each_resource_with_independent_cursors_and_
     assert adapter.calls[0]["timezone_name"] == "Asia/Taipei"
     assert adapter.calls[0]["start_date"] == date(2027, 1, 2)
     assert adapter.calls[0]["end_date"] == date(2027, 1, 31)
+    checkpoint = {"start_date": "2027-01-02", "end_date": "2027-01-31", "timezone_name": "Asia/Taipei"}
     assert integrations.advanced_cursors == {
-        "activities": {"after": "activity-1"},
-        "sleep": {"date": "2027-01-01"},
-        "hrv": {"date": "2027-01-01"},
-        "resting_heart_rate": {"date": "2027-01-01"},
-        "stress": {"date": "2027-01-01"},
-        "heart_rate_zones": {},
-        "lactate_threshold": {},
+        "activities": {**checkpoint, "after": "activity-1"},
+        "sleep": {**checkpoint, "date": "2027-01-01"},
+        "hrv": {**checkpoint, "date": "2027-01-01"},
+        "resting_heart_rate": {**checkpoint, "date": "2027-01-01"},
+        "stress": {**checkpoint, "date": "2027-01-01"},
+        "heart_rate_zones": checkpoint,
+        "lactate_threshold": checkpoint,
     }
     assert "body_battery" not in integrations.advanced_cursors
     assert [metric.metric_date for metric in activities.health] == [date(2027, 1, 1)] * 4
@@ -151,7 +154,7 @@ def test_garmin_initial_sync_falls_back_to_garmin_profile_timezone_then_utc() ->
 def test_garmin_initial_sync_records_empty_successful_resource_cursors_and_uses_valid_timezone_fallback() -> None:
     integrations = _FakeIntegrationStore(provider_timezone="Not/AZone")
     adapter = _FakeGarminResourceAdapter(
-        results={resource: GarminResourceFetchResult() for resource in GARMIN_SYNC_RESOURCES}
+        results={resource: GarminResourceFetchResult(pagination_complete=True) for resource in GARMIN_SYNC_RESOURCES}
     )
 
     summary = GarminInitialSyncHandler(
@@ -172,7 +175,8 @@ def test_garmin_initial_sync_records_empty_successful_resource_cursors_and_uses_
     )
 
     assert set(integrations.advanced_cursors) == set(GARMIN_SYNC_RESOURCES)
-    assert all(cursor == {} for cursor in integrations.advanced_cursors.values())
+    assert all(cursor == {"start_date": "2027-01-02", "end_date": "2027-01-31", "timezone_name": "UTC"}
+               for cursor in integrations.advanced_cursors.values())
     assert {call["timezone_name"] for call in adapter.calls} == {"UTC"}
     assert all(summary.to_payload()["resources"][resource]["failed"] == 0 for resource in GARMIN_SYNC_RESOURCES)
 
@@ -254,7 +258,9 @@ def test_garmin_initial_sync_skips_empty_supported_health_metric_records_and_log
     assert payload["fetched"] == 2
     assert payload["stored"] == 0
     assert payload["failed"] == 0
-    assert integrations.advanced_cursors["resting_heart_rate"] == {"date": "2027-01-02"}
+    assert integrations.advanced_cursors["resting_heart_rate"] == {
+        "date": "2027-01-02", "start_date": "2027-01-02", "end_date": "2027-01-31", "timezone_name": "UTC",
+    }
     assert len(log_calls) == 1
     message, extra = log_calls[0]
     assert message == "Garmin sync skipped provider records"

@@ -1169,6 +1169,33 @@ def test_manual_garmin_sync_endpoint_reports_partial_failure_without_breaking_co
     assert data["sync_summary"]["resources"]["body_battery"]["errors"] == ["Garmin resource sync failed"]
 
 
+def test_manual_sync_can_request_thirty_day_backfill_after_incremental_sync() -> None:
+    from datetime import timedelta
+    from tests.unit.api_test_helpers import create_sqlite_test_client
+    from src.application.integrations import GarminResourceFetchResult
+
+    class WindowFeed:
+        def __init__(self):
+            self.windows = []
+
+        def fetch_resource(self, *, connection, resource_type, start_date, end_date, timezone_name, cursor):
+            self.windows.append((start_date, end_date))
+            return GarminResourceFetchResult(pagination_complete=True)
+
+    client = create_sqlite_test_client()
+    feed = WindowFeed()
+    connected = _connect_api_garmin(
+        client, provider_account_id="garmin-backfill", resource_adapter=feed, with_profile=True)
+    url = f"/api/v1/integrations/connections/{connected['id']}/sync"
+    headers = {"X-Johnny-User-Id": "user-1"}
+    feed.windows.clear()
+    assert client.post(url, headers=headers).status_code == 200
+    assert all(end - start == timedelta(days=3) for start, end in feed.windows)
+    feed.windows.clear()
+    assert client.post(url, params={"full_history": "true"}, headers=headers).status_code == 200
+    assert all(end - start == timedelta(days=29) for start, end in feed.windows)
+
+
 def test_manual_garmin_sync_endpoint_returns_reauth_state_without_fetching() -> None:
     from tests.unit.api_test_helpers import create_sqlite_test_client
 

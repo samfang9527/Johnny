@@ -60,6 +60,7 @@ Users can have only one active sync provider connection at a time. `POST /api/v1
 - Replaced connection rows and imported activity/health records are preserved so historical data keeps provider provenance.
 - `DELETE /api/v1/integrations/connections/{connection_id}` disconnects a Garmin connection, deletes its encrypted credential row, and preserves imported activity/health records.
 - `POST /api/v1/integrations/connections/{connection_id}/admin-token-import` is backend-only and requires `X-Johnny-Admin-Token` matching `JOHNNY_ADMIN_TOKEN`; it stores an encrypted Garmin session payload without returning the raw payload.
+- `POST /api/v1/integrations/connections/{connection_id}/sync` uses independent resource checkpoints: 30 dates initially, then the previous three dates through today, with catch-up after missed syncs. Optional query parameter `full_history=true` requests a 30-date backfill (or the longer outstanding catch-up window). Dates use the athlete's timezone.
 
 ## Route Groups
 

@@ -241,6 +241,7 @@ def sync_connection(
     current_user: CurrentUserDependency,
     session: SessionDependency,
     resource_adapter: GarminResourceAdapter = Depends(get_garmin_resource_adapter),
+    full_history: bool = False,
 ) -> DataEnvelope[IntegrationConnectionResponse]:
     ensure_current_user(session, current_user)
     repository = SqlAlchemyIntegrationRepository(session)
@@ -259,6 +260,7 @@ def sync_connection(
             user_id=current_user.id,
             connection_id=connection.id,
             resource_adapter=resource_adapter,
+            full_history=full_history,
         )
         connection = repository.get_connection_for_user(current_user.id, connection.id) or connection
         daily_advice_run = _queue_daily_advice_after_sync(
@@ -275,6 +277,7 @@ def sync_connection(
             connection_id=connection.id,
             resource_adapter=resource_adapter,
             sync_run_id=sync_run.id,
+            full_history=full_history,
         )
     except GarminIntegrationConfigurationError as exc:
         repository.fail_sync_run(sync_run.id, "Garmin integration is not configured")
@@ -336,6 +339,7 @@ def _run_garmin_sync(
     connection_id: str,
     resource_adapter: GarminResourceAdapter,
     sync_run_id: str | None = None,
+    full_history: bool = False,
 ) -> SyncSummary:
     return GarminInitialSyncHandler(
         normalize_training_evidence=normalize_garmin_training_evidence,
@@ -359,6 +363,7 @@ def _run_garmin_sync(
             connection_id=connection_id,
             as_of=datetime.now(timezone.utc),
             sync_run_id=sync_run_id,
+            full_history=full_history,
         )
     )
 
@@ -430,6 +435,7 @@ def _queue_daily_advice_after_sync(
         user_id=user_id, summary=(sync_run.summary if isinstance(sync_run.summary, SyncSummary)
                                   else SyncSummary.from_payload(sync_run.summary)),
         today=anchor_date, timezone_name=timezone_name,
+        source_sync_run_id=sync_run.id,
     )
     return None
 

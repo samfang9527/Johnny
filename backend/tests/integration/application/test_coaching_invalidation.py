@@ -44,7 +44,7 @@ def test_pairing_change_corrects_only_affected_review_and_stales_advice():
     assert advice_slot["freshness"] == "stale"
     tasks = session.scalars(select(AgentTaskModel)).all()
     assert [task.payload["workflow_name"] for task in tasks] == ["daily_review"]
-    assert tasks[0].task_type == "coaching.sync"
+    assert tasks[0].task_type == "agent.workflow"
     assert tasks[0].payload["input"]["revision_reason"] == "activity_pairing_changed"
     scope.close()
 
@@ -160,6 +160,62 @@ def test_undated_evidence_change_keeps_conservative_review_correction():
 
     assert len(effects.review_run_ids) == 1
     assert store.get_review_slot("undated-evidence-athlete", date(2026, 10, 18))["freshness"] == "stale"
+    scope.close()
+
+
+def test_old_activity_from_long_catch_up_corrects_its_historical_review():
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "old-activity-athlete"}
+    client.get("/api/v1/johnny/overview", headers=headers)
+    scope = client.app.dependency_overrides[get_session]()
+    session = next(scope)
+    today = date(2026, 10, 20)
+    store = SqlAlchemyCoachingRepository(session)
+    old_date = date(2026, 9, 3)
+    reservation = store.reserve_review("old-activity-athlete", old_date, "Asia/Taipei", "prior-run")
+    assert store.publish_review(reservation, {"narrative": "Before catch-up", "coverage": {
+        "covered_dates": [f"2026-09-{day:02d}" for day in range(1, 3)],
+    }})
+    session.commit()
+
+    summary = SyncSummary.from_payload({
+        "resources": {"activities": {"stored": 1}},
+        "stored_dates": {"activities": ["2026-09-02"]},
+        "activity_coverage": {"starts_on": "2026-09-01", "ends_on": "2026-10-20",
+                              "timezone_name": "Asia/Taipei", "pagination_complete": True},
+    })
+    effects = CoachingRefreshService(session).record_sync(
+        user_id="old-activity-athlete", summary=summary, today=today,
+        timezone_name="Asia/Taipei",
+    )
+    assert len(effects.review_run_ids) == 1
+    assert store.get_review_slot("old-activity-athlete", old_date)["freshness"] == "stale"
+    assert session.scalars(select(AgentTaskModel)).one().payload["input"]["publication_date"] == "2026-09-03"
+    scope.close()
+
+
+def test_old_coverage_from_long_catch_up_corrects_uncovered_review():
+    client = create_sqlite_test_client()
+    headers = {"X-Johnny-User-Id": "old-coverage-athlete"}
+    client.get("/api/v1/johnny/overview", headers=headers)
+    scope = client.app.dependency_overrides[get_session]()
+    session = next(scope)
+    old_date = date(2026, 9, 3)
+    store = SqlAlchemyCoachingRepository(session)
+    reservation = store.reserve_review("old-coverage-athlete", old_date, "Asia/Taipei", "prior-run")
+    assert store.publish_review(reservation, {"narrative": "Coverage unknown", "coverage": {"covered_dates": []}})
+    session.commit()
+
+    effects = CoachingRefreshService(session).record_sync(
+        user_id="old-coverage-athlete", today=date(2026, 10, 20), timezone_name="Asia/Taipei",
+        summary=SyncSummary.from_payload({
+            "resources": {"activities": {"stored": 0}},
+            "activity_coverage": {"starts_on": "2026-09-01", "ends_on": "2026-10-20",
+                                  "timezone_name": "Asia/Taipei", "pagination_complete": True},
+        }),
+    )
+    assert len(effects.review_run_ids) == 1
+    assert store.get_review_slot("old-coverage-athlete", old_date)["freshness"] == "stale"
     scope.close()
 
 

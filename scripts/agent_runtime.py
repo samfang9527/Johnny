@@ -621,6 +621,7 @@ def _process_coaching_sync(session: Session, task: AgentTaskModel) -> None:
         CoachingRefreshService(session).record_sync(
             user_id=run.user_id, summary=summary, today=sync_day,
             timezone_name=workflow_input["timezone_name"],
+            source_sync_run_id=saved_sync.id,
             exclude_review_date=(date.fromisoformat(workflow_input["publication_date"])
                                  if run.workflow_name == "daily_review" else None),
         )

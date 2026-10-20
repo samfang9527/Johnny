@@ -28,6 +28,22 @@ GARMIN_TRAINING_RESOURCES = ("heart_rate_zones", "lactate_threshold")
 GARMIN_SYNC_RESOURCES = ("activities", "sleep", "hrv", "resting_heart_rate", "stress", "body_battery", "heart_rate_zones", "lactate_threshold")
 
 
+def _garmin_sync_start_date(end_date: date, cursor: dict | None, timezone_name: str) -> date:
+    """Overlap three completed local dates and catch up from this resource's checkpoint."""
+    initial_start = end_date - timedelta(days=29)
+    if not cursor or cursor.get("timezone_name", timezone_name) != timezone_name:
+        return initial_start
+    try:
+        last_end = date.fromisoformat(cursor["end_date"])
+    except (KeyError, TypeError, ValueError):
+        return initial_start
+    if last_end > end_date:
+        return initial_start
+    # The last fetched date was still in progress. Replay it and the preceding
+    # two dates after a gap; never truncate an outage to the initial 30-day window.
+    return min(end_date - timedelta(days=3), last_end - timedelta(days=2))
+
+
 class ProviderAccountAlreadyConnectedError(ValueError):
     pass
 
@@ -153,6 +169,7 @@ class GarminInitialSyncCommand:
     connection_id: str
     as_of: datetime | None = None
     sync_run_id: str | None = None
+    full_history: bool = False
 
 
 @dataclass(frozen=True)
@@ -398,7 +415,6 @@ class GarminInitialSyncHandler:
             sync_run_id = self._integrations.start_sync_run(connection.id).id
         timezone_name = self._timezone_name(command.user_id, connection)
         end_date = _local_date(command.as_of or datetime.now(timezone.utc), timezone_name)
-        start_date = end_date - timedelta(days=29)
         summary = SyncSummary.empty()
         sync_status = "succeeded"
 
@@ -406,6 +422,9 @@ class GarminInitialSyncHandler:
         for resource_type in GARMIN_SYNC_RESOURCES:
             attempted_resources.add(resource_type)
             cursor = self._integrations.get_resource_cursor(connection.id, resource_type)
+            start_date = _garmin_sync_start_date(end_date, cursor, timezone_name)
+            if command.full_history:
+                start_date = min(start_date, end_date - timedelta(days=29))
             try:
                 result = self._garmin.fetch_resource(
                     connection=connection,
@@ -417,17 +436,20 @@ class GarminInitialSyncHandler:
                 )
                 summary = summary.record_fetched(resource_type, len(result.items))
                 failed_before = summary.failed_count(resource_type)
-                summary = self._store_resource(command.user_id, connection.id, resource_type, result.items, summary)
+                summary = self._store_resource(command.user_id, connection.id, resource_type,
+                                               result.items, summary, timezone_name=timezone_name)
                 if resource_type == "activities":
                     summary = summary.with_activity_coverage(
                         starts_on=start_date, ends_on=end_date, timezone_name=timezone_name,
                         pagination_complete=result.pagination_complete and summary.failed_count("activities") == 0,
                     )
-                if summary.failed_count(resource_type) == failed_before:
+                if (summary.failed_count(resource_type) == failed_before
+                        and (resource_type != "activities" or result.pagination_complete)):
                     self._integrations.upsert_resource_cursor(
                         connection.id,
                         resource_type,
-                        result.cursor or {},
+                        {**(result.cursor or {}), "start_date": start_date.isoformat(),
+                         "end_date": end_date.isoformat(), "timezone_name": timezone_name},
                         sync_from=_start_of_day(start_date),
                         sync_until=_end_of_day(end_date),
                     )
@@ -517,6 +539,8 @@ class GarminInitialSyncHandler:
         resource_type: str,
         items: tuple[dict, ...],
         summary: SyncSummary,
+        *,
+        timezone_name: str = "UTC",
     ) -> SyncSummary:
         if resource_type in {"heart_rate_zones", "lactate_threshold"}:
             payload = items[0] if items else {}
@@ -534,7 +558,8 @@ class GarminInitialSyncHandler:
                 return summary.record_duplicate(resource_type)
             return summary.record_stored(resource_type)
         if resource_type == "activities":
-            return self._store_activities(user_id, connection_id, items, summary)
+            return self._store_activities(user_id, connection_id, items, summary,
+                                          timezone_name=timezone_name)
         return self._store_health_resource(user_id, connection_id, resource_type, items, summary)
 
     def _store_activities(
@@ -543,6 +568,8 @@ class GarminInitialSyncHandler:
         connection_id: str,
         items: tuple[dict, ...],
         summary: SyncSummary,
+        *,
+        timezone_name: str,
     ) -> SyncSummary:
         failures: dict[str, _ProviderRecordIssue] = {}
         for payload in items:
@@ -560,7 +587,8 @@ class GarminInitialSyncHandler:
                 if saved is None:
                     summary = summary.record_duplicate("activities")
                     continue
-                summary = summary.record_stored("activities")
+                summary = summary.record_stored("activities",
+                    on_date=activity.started_at.astimezone(ZoneInfo(timezone_name)).date())
                 self._outbox.create_event(
                     OutboxEvent.activity_ingested(
                         user_id=user_id,
