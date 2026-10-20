@@ -126,13 +126,13 @@ describe('Johnny product shell', () => {
     expect(withoutDetails.get('[data-view="plan"]').attributes('aria-current')).toBe('page')
   })
 
-  it('shows completed separately from rest without approval controls', async () => {
+  it('does not present retired combined daily advice as current guidance', async () => {
     mockAuthenticatedToday({ userId: 'runner', todayData: { scheduled_workouts: [], recovery: {}, daily_advice: advicePayload('completed-advice', '今天已完成', 'completed') } })
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
     const decision = wrapper.get('[data-testid="today-decision-card"]')
-    expect(decision.attributes('data-decision-state')).toBe('completed')
-    expect(decision.text()).toContain('今天已完成')
+    expect(decision.attributes('data-decision-state')).toBe('run')
+    expect(decision.text()).not.toContain('今天已完成')
     expect(decision.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
   })
 
@@ -156,17 +156,19 @@ describe('Johnny product shell', () => {
     expect(upcoming.text()).not.toContain('2026-09-29')
   })
 
-  it.each([
-    ['no_plan', '查看計畫', 'plan'],
-    ['sync_failed', '檢查資料', 'data'],
-  ])('routes %s advice to %s', async (state, label, destination) => {
-    mockAuthenticatedToday({ userId: 'runner', todayData: { scheduled_workouts: [], recovery: {}, daily_advice: { ...advicePayload(), state, data_freshness: 'stale' } } })
+  it('routes current requested workout advice to Johnny', async () => {
+    mockAuthenticatedToday({ userId: 'runner', todayData: { scheduled_workouts: [], recovery: {}, workout_advice: {
+      advice_date: '2026-09-26', freshness: 'current', current: {
+        guidance: '今天放慢，保留有氧目的。', expires_at: '2026-09-27T00:00:00Z',
+      },
+    } } })
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
     const action = wrapper.get('[data-testid="today-decision-action"]')
-    expect(action.text()).toBe(label)
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('今天放慢，保留有氧目的。')
+    expect(action.text()).toBe('查看 Johnny 建議')
     await action.trigger('click')
-    expect(wrapper.get(`[data-view="${destination}"]`).attributes('aria-current')).toBe('page')
+    expect(wrapper.get('[data-view="johnny"]').attributes('aria-current')).toBe('page')
   })
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -183,10 +185,14 @@ describe('Johnny product shell', () => {
   })
   afterEach(() => { vi.useRealTimers() })
 
-  it('shows one current advice alongside a separate pending recommendation', async () => {
+  it('keeps a pending recommendation separate from current workout guidance', async () => {
     mockAuthenticatedToday({
       userId: 'advice-user',
-      todayData: { scheduled_workouts: [], recovery: {}, unavailable_signals: [], daily_advice: advicePayload() },
+      todayData: { scheduled_workouts: [], recovery: {}, unavailable_signals: [], workout_advice: {
+        advice_date: '2026-09-26', freshness: 'current', current: {
+          guidance: '今天保留有氧，跑慢一點。', expires_at: '2026-09-27T00:00:00Z',
+        },
+      } },
       recommendations: [{
         id: 'pending-change', title: '調整明天課表', rationale: '恢復較慢', priority: 'medium', status: 'pending',
         evidence: [], proposed_action: { type: 'no_plan_change', reason: '等待確認' },
@@ -195,15 +201,10 @@ describe('Johnny product shell', () => {
     const wrapper = mount(App, { props: { requireAuth: true } })
     await flushPromises()
 
-    expect(wrapper.findAll('[data-testid="today-daily-advice"]')).toHaveLength(1)
-    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('本週多跑了一堂')
-    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('不太對勁')
-    expect(wrapper.get('[data-testid="today-decision-action"]').text()).not.toContain('接受調整')
-    expect(wrapper.get('[data-testid="today-daily-advice"]').findAll('[data-testid="recommendation-actions"]')).toHaveLength(0)
-    await wrapper.get('[data-testid="today-decision-action"]').trigger('click')
-    expect(wrapper.findAll('[data-testid="johnny-daily-advice"]')).toHaveLength(1)
-    expect(wrapper.get('[data-testid="johnny-daily-advice"]').text()).toContain('本週多跑了一堂')
-    expect(wrapper.find('[data-testid="inbox-card-pending-change"] [data-testid="recommendation-actions"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="today-decision-card"]').text()).toContain('今天保留有氧，跑慢一點。')
+    expect(wrapper.get('[data-testid="today-decision-action"]').text()).toBe('查看 Johnny 建議')
+    expect(wrapper.get('[data-today-section="inbox"]').text()).toContain('待決定 1 項')
+    expect(wrapper.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
   })
 
   it('does not offer approval or open an empty Johnny queue when advice and proposals are absent', async () => {
@@ -224,52 +225,6 @@ describe('Johnny product shell', () => {
     await wrapper.get('[data-testid="today-decision-action"]').trigger('click')
     expect(wrapper.find('[data-testid="johnny-page"]').exists()).toBe(false)
     expect(wrapper.get('#plan-title').text()).toBe('計畫')
-  })
-
-  it('replaces advice after manual sync finishes without rendering both revisions', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
-    vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
-    let currentAdvice = advicePayload('old', '舊的本週回顧')
-    let syncCalls = 0
-    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input)
-      if (url.endsWith('/api/v1/me')) return Promise.resolve(okJson({ id: 'advice-user', email: 'runner@example.com', display_name: 'Runner', capabilities: ['today', 'integrations'] }))
-      if (url.includes('/api/v1/today')) return Promise.resolve(okJson({ scheduled_workouts: [], recovery: {}, unavailable_signals: [], daily_advice: currentAdvice }))
-      if (url.endsWith('/api/v1/integrations/connections') && init?.method === 'GET') return Promise.resolve(okJson([garminConnectionData()]))
-      if (url.endsWith('/api/v1/integrations/connections/conn-garmin-1/sync')) {
-        syncCalls += 1
-        if (syncCalls > 1) {
-          currentAdvice = { ...currentAdvice, state: 'sync_failed', data_freshness: 'stale' }
-          return Promise.resolve(okJson(garminConnectionData({ daily_advice_run: null, sync_status: 'failed' })))
-        }
-        return Promise.resolve(okJson(garminConnectionData({ daily_advice_run: { run_id: 'refresh-run', status: 'queued', workflow_name: 'daily_recommendation', poll_url: '/api/v1/agent-runs/refresh-run' } })))
-      }
-      if (url.endsWith('/api/v1/agent-runs/refresh-run')) {
-        currentAdvice = advicePayload('new', '同步後更新的本週回顧')
-        return Promise.resolve(okJson({ id: 'refresh-run', status: 'completed', workflow_name: 'daily_recommendation', daily_advice_id: 'new', finished_at: '2026-09-26T05:00:00Z', error_message: null }))
-      }
-      return Promise.resolve(okJson([]))
-    })
-    const wrapper = mount(App, { props: { requireAuth: true } })
-    await flushPromises()
-    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('舊的本週回顧')
-    await wrapper.get('button[data-view="data"]').trigger('click')
-    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="manual-sync"]').trigger('click')
-    await flushPromises()
-    await vi.advanceTimersByTimeAsync(2_000)
-    await flushPromises()
-    expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/v1/agent-runs/refresh-run', expect.anything())
-    await wrapper.get('button[data-view="today"]').trigger('click')
-    expect(wrapper.findAll('[data-testid="today-daily-advice"]')).toHaveLength(1)
-    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('同步後更新的本週回顧')
-    expect(wrapper.text()).not.toContain('舊的本週回顧')
-
-    await wrapper.get('button[data-view="data"]').trigger('click')
-    await wrapper.get('[data-testid="provider-card-garmin_connect"] button[data-action="manual-sync"]').trigger('click')
-    await flushPromises()
-    await wrapper.get('button[data-view="today"]').trigger('click')
-    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('同步後更新的本週回顧')
-    expect(wrapper.get('[data-testid="today-daily-advice"]').text()).toContain('先前建議')
   })
 
   it('renders the Today adjust decision card with factual evidence', () => {
@@ -435,7 +390,6 @@ describe('Johnny product shell', () => {
       todayData: {
         scheduled_workouts: [{ id: 'sat-easy', scheduled_for: '2026-09-26', workout_type: 'easy_run', planned_distance_meters: 8000, status: 'planned' }],
         recovery: {},
-        daily_advice: advicePayload(),
       },
     })
     const wrapper = mount(App, { props: { requireAuth: true } })
@@ -443,9 +397,9 @@ describe('Johnny product shell', () => {
 
     const days = wrapper.get('[data-testid="today-week-strip"]').findAll('.today-week__day')
     expect(days).toHaveLength(7)
-    expect(days[0].attributes('aria-label')).toContain('2026-09-23')
-    expect(days[3].attributes('aria-current')).toBe('date')
-    expect(days[3].text()).toContain('8K')
+    expect(days[0].attributes('aria-label')).toContain('2026-09-21')
+    expect(days[5].attributes('aria-current')).toBe('date')
+    expect(days[5].text()).toContain('8K')
     expect(days[0].text()).toContain('待排')
     expect(days[0].text()).not.toContain('6K')
   })
@@ -1266,70 +1220,14 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('連接資料')
   })
 
-  it('shows only accept and keep buttons on Agent Inbox recommendation cards', () => {
-    const inbox = mount(App, { props: { initialView: 'johnny' } })
-    const actions = inbox.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]')
-
-    expect(actions.text()).toContain('接受調整')
-    expect(actions.text()).toContain('保留課表')
-    expect(actions.text()).not.toContain('編輯調整')
-    expect(actions.text()).not.toContain('討論原因')
-    expect(actions.findAll('button')).toHaveLength(2)
-  })
-
-  it('shows Johnny as recommendations first and hides public conversation', async () => {
-    const wrapper = mount(App)
-
-    await wrapper.get('button[data-view="johnny"]').trigger('click')
-
-    expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('待決定')
-    expect(wrapper.get('[data-testid="johnny-page"]').text()).toContain('賽前 9 天降低長跑壓力')
-    expect(wrapper.text()).not.toContain('送出')
-    expect(wrapper.text()).not.toContain('今天原本有 8 km')
-  })
-
-  it('places pending Recommendations before read-only Daily Advice', async () => {
-    mockAuthenticatedToday({
-      userId: 'runner',
-      todayData: { scheduled_workouts: [], recovery: {}, daily_advice: advicePayload() },
-      recommendations: [{ id: 'pending-change', title: '調整明天課表', rationale: '恢復較慢', priority: 'medium', status: 'pending', evidence: [], proposed_action: { type: 'no_plan_change', reason: '等待確認' } }],
-    })
-    const wrapper = mount(App, { props: { requireAuth: true, initialView: 'johnny' } })
+  it('shows the current Johnny decision and three content tabs', async () => {
+    const wrapper = mount(App, { props: { initialView: 'johnny' } })
     await flushPromises()
-    const page = wrapper.get('[data-testid="johnny-page"]')
-    const pending = page.get('[data-testid="johnny-pending"]')
-    const advice = page.get('[data-testid="johnny-daily-advice"]')
-    expect(pending.element.compareDocumentPosition(advice.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(pending.findAll('.inbox-card')).toHaveLength(1)
-    expect(advice.find('[data-testid="recommendation-actions"]').exists()).toBe(false)
-  })
 
-  it('shows the proposed change and evidence before approval', () => {
-    const wrapper = mount(App, { props: { initialView: 'johnny' } })
-    const card = wrapper.get('[data-testid="inbox-card-rec-race-taper"]')
-    const proposal = card.get('.decision-strip')
-    const evidence = card.get('.evidence-list')
-    const actions = card.get('[data-testid="recommendation-actions"]')
-    expect(proposal.element.compareDocumentPosition(evidence.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(evidence.element.compareDocumentPosition(actions.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(card.text()).toContain('目前課表不會在你確認前更改')
-  })
-
-  it('keeps Johnny weekly review visible when there are no recommendations', () => {
-    const wrapper = mount(App, { props: { initialView: 'johnny', inboxItems: [] } })
-
-    expect(wrapper.text()).toContain('目前沒有新的主動建議')
-    expect(wrapper.get('[data-testid="johnny-weekly-review"]').text()).toContain('這週先守住連續性')
-  })
-
-  it('keeps Agent Inbox recommendation action geometry stable while accept is pending', async () => {
-    vi.mocked(fetch).mockReturnValue(new Promise(() => undefined) as unknown as Promise<Response>)
-    const wrapper = mount(App, { props: { initialView: 'johnny' } })
-
-    await wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-action="accept"]').trigger('click')
-
-    expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]').text()).toContain('處理中')
-    expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]').text()).toContain('保留課表')
+    expect(wrapper.get('[data-testid="johnny-decision-empty"]').text()).toContain('沒有需要你決定的調整')
+    expect(wrapper.get('[data-testid="johnny-workout-advice"]').text()).toContain('今日課表建議')
+    expect(wrapper.findAll('[role="tab"]')).toHaveLength(3)
+    expect(wrapper.find('[data-view="conversation"]').exists()).toBe(false)
   })
 
   it('shows Today loading, error, and empty states with Chinese guidance', () => {
@@ -2436,7 +2334,7 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('conversation-run-test')
   })
 
-  it('hydrates Today, Calendar, and Agent Inbox from backend GET responses when available', async () => {
+  it('hydrates Today, Plan, and Johnny from their current GET responses', async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.includes('/api/v1/today')) {
@@ -2490,6 +2388,19 @@ describe('Johnny product shell', () => {
             }),
         } as Response)
       }
+      if (url.endsWith('/api/v1/johnny/overview')) {
+        return Promise.resolve(okJson({
+          local_date: '2026-09-26', timezone_name: 'UTC', daily_review: null,
+          workout_advices: [], workout_choices: [], actionable_proposals: [{
+            id: 'backend-rec-1', title: 'Backend says keep it easy', rationale: 'Backend recommendation rationale.',
+            expires_at: '2026-09-27T00:00:00Z', evidence: { proposed_action: { payload: {
+              before_payload: { status: 'planned', planned_duration_minutes: 40 },
+              after_payload: { status: 'planned', planned_duration_minutes: 25 },
+            } } },
+          }],
+        }))
+      }
+      if (url.includes('/api/v1/johnny/history')) return Promise.resolve(okJson([]))
       if (url.includes('/api/v1/training-plans')) {
         return Promise.resolve({
           ok: true,
@@ -2548,24 +2459,18 @@ describe('Johnny product shell', () => {
     expect(wrapper.text()).toContain('50:00')
 
     await wrapper.get('button[data-view="johnny"]').trigger('click')
-    await wrapper.get('[data-testid="inbox-card-backend-rec-1"] [data-action="accept"]').trigger('click')
+    await flushPromises()
+    const proposal = wrapper.get('[data-testid="johnny-proposals"]')
+    expect(proposal.text()).toContain('Backend says keep it easy')
+    expect(proposal.text()).toContain('40 分鐘 → 25 分鐘')
+    expect(proposal.element.compareDocumentPosition(wrapper.get('[role="tablist"]').element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    ;(proposal.get('details').element as HTMLDetailsElement).open = true
+    await proposal.get('[data-action="accept"]').trigger('click')
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/recommendations/backend-rec-1/accept',
       expect.objectContaining({ method: 'POST' }),
     )
-  })
-
-  it('renders Agent Inbox as a pending decision queue with quieter history', () => {
-    const wrapper = mount(App, { props: { initialView: 'johnny' } })
-
-    expect(wrapper.text()).toContain('Johnny 建議')
-    expect(wrapper.text()).toContain('高優先')
-    expect(wrapper.text()).toContain('今天 21:00 前決定')
-    expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"]').text()).toContain('待決定')
-    expect(wrapper.get('[data-testid="inbox-history"]').text()).toContain('已接受')
-    expect(wrapper.get('[data-testid="inbox-history"]').text()).toContain('已套用')
-    expect(wrapper.get('[data-testid="inbox-card-rec-race-taper"] [data-testid="recommendation-actions"]').text()).toContain('保留課表')
   })
 })

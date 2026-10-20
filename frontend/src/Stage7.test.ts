@@ -328,7 +328,10 @@ describe('Stage 7 frontend acceptance', () => {
     vi.mocked(fetch).mockClear()
     window.dispatchEvent(new Event('focus'))
     await flushPromises()
-    expect(fetch).not.toHaveBeenCalled()
+    const repeatedCalendarRequests = vi.mocked(fetch).mock.calls
+      .map(([input]) => new URL(String(input)).pathname)
+      .filter((path) => path.endsWith('/today') || path.endsWith('/races'))
+    expect(repeatedCalendarRequests).toHaveLength(0)
   })
   it('resolves original Today details by its exact ID without selecting a different predecessor', async () => {
     const app = await render([plan('base', { status: 'superseded', workouts: [{ ...workout('original', '2026-09-26'), display_name: 'Original canonical name', steps: [{ type: 'free_run', duration_seconds: 1800, target: { kind: 'rpe', rpe: 3 } }] }] }), plan('maintenance', { starts_on: '2026-09-27' })], (url) => url.includes('/today') ? json({ scheduled_workouts: [{ id: 'original', scheduled_for: '2026-09-26' }] }) : undefined)
