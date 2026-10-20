@@ -71,7 +71,7 @@ def schedule_once(session: Session, *, now: datetime | None = None) -> int:
     started = time.monotonic()
     logger.info("agent scheduler started instant=%s", instant.isoformat())
     before = _task_count(session)
-    handler = _queue_handler(session)
+    handler = _review_queue_handler(session)
     coaching = SqlAlchemyCoachingRepository(session)
     from src.application.coaching_refresh import CoachingRefreshService
     refresh = CoachingRefreshService(session)
@@ -221,7 +221,7 @@ def smoke(
     timezone_name = profile.timezone if profile else "UTC"
     local_date = _utc_now().astimezone(ZoneInfo(timezone_name)).date()
     if workflow in {"daily_review", "all"}:
-        queued = _queue_handler(session).queue_run(
+        queued = _review_queue_handler(session).queue_run(
             user_id=user_id, workflow_name="daily_review", trigger_type="manual",
             idempotency_key=f"smoke:review:{user_id}:{local_date.isoformat()}",
             payload={"publication_date": local_date.isoformat(), "timezone_name": timezone_name},
@@ -343,6 +343,16 @@ def _queue_handler(session: Session) -> QueueAgentRunHandler:
         prompt_version="running-companion-v1",
         provider="local",
         model="deterministic-local-companion",
+    )
+
+
+def _review_queue_handler(session: Session) -> QueueAgentRunHandler:
+    provider, model = resolve_queued_training_plan_provider()
+    return QueueAgentRunHandler(
+        runs=SqlAlchemyAgentRunRepository(session),
+        queue=SqlAlchemyAgentTaskQueue(session),
+        prompt_version="johnny-review-analysis-v1",
+        provider=provider, model=model,
     )
 
 
@@ -881,9 +891,14 @@ def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, work
         runs = SqlAlchemyAgentRunRepository(session)
         if run.status == "queued":
             run = runs.complete_run(run.mark_started())
+        gateway = (OpenAIModelGateway(
+            model=run.model or "",
+            api_key=load_openai_settings_for_queued_model(run.model or "").api_key,
+        ) if run.provider == "openai" else None)
         result = GenerateTrainingReviewHandler(
             coaching=SqlAlchemyCoachingRepository(session),
             evidence=SqlAlchemyCoachingRepository(session),
+            gateway=gateway,
         ).handle(user_id=run.user_id, publication_date=publication_date,
                  timezone_name=timezone_name, run_id=run.id)
         slot = SqlAlchemyCoachingRepository(session).get_review_slot(run.user_id, publication_date)

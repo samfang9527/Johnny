@@ -22,6 +22,7 @@ from src.infrastructure.database.models import (
     TrainingReviewModel, WorkoutAdviceModel, WorkoutAdviceRevisionModel,
 )
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
+from src.infrastructure.llm.settings import resolve_queued_training_plan_provider
 
 
 router = APIRouter(prefix="/johnny", tags=["johnny"])
@@ -37,10 +38,13 @@ def _local_context(session, user_id: str):
     return datetime.now(timezone.utc).astimezone(zone).date(), name
 
 
-def _queue_handler(session):
+def _queue_handler(session, *, review: bool = False):
+    provider, model = (resolve_queued_training_plan_provider() if review else
+                       ("local", "deterministic-local-companion"))
     return QueueAgentRunHandler(
         runs=SqlAlchemyAgentRunRepository(session), queue=SqlAlchemyAgentTaskQueue(session),
-        prompt_version="johnny-coaching-v1", provider="local", model="deterministic-local-companion",
+        prompt_version="johnny-review-analysis-v1" if review else "johnny-coaching-v1",
+        provider=provider, model=model,
     )
 
 
@@ -126,7 +130,7 @@ def retry_review(review_id: str, current_user: CurrentUserDependency,
         raise ApiNotFoundError("review not found")
     if model.attempt_state not in {"sync_failed", "generation_failed", "inputs_changed"} and model.freshness != "stale":
         raise ApiConflictError("review_retry_not_needed")
-    result = _queue_handler(session).queue_run(
+    result = _queue_handler(session, review=True).queue_run(
         user_id=current_user.id, workflow_name="daily_review", trigger_type="manual",
         idempotency_key=f"daily_review:{current_user.id}:{model.publication_date.isoformat()}",
         payload={"publication_date": model.publication_date.isoformat(),

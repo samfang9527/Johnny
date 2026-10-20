@@ -16,6 +16,7 @@ from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRe
 from src.infrastructure.database.models import (
     AgentRunModel, AgentTaskModel, RecommendationModel, TrainingReviewModel, WorkoutAdviceModel,
 )
+from src.infrastructure.llm.settings import resolve_queued_training_plan_provider
 
 
 @dataclass(frozen=True)
@@ -71,9 +72,10 @@ class CoachingRefreshService:
             error_type="WorkerVersionMismatch",
             error_message="A retired worker could not process this coaching task",
         ))
+        provider, model = resolve_queued_training_plan_provider()
         queued = QueueAgentRunHandler(
-            runs=runs, queue=tasks, prompt_version="johnny-coaching-v1",
-            provider="local", model="deterministic-local-companion",
+            runs=runs, queue=tasks, prompt_version="johnny-review-analysis-v1",
+            provider=provider, model=model,
         ).queue_run(
             user_id=user_id, workflow_name="daily_review", trigger_type="scheduled",
             idempotency_key=key,
@@ -96,12 +98,15 @@ class CoachingRefreshService:
             TrainingReviewModel.user_id == user_id,
             TrainingReviewModel.current_revision_id.is_not(None),
         ).with_for_update()).all()
-        queue = QueueAgentRunHandler(
-            runs=SqlAlchemyAgentRunRepository(self.session),
-            queue=SqlAlchemyAgentTaskQueue(self.session),
-            prompt_version="johnny-coaching-v1", provider="local",
-            model="deterministic-local-companion",
-        )
+        queue = None
+        if reviews:
+            provider, model = resolve_queued_training_plan_provider()
+            queue = QueueAgentRunHandler(
+                runs=SqlAlchemyAgentRunRepository(self.session),
+                queue=SqlAlchemyAgentTaskQueue(self.session),
+                prompt_version="johnny-review-analysis-v1", provider=provider,
+                model=model,
+            )
         review_runs: list[str] = []
         for review in reviews:
             if not any(review.starts_on <= day <= review.ends_on for day in changed_dates):
@@ -109,6 +114,7 @@ class CoachingRefreshService:
             review.freshness = "stale"
             if review.publication_date == exclude_review_date:
                 continue
+            assert queue is not None
             result = queue.queue_run(
                 user_id=user_id, workflow_name="daily_review", trigger_type="evidence_change",
                 idempotency_key=f"review-correction:{review.id}:{revision}",
