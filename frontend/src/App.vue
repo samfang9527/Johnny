@@ -377,10 +377,14 @@ const scheduleWeekStart = computed(() => {
   return dates.find((value) => value >= todayIsoDate.value) ?? dates[dates.length - 1] ?? null
 })
 const visibleScheduleEnd = computed(() => scheduleWeekStart.value ? addCalendarDays(scheduleWeekStart.value, visibleTrainingWeeks.value * 7 - 1) : null)
+const visibleScheduleStart = computed(() => {
+  if (!scheduleWeekStart.value || !visibleScheduleEnd.value || visibleScheduleEnd.value < todayIsoDate.value) return null
+  return scheduleWeekStart.value < todayIsoDate.value ? todayIsoDate.value : scheduleWeekStart.value
+})
 const visibleScheduleWorkouts = computed(() => {
-  if (!scheduleWeekStart.value || !visibleScheduleEnd.value) return displayWorkouts.value
+  if (!visibleScheduleStart.value || !visibleScheduleEnd.value) return []
   return displayWorkouts.value
-    .filter((workout) => isIsoDate(workout.scheduledFor) && workout.scheduledFor >= scheduleWeekStart.value! && workout.scheduledFor <= visibleScheduleEnd.value!)
+    .filter((workout) => isIsoDate(workout.scheduledFor) && workout.scheduledFor >= visibleScheduleStart.value! && workout.scheduledFor <= visibleScheduleEnd.value!)
     .sort((left, right) => left.scheduledFor!.localeCompare(right.scheduledFor!))
 })
 const hasMoreTrainingWeeks = computed(() => Boolean(visibleScheduleEnd.value && displayWorkouts.value.some((workout) => isIsoDate(workout.scheduledFor) && workout.scheduledFor > visibleScheduleEnd.value!)))
@@ -3167,7 +3171,7 @@ function shouldRequireAuth(): boolean {
           </div>
 
           <section class="plan-summary" data-testid="plan-summary" aria-label="目前計畫摘要">
-            <div><span>本週安排</span><strong>{{ scheduleWeekStart && visibleScheduleEnd ? `${formatDateLabel(scheduleWeekStart)}–${formatDateLabel(visibleScheduleEnd)}` : '尚未排定' }}</strong></div>
+            <div><span>本週安排</span><strong>{{ visibleScheduleStart && visibleScheduleEnd ? `${formatDateLabel(visibleScheduleStart)}–${formatDateLabel(visibleScheduleEnd)}` : '尚未排定' }}</strong></div>
             <div><span>下一堂課</span><strong>{{ planLeadWorkout?.type || '尚未排定' }}</strong><small v-if="planLeadWorkout">{{ planLeadWorkout.scheduledFor || planLeadWorkout.dateLabel }}</small></div>
           </section>
 
@@ -3311,9 +3315,9 @@ function shouldRequireAuth(): boolean {
             <StatusBadge tone="info">{{ visibleScheduleWorkouts.length }} 項</StatusBadge>
           </div>
 
-          <div v-if="scheduleWeekStart && visibleScheduleEnd" class="schedule-week-heading" data-testid="training-week-range">
+          <div v-if="visibleScheduleStart && visibleScheduleEnd" class="schedule-week-heading" data-testid="training-week-range">
             <strong>{{ visibleTrainingWeeks === 1 ? '本週課表' : `已顯示 ${visibleTrainingWeeks} 週` }}</strong>
-            <span>{{ formatDateLabel(scheduleWeekStart) }}–{{ formatDateLabel(visibleScheduleEnd) }}</span>
+            <span>{{ formatDateLabel(visibleScheduleStart) }}–{{ formatDateLabel(visibleScheduleEnd) }}</span>
           </div>
 
           <div v-if="visibleScheduleWorkouts.length" class="schedule-list">

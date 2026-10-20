@@ -471,6 +471,32 @@ describe('Stage 7 frontend acceptance', () => {
     expect(schedule.find('[data-testid="schedule-workout-second-week"]').exists()).toBe(true)
     expect(schedule.find('[data-testid="schedule-workout-third-week"]').exists()).toBe(false)
   })
+  it('shows scheduled workouts from the athlete-local today onward on Plan', async () => {
+    vi.setSystemTime(new Date('2026-09-25T16:00:00Z'))
+    const app = await render([plan('maintenance', { workouts: [
+      workout('earlier-this-week', '2026-09-23'),
+      workout('today', '2026-09-26'),
+      workout('later-this-week', '2026-09-28'),
+      workout('next-week', '2026-09-29'),
+    ] })])
+
+    const schedule = app.get('.schedule-section')
+    expect(schedule.find('[data-testid="schedule-workout-earlier-this-week"]').exists()).toBe(false)
+    expect(schedule.find('[data-testid="schedule-workout-today"]').exists()).toBe(true)
+    expect(schedule.find('[data-testid="schedule-workout-later-this-week"]').exists()).toBe(true)
+    expect(schedule.find('[data-testid="schedule-workout-next-week"]').exists()).toBe(false)
+    expect(schedule.get('[data-testid="training-week-range"] span').text()).toBe('9/26–9/28')
+  })
+  it('does not show an expired plan week as an upcoming date range', async () => {
+    const app = await render([plan('maintenance', { ends_on: '2026-09-19', workouts: [
+      workout('past', '2026-09-18'),
+    ] })])
+
+    const schedule = app.get('.schedule-section')
+    expect(schedule.find('[data-testid="schedule-workout-past"]').exists()).toBe(false)
+    expect(schedule.find('[data-testid="training-week-range"]').exists()).toBe(false)
+    expect(app.get('[data-testid="plan-summary"] > div').text()).toContain('尚未排定')
+  })
   it.each([
     [null, 8, 'RPE 8 · 配速與心率資料不足'],
     [[150, 165], 8, 'RPE 8 · 心率 150-165 bpm'],
