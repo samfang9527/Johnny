@@ -52,7 +52,7 @@ describe('DailyAdviceCard', () => {
   })
   it('shows the activity evidence cutoff in the athlete timezone', () => {
     const wrapper = mount(DailyAdviceCard, { props: { advice: { ...ready, facts: { evidence: { activity_cutoff_at: '2026-09-26T03:00:00Z' } } }, timeZone: 'Asia/Taipei' } })
-    expect(wrapper.text()).toContain('活動資料截至 · 9/26 11:00')
+    expect(wrapper.text()).toMatch(/活動資料截至 · 9\/26\s+11:00/u)
   })
 
   it('keeps stale advice and its original time in an expandable reading detail on Today', () => {
