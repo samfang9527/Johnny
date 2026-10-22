@@ -611,3 +611,97 @@ class NotificationDeliveryModel(TimestampMixin, Base):
     provider_message_id: Mapped[str | None] = mapped_column(String(200))
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     response: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class ActivityDetailSnapshotModel(TimestampMixin, Base):
+    __tablename__ = 'activity_detail_snapshots'
+    __table_args__ = (UniqueConstraint('activity_id', 'resource', 'schema_version', 'semantic_hash',
+                                      name='uq_activity_detail_snapshot_content'),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'), nullable=False, index=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey('activities.id'), nullable=False, index=True)
+    resource: Mapped[str] = mapped_column(String(32), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    semantic_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    coverage: Mapped[dict] = mapped_column(JSON, nullable=False)
+    source_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class ActivitySegmentModel(TimestampMixin, Base):
+    __tablename__ = 'activity_segments'
+    __table_args__ = (UniqueConstraint('snapshot_id', 'ordinal', name='uq_activity_segment_ordinal'),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'), nullable=False)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey('activity_detail_snapshots.id'), nullable=False, index=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class ActivitySampleChunkModel(TimestampMixin, Base):
+    __tablename__ = 'activity_sample_chunks'
+    __table_args__ = (UniqueConstraint('snapshot_id', 'ordinal', name='uq_activity_sample_chunk_ordinal'),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'), nullable=False)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey('activity_detail_snapshots.id'), nullable=False, index=True)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    samples: Mapped[list] = mapped_column(JSON, nullable=False)
+
+
+class ActivityExecutionAnalysisModel(TimestampMixin, Base):
+    __tablename__ = 'activity_execution_analyses'
+    __table_args__ = (UniqueConstraint('user_id', 'fingerprint', name='uq_activity_execution_analysis_content'),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'), nullable=False)
+    activity_id: Mapped[str] = mapped_column(ForeignKey('activities.id'), nullable=False, index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    prescription_revision_id: Mapped[str | None] = mapped_column(ForeignKey('workout_prescription_revisions.id'))
+    snapshot_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class ActivityDetailFetchModel(TimestampMixin, Base):
+    __tablename__ = 'activity_detail_fetches'
+    __table_args__ = (UniqueConstraint('user_id', 'activity_id', 'resource', name='uq_activity_detail_fetch_slot'),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'), nullable=False)
+    activity_id: Mapped[str] = mapped_column(ForeignKey('activities.id'), nullable=False, index=True)
+    resource: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default='pending')
+    current_snapshot_id: Mapped[str | None] = mapped_column(ForeignKey('activity_detail_snapshots.id'))
+    last_successful_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_type: Mapped[str | None] = mapped_column(String(120))
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ActivityDetailBatchModel(TimestampMixin, Base):
+    __tablename__ = 'activity_detail_batches'
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'), nullable=False, index=True)
+    source_sync_run_id: Mapped[str | None] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default='pending', index=True)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ActivityDetailBatchItemModel(TimestampMixin, Base):
+    __tablename__ = 'activity_detail_batch_items'
+    __table_args__ = (UniqueConstraint('batch_id', 'activity_id', 'resource',
+                                      name='uq_activity_detail_batch_item'),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'), nullable=False)
+    batch_id: Mapped[str] = mapped_column(ForeignKey('activity_detail_batches.id'), nullable=False, index=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey('activities.id'), nullable=False, index=True)
+    resource: Mapped[str] = mapped_column(String(32), nullable=False)
+    fetch_id: Mapped[str | None] = mapped_column(ForeignKey('activity_detail_fetches.id'))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default='pending', index=True)
