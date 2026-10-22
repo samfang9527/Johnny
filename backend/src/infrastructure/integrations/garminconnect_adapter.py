@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import date, timedelta
 from typing import Any, Iterator, NoReturn, Protocol
 
@@ -138,6 +138,17 @@ class GarminConnectResourceAdapter:
         timezone_name: str,
         cursor: dict | None,
     ) -> GarminResourceFetchResult:
+        with self._provider_lease(connection.id):
+            return self._fetch_resource_with_lease(connection=connection, resource_type=resource_type,
+                start_date=start_date, end_date=end_date)
+
+    def _provider_lease(self, connection_id: str):
+        lease = getattr(self._credentials, 'provider_lease', None)
+        return lease(connection_id) if callable(lease) else nullcontext()
+
+    def _fetch_resource_with_lease(self, *, connection: IntegrationConnectionRef,
+                                   resource_type: str, start_date: date,
+                                   end_date: date) -> GarminResourceFetchResult:
         credential = self._credentials.get_credential_for_connection(connection.id)
         if credential is None:
             raise GarminCredentialBlockedError("Garmin credential is missing")
@@ -161,18 +172,19 @@ class GarminConnectResourceAdapter:
     @contextmanager
     def activity_detail_session(self, connection: IntegrationConnectionRef) -> Iterator[GarminActivityDetailSession]:
         """Reuse one authenticated client for the bounded resources in a job."""
-        credential = self._credentials.get_credential_for_connection(connection.id)
-        if credential is None:
-            raise GarminCredentialBlockedError('Garmin credential is missing')
-        api = self._garmin_factory(is_cn=_is_china_region(connection), return_on_mfa=True)
-        try:
-            mfa_status, _ = api.login(self._cipher.decrypt(credential.encrypted_payload))
-        except Exception as exc:  # noqa: BLE001
-            _raise_resource_error(exc)
-        if mfa_status:
-            raise GarminCredentialBlockedError('Garmin Connect requires manual token import')
-        yield GarminActivityDetailSession(api)
-        self._save_refreshed_session(connection, credential, api)
+        with self._provider_lease(connection.id):
+            credential = self._credentials.get_credential_for_connection(connection.id)
+            if credential is None:
+                raise GarminCredentialBlockedError('Garmin credential is missing')
+            api = self._garmin_factory(is_cn=_is_china_region(connection), return_on_mfa=True)
+            try:
+                mfa_status, _ = api.login(self._cipher.decrypt(credential.encrypted_payload))
+            except Exception as exc:  # noqa: BLE001
+                _raise_resource_error(exc)
+            if mfa_status:
+                raise GarminCredentialBlockedError('Garmin Connect requires manual token import')
+            yield GarminActivityDetailSession(api)
+            self._save_refreshed_session(connection, credential, api)
 
     def fetch_activity_detail(
         self, *, connection: IntegrationConnectionRef, activity_id: str,
@@ -229,15 +241,15 @@ class GarminConnectResourceAdapter:
         encrypted_payload = self._cipher.encrypt(refreshed_payload)
         metadata = dict(credential.lifecycle_metadata or {})
         metadata.setdefault("source", "garminconnect")
-        self._credentials.upsert_credential(
-            IntegrationCredential.create(
+        save = getattr(self._credentials, 'upsert_credential_durably',
+                       self._credentials.upsert_credential)
+        save(IntegrationCredential.create(
                 connection_id=connection.id,
                 credential_format=GARMIN_CREDENTIAL_FORMAT,
                 encrypted_payload=encrypted_payload,
                 key_id=self._cipher.key_id,
                 lifecycle_metadata=metadata,
-            )
-        )
+            ))
 
 
 class GarminActivityDetailSession:

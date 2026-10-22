@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import date
 from types import SimpleNamespace
 
@@ -90,6 +91,47 @@ def test_garminconnect_resource_adapter_uses_inline_decrypted_token_json_and_sav
     assert credentials.saved.encrypted_payload == "fernet:encrypted-refreshed-session"
     assert credentials.saved.key_id == "new-key"
     assert "refreshed-token" not in repr(credentials.saved.to_safe_summary())
+
+
+def test_summary_and_detail_calls_hold_same_connection_provider_lease():
+    credential = IntegrationCredential.create(
+        connection_id='conn-1', credential_format='garminconnect-session-json',
+        encrypted_payload='fernet:stored-session', key_id='old-key')
+    credentials = _FakeCredentialStore(credential)
+    events = []
+
+    @contextmanager
+    def lease(connection_id):
+        events.append(('acquire', connection_id))
+        try:
+            yield
+        finally:
+            events.append(('release', connection_id))
+
+    credentials.provider_lease = lease
+    def durable_save(credential):
+        assert events[-1] == ('acquire', 'conn-1')
+        events.append(('persist', credential.connection_id))
+        return credentials.upsert_credential(credential)
+
+    credentials.upsert_credential_durably = durable_save
+    class Factory(_DetailFactory):
+        def __call__(self, **kwargs):
+            assert events[-1] == ('acquire', 'conn-1')
+            return super().__call__(**kwargs)
+
+    summary = GarminConnectResourceAdapter(credentials=credentials,
+        cipher=_FakeCipher(decrypted='{"di_token":"stored-token"}'),
+        garmin_factory=_FakeGarminFactory(activities=[]))
+    summary.fetch_resource(connection=_connection(), resource_type='activities',
+                           start_date=date(2026, 10, 22), end_date=date(2026, 10, 22),
+                           timezone_name='UTC', cursor=None)
+    adapter = GarminConnectResourceAdapter(credentials=credentials,
+        cipher=_FakeCipher(decrypted='{"di_token":"stored-token"}'), garmin_factory=Factory())
+    adapter.fetch_activity_detail(connection=_connection(), activity_id='local-activity',
+                                  provider_activity_id='123', resource='splits')
+    assert events == [('acquire', 'conn-1'), ('persist', 'conn-1'), ('release', 'conn-1'),
+                      ('acquire', 'conn-1'), ('persist', 'conn-1'), ('release', 'conn-1')]
 
 
 def test_garminconnect_resource_adapter_maps_daily_recovery_resources_without_steps_or_spo2() -> None:

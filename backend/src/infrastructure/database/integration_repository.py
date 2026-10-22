@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime
+from hashlib import sha256
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from src.domain.integrations_notifications import (
@@ -20,6 +22,29 @@ from .models import IntegrationConnectionModel, IntegrationCredentialModel, Inte
 class SqlAlchemyIntegrationRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    @contextmanager
+    def provider_lease(self, connection_id: str):
+        """Serialize login and token refresh across summary and detail workers.
+
+        A session-level advisory lock holds a dedicated connection, with no
+        transaction open across provider I/O. Closing that connection after a
+        worker crash releases the lock automatically.
+        """
+        engine = self._session.get_bind()
+        if engine.dialect.name != 'postgresql':
+            yield
+            return
+        digest = sha256(f'johnny:garmin:{connection_id}'.encode()).digest()
+        key = int.from_bytes(digest[:8], 'big', signed=True)
+        with engine.connect() as connection:
+            connection.execute(text('SELECT pg_advisory_lock(:key)'), {'key': key})
+            connection.commit()
+            try:
+                yield
+            finally:
+                connection.execute(text('SELECT pg_advisory_unlock(:key)'), {'key': key})
+                connection.commit()
 
     def create_connection(
         self,
@@ -181,9 +206,19 @@ class SqlAlchemyIntegrationRepository:
         self._session.flush()
         return _credential_from_model(existing)
 
+    def upsert_credential_durably(self, credential: IntegrationCredential) -> IntegrationCredential:
+        """Commit refreshed tokens before releasing the provider advisory lock."""
+        engine = self._session.get_bind()
+        if engine.dialect.name != 'postgresql':
+            return self.upsert_credential(credential)
+        with Session(engine) as session:
+            saved = SqlAlchemyIntegrationRepository(session).upsert_credential(credential)
+            session.commit()
+            return saved
+
     def get_credential_for_connection(self, integration_connection_id: str) -> IntegrationCredential | None:
         credential = self._session.scalar(
-            select(IntegrationCredentialModel).where(
+            select(IntegrationCredentialModel).execution_options(populate_existing=True).where(
                 IntegrationCredentialModel.integration_connection_id == integration_connection_id,
             )
         )

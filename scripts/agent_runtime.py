@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import logging
+import os
 import signal
 import sys
 import time
@@ -17,10 +18,15 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from sqlalchemy import exists, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from src.api.dependencies import build_request_companion_agent
 from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.activity_detail_sync import (
+    ActivityDetailDeferred, ActivityDetailRetry, ActivityDetailSyncService,
+    FETCH_TASK as ACTIVITY_DETAIL_FETCH_TASK, FINALIZE_TASK as ACTIVITY_DETAIL_FINALIZE_TASK,
+    RECHECK_TASK as ACTIVITY_DETAIL_RECHECK_TASK,
+)
 from src.application.daily_advice_generation import GenerateDailyAdviceHandler
 from src.application.training_review_generation import GenerateTrainingReviewHandler
 from src.application.workout_advice_generation import GenerateWorkoutAdviceHandler
@@ -147,8 +153,9 @@ def schedule_loop(session_factory, *, max_iterations: int | None = None, interva
 
 
 def work_one(session: Session, *, now: datetime | None = None) -> bool:
+    instant = now or _utc_now()
     queue = SqlAlchemyAgentTaskQueue(session)
-    claimed = queue.claim_next(now=now or _utc_now(), claim_timeout=DEFAULT_CLAIM_TIMEOUT)
+    claimed = queue.claim_next(now=instant, claim_timeout=DEFAULT_CLAIM_TIMEOUT)
     if claimed is None:
         return False
     started = time.monotonic()
@@ -158,7 +165,13 @@ def work_one(session: Session, *, now: datetime | None = None) -> bool:
         claimed.id, claimed.task_type, run_id, claimed.correlation_id, claimed.retry_count,
     )
     try:
-        _process_task(session, claimed.id)
+        if claimed.task_type in {ACTIVITY_DETAIL_FETCH_TASK, ACTIVITY_DETAIL_FINALIZE_TASK,
+                                 ACTIVITY_DETAIL_RECHECK_TASK}:
+            session.commit()  # Persist the task claim before the service's independent transactions.
+            _process_activity_detail_task(session, claimed, now=instant)
+            session.commit()
+        else:
+            _process_task(session, claimed.id)
         if claimed.task_type in {DAILY_ADVICE_SYNC_TASK_TYPE, COACHING_SYNC_TASK_TYPE}:
             # Imported activities and the generation task become visible together.
             session.commit()
@@ -177,6 +190,49 @@ def work_one(session: Session, *, now: datetime | None = None) -> bool:
         round((time.monotonic() - started) * 1000),
     )
     return True
+
+
+def _build_detail_service(session: Session) -> ActivityDetailSyncService:
+    factory = sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+    def adapter_factory(provider_session: Session):
+        return GarminConnectResourceAdapter(
+            credentials=SqlAlchemyIntegrationRepository(provider_session),
+            cipher=load_garmin_credential_cipher())
+    return ActivityDetailSyncService(factory, adapter_factory)
+
+
+def _process_activity_detail_task(session: Session, task, *, now: datetime) -> None:
+    queue = SqlAlchemyAgentTaskQueue(session)
+    if os.getenv('JOHNNY_ACTIVITY_DETAILS_ENABLED', '').lower() not in {'1', 'true', 'yes'}:
+        queue.defer(task.id, now=now, delay=timedelta(hours=1))
+        return
+    service = _build_detail_service(session)
+    payload = task.payload or {}
+    try:
+        if task.task_type == ACTIVITY_DETAIL_FETCH_TASK and isinstance(payload.get('fetch_id'), str):
+            service.process_resource(fetch_id=payload['fetch_id'], now=now)
+        elif task.task_type == ACTIVITY_DETAIL_FINALIZE_TASK and isinstance(payload.get('batch_id'), str):
+            service.finalize_batch(batch_id=payload['batch_id'], now=now)
+        elif (task.task_type == ACTIVITY_DETAIL_RECHECK_TASK
+              and all(isinstance(payload.get(key), str) for key in
+                      ('user_id', 'activity_id', 'resource', 'origin_batch_id'))
+              and payload.get('ordinal') in (1, 2)):
+            service.run_recheck(user_id=payload['user_id'], activity_id=payload['activity_id'],
+                                resource=payload['resource'], origin_batch_id=payload['origin_batch_id'],
+                                ordinal=payload['ordinal'], now=now)
+        else:
+            queue.fail(task.id, error_type='MalformedTaskPayload',
+                       error_message='activity detail task has an invalid payload',
+                       retryable=False, now=now, retry_delay=DEFAULT_RETRY_DELAY)
+            return
+    except ActivityDetailDeferred as exc:
+        queue.defer(task.id, now=now, delay=exc.delay)
+        return
+    except ActivityDetailRetry as exc:
+        queue.fail(task.id, error_type=exc.category, error_message=exc.category,
+                   retryable=True, now=now, retry_delay=exc.delay)
+        return
+    queue.complete(task.id, now=now)
 
 
 def work_drain(session: Session, *, max_tasks: int | None = None) -> int:

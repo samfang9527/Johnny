@@ -83,6 +83,25 @@ class SqlAlchemyAgentTaskQueue:
             return _task_from_model(existing)
         return self.enqueue(task)
 
+    def expedite(self, idempotency_key: str, *, now: datetime) -> None:
+        self._session.execute(update(AgentTaskModel).where(
+            AgentTaskModel.idempotency_key == idempotency_key,
+            AgentTaskModel.status == 'queued',
+            AgentTaskModel.available_at > now,
+        ).values(available_at=now, updated_at=now))
+
+    def defer(self, task_id: str, *, now: datetime, delay: timedelta) -> None:
+        self._session.execute(update(AgentTaskModel).where(
+            AgentTaskModel.id == task_id,
+            AgentTaskModel.status == 'processing',
+        ).values(status='queued', available_at=now + delay, claimed_at=None, updated_at=now))
+
+    def reschedule(self, idempotency_key: str, *, available_at: datetime, now: datetime) -> None:
+        self._session.execute(update(AgentTaskModel).where(
+            AgentTaskModel.idempotency_key == idempotency_key,
+            AgentTaskModel.status == 'queued',
+        ).values(available_at=available_at, updated_at=now))
+
     def get_by_idempotency_key(self, idempotency_key: str) -> AgentTask | None:
         model = self._get_model_by_idempotency_key(idempotency_key)
         if model is None:
