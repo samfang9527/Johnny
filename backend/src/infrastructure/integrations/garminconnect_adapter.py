@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import date, timedelta
-from typing import Any, NoReturn, Protocol
+from typing import Any, Iterator, NoReturn, Protocol
 
 from src.application.interfaces.integrations_notifications import IntegrationCredentialStore
 from src.application.integrations import (
@@ -16,6 +17,9 @@ from src.application.integrations import (
     GarminTemporarySyncError,
 )
 from src.domain.integrations_notifications import IntegrationConnectionRef, IntegrationCredential
+from src.domain.activity_details import DetailResource, NormalizedDetails
+from src.infrastructure.integrations.garmin_activity_details import normalize_activity_details
+from src.infrastructure.integrations.garmin_fit_decoder import decode_activity_fit
 from src.infrastructure.security.integration_credentials import CredentialCipher
 
 
@@ -58,6 +62,18 @@ class GarminClient(Protocol):
 
     def get_body_battery(self, startdate: str, enddate: str | None = None) -> list[dict[str, Any]]:
         ...
+
+    def get_activity_splits(self, activity_id: str) -> dict[str, Any]: ...
+
+    def get_activity_typed_splits(self, activity_id: str) -> dict[str, Any]: ...
+
+    def get_activity_split_summaries(self, activity_id: str) -> dict[str, Any]: ...
+
+    def get_activity_hr_in_timezones(self, activity_id: str) -> list[dict[str, Any]]: ...
+
+    def get_activity_details(self, activity_id: str, maxchart: int, maxpoly: int) -> dict[str, Any]: ...
+
+    def download_activity(self, activity_id: str, dl_fmt: Any) -> bytes: ...
 
 
 GarminFactory = Callable[..., GarminClient]
@@ -142,6 +158,31 @@ class GarminConnectResourceAdapter:
         self._save_refreshed_session(connection, credential, api)
         return result
 
+    @contextmanager
+    def activity_detail_session(self, connection: IntegrationConnectionRef) -> Iterator[GarminActivityDetailSession]:
+        """Reuse one authenticated client for the bounded resources in a job."""
+        credential = self._credentials.get_credential_for_connection(connection.id)
+        if credential is None:
+            raise GarminCredentialBlockedError('Garmin credential is missing')
+        api = self._garmin_factory(is_cn=_is_china_region(connection), return_on_mfa=True)
+        try:
+            mfa_status, _ = api.login(self._cipher.decrypt(credential.encrypted_payload))
+        except Exception as exc:  # noqa: BLE001
+            _raise_resource_error(exc)
+        if mfa_status:
+            raise GarminCredentialBlockedError('Garmin Connect requires manual token import')
+        yield GarminActivityDetailSession(api)
+        self._save_refreshed_session(connection, credential, api)
+
+    def fetch_activity_detail(
+        self, *, connection: IntegrationConnectionRef, activity_id: str,
+        resource: DetailResource, provider_activity_id: str,
+    ) -> NormalizedDetails:
+        """Use the local activity ID for persistence and its provider ID for Garmin."""
+        with self.activity_detail_session(connection) as session:
+            return session.fetch(activity_id=activity_id, resource=resource,
+                                 provider_activity_id=provider_activity_id)
+
     def _fetch_resource(
         self,
         api: GarminClient,
@@ -197,6 +238,37 @@ class GarminConnectResourceAdapter:
                 lifecycle_metadata=metadata,
             )
         )
+
+
+class GarminActivityDetailSession:
+    def __init__(self, api: GarminClient) -> None:
+        self._api = api
+
+    def fetch(self, *, activity_id: str, resource: DetailResource,
+              provider_activity_id: str) -> NormalizedDetails:
+        methods = {
+            'splits': 'get_activity_splits',
+            'typed_splits': 'get_activity_typed_splits',
+            'split_summaries': 'get_activity_split_summaries',
+            'hr_zones': 'get_activity_hr_in_timezones',
+            'details': 'get_activity_details',
+        }
+        try:
+            if resource == 'fit':
+                archive = self._api.download_activity(
+                    provider_activity_id, dl_fmt=self._api.ActivityDownloadFormat.ORIGINAL)
+                return decode_activity_fit(activity_id=activity_id, archive=archive)
+            if resource not in methods:
+                raise GarminIntegrationConfigurationError(f'Unsupported activity detail resource: {resource}')
+            if resource == 'details':
+                payload = self._api.get_activity_details(provider_activity_id, maxchart=2000, maxpoly=0)
+            else:
+                payload = getattr(self._api, methods[resource])(provider_activity_id)
+            if resource == 'hr_zones' and isinstance(payload, list):
+                payload = {'zones': payload}
+            return normalize_activity_details(activity_id=activity_id, resource=resource, payload=payload)
+        except Exception as exc:  # noqa: BLE001
+            _raise_resource_error(exc)
 
 
 _DAILY_RESOURCE_METHODS = {

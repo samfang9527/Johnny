@@ -1,4 +1,5 @@
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 
@@ -358,3 +359,91 @@ def test_training_evidence_endpoints_are_fetched_once_per_sync_not_per_day():
     assert zones.items == ({'profiles': [{'sport': 'RUNNING', 'zone1Floor': 100}]},)
     assert threshold.items == ({'speed_and_heart_rate': {'speed': 3.125}},)
     assert (api.zone_calls, api.threshold_calls) == (1, 1)
+
+
+def test_activity_detail_session_reuses_one_login_and_saves_refreshed_credentials_once():
+    credentials = _FakeCredentialStore(IntegrationCredential.create(
+        connection_id='conn-1', credential_format='garminconnect-session-json',
+        encrypted_payload='fernet:stored-session', key_id='old-key'))
+    factory = _DetailFactory()
+    adapter = GarminConnectResourceAdapter(credentials=credentials,
+        cipher=_FakeCipher(decrypted='{"di_token":"stored-token"}'), garmin_factory=factory)
+    with adapter.activity_detail_session(_connection()) as session:
+        splits = session.fetch(activity_id='local-activity', provider_activity_id='123', resource='splits')
+        chart = session.fetch(activity_id='local-activity', provider_activity_id='123', resource='details')
+        assert credentials.saved is None
+    assert len(factory.instances) == 1
+    assert factory.instances[0].login_tokenstore == '{"di_token":"stored-token"}'
+    assert factory.instances[0].calls == [
+        ('get_activity_splits', '123'), ('get_activity_details', '123', 2000, 0)]
+    assert splits.activity_id == 'local-activity' and splits.segments[0].timer_seconds == 300
+    assert chart.coverage.sampling == 'chart'
+    assert credentials.saved.encrypted_payload == 'fernet:encrypted-refreshed-session'
+
+
+def test_activity_detail_fetch_uses_original_fit_and_local_activity_id():
+    credentials = _FakeCredentialStore(IntegrationCredential.create(
+        connection_id='conn-1', credential_format='garminconnect-session-json',
+        encrypted_payload='fernet:stored-session', key_id='old-key'))
+    factory = _DetailFactory()
+    adapter = GarminConnectResourceAdapter(credentials=credentials,
+        cipher=_FakeCipher(decrypted='{"di_token":"stored-token"}'), garmin_factory=factory)
+    result = adapter.fetch_activity_detail(connection=_connection(), activity_id='local-activity',
+                                           provider_activity_id='123', resource='fit')
+    assert result.activity_id == 'local-activity'
+    assert result.coverage.state == 'unknown'  # fake returns a corrupt archive
+    assert factory.instances[0].calls == [('download_activity', '123', 'original')]
+
+
+def test_activity_detail_fetch_classifies_provider_rate_limit():
+    credentials = _FakeCredentialStore(IntegrationCredential.create(
+        connection_id='conn-1', credential_format='garminconnect-session-json',
+        encrypted_payload='fernet:stored-session', key_id='old-key'))
+    factory = _DetailFactory(rate_limited=True)
+    adapter = GarminConnectResourceAdapter(credentials=credentials,
+        cipher=_FakeCipher(decrypted='{"di_token":"stored-token"}'), garmin_factory=factory)
+    with pytest.raises(GarminRateLimitError):
+        adapter.fetch_activity_detail(connection=_connection(), activity_id='local-activity',
+                                      provider_activity_id='123', resource='splits')
+    assert credentials.saved is None
+
+
+class _DetailFactory:
+    def __init__(self, rate_limited=False):
+        self.instances = []
+        self.rate_limited = rate_limited
+
+    def __call__(self, **kwargs):
+        api = _DetailApi(self.rate_limited)
+        self.instances.append(api)
+        return api
+
+
+class _DetailApi:
+    ActivityDownloadFormat = SimpleNamespace(ORIGINAL='original')
+
+    def __init__(self, rate_limited):
+        self.rate_limited = rate_limited
+        self.client = _FakeGarminClient('{"di_token":"refreshed"}')
+        self.calls = []
+        self.login_tokenstore = None
+
+    def login(self, tokenstore):
+        self.login_tokenstore = tokenstore
+        return None, None
+
+    def get_activity_splits(self, activity_id):
+        self.calls.append(('get_activity_splits', activity_id))
+        if self.rate_limited:
+            raise _TooManyRequestsError('HTTP 429')
+        return {'lapDTOs': [{'duration': 300, 'distance': 1000}]}
+
+    def get_activity_details(self, activity_id, maxchart, maxpoly):
+        self.calls.append(('get_activity_details', activity_id, maxchart, maxpoly))
+        return {'metricDescriptors': [
+            {'metricsIndex': 0, 'key': 'sumDuration', 'unit': {'key': 's', 'factor': 1000}}],
+            'activityDetailMetrics': [{'metrics': [0]}]}
+
+    def download_activity(self, activity_id, dl_fmt):
+        self.calls.append(('download_activity', activity_id, dl_fmt))
+        return b'corrupt'
