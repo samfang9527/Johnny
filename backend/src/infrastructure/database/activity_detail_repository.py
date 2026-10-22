@@ -163,14 +163,18 @@ class SqlAlchemyActivityDetailRepository:
                            last_error_type=model.last_error_type, retry_count=model.retry_count)
 
     def save_analysis(self, user_id: str, analysis: ExecutionAnalysis) -> str:
-        self._owned_provider_activity(user_id, analysis.activity_id)
+        activity_ids = tuple(getattr(analysis, 'activity_ids', (analysis.activity_id,)))
+        if not activity_ids or activity_ids[0] != analysis.activity_id or len(set(activity_ids)) != len(activity_ids):
+            raise ValueError('analysis activity identity mismatch')
+        for activity_id in activity_ids:
+            self._owned_provider_activity(user_id, activity_id)
         ids = tuple(analysis.snapshot_ids)
         payload = analysis.to_payload()
         if not ids or len(set(ids)) != len(ids):
             raise ValueError('analysis needs distinct snapshot evidence')
         owned = set(self._session.scalars(select(ActivityDetailSnapshotModel.id).where(
             ActivityDetailSnapshotModel.user_id == user_id,
-            ActivityDetailSnapshotModel.activity_id == analysis.activity_id,
+            ActivityDetailSnapshotModel.activity_id.in_(activity_ids),
             ActivityDetailSnapshotModel.id.in_(ids))).all())
         if owned != set(ids):
             raise ValueError('snapshot ownership mismatch')

@@ -123,11 +123,11 @@
 **Files:** Create `backend/src/domain/activity_execution.py`, `backend/tests/unit/test_activity_execution.py`; modify `backend/src/application/coaching_evidence.py` only to expose existing matched session/prescription evidence without changing score behavior.
 **Interfaces:** `analyze_execution(*, prescription: PrescriptionSnapshot|None, activities: tuple[CompletedActivity,...], details: tuple[DetailSnapshot,...]) -> ExecutionAnalysis`. Step identity is stable `(step_path, repeat_occurrence)`, never display name alone.
 
-- [ ] Write paired cases extending a 35-minute prescription to 44 minutes: `assert finding.code == 'cooldown_volume_over'` vs `'work_volume_over'` only when links are exact; auto lap must have `mapping != 'exact'`. Also cover missed repeats, unmatched tail, gaps between recordings, DST/local dates, incomplete charts, missing historical zones and uncertain prescriptions.
-- [ ] Run `pytest backend/tests/unit/test_activity_execution.py -q`; confirm failures.
-- [ ] Implement Repeat Block expansion, validated explicit mapping, and conservative estimated mapping for unique ordered time/distance boundaries (no claim of measured step identity). Ambiguous boundaries stay unmatched. Compute duration/distance deltas, lap variation and target-time intervals only for valid recorded intervals, excluding pause/gaps; expose denominator/coverage. Do not infer RPE, physiological cause or new readiness thresholds. Feed averages as averages, never interval compliance.
-- [ ] Run new tests and `pytest backend/tests/unit/test_execution_score.py -q`; existing score fixtures must be unchanged, including approved skip and missing-data reasons.
-- [ ] Commit: `feat: derive traceable workout execution findings`.
+- [x] Write paired cases extending a 35-minute prescription to 44 minutes: `assert finding.code == 'cooldown_volume_over'` vs `'work_volume_over'` only when links are exact; auto lap must have `mapping != 'exact'`. Also cover missed repeats, unmatched tail, gaps between recordings, DST/local dates, incomplete charts, missing historical zones and uncertain prescriptions.
+- [x] Run `pytest backend/tests/unit/test_activity_execution.py -q`; confirm failures.
+- [x] Implement Repeat Block expansion, validated explicit mapping, and conservative estimated mapping for unique ordered time/distance boundaries (no claim of measured step identity). Ambiguous boundaries stay unmatched. Compute duration/distance deltas, lap variation and target-time intervals only for valid recorded intervals, excluding pause/gaps; expose denominator/coverage. Do not infer RPE, physiological cause or new readiness thresholds. Feed averages as averages, never interval compliance.
+- [x] Run new tests and `pytest backend/tests/unit/test_execution_score.py -q`; existing score fixtures must be unchanged, including approved skip and missing-data reasons.
+- [x] Commit: `feat: derive traceable workout execution findings`.
 
 ### Task 6: Build workflow-specific evidence and dated recovery context
 

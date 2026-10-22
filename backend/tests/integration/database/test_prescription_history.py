@@ -28,12 +28,12 @@ def test_prescription_history_preserves_fields_and_effective_version(sqlite_sess
             user_id=user.id, plan_id="plan-1", effective_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
             effective_local_date=date(2026, 10, 1), timezone_name="Asia/Taipei", previous_plan_id=None,
         )
-        repository.record_prescription_revision(
+        original_revision_id = repository.record_prescription_revision(
             user_id=user.id, plan_id="plan-1", workout=original,
             effective_at=datetime(2026, 10, 1, tzinfo=timezone.utc), source="generation",
             confidence="known", recommendation_id=None,
         )
-        repository.record_prescription_revision(
+        changed_revision_id = repository.record_prescription_revision(
             user_id=user.id, plan_id="plan-1", workout=changed,
             effective_at=datetime(2026, 10, 15, 8, tzinfo=timezone.utc), source="approved_adjustment",
             confidence="known", recommendation_id="rec-1",
@@ -48,6 +48,8 @@ def test_prescription_history_preserves_fields_and_effective_version(sqlite_sess
         assert len(before) == len(after) == 1
         assert before[0].workout.to_payload() == original.to_payload()
         assert after[0].workout.to_payload() == changed.to_payload()
+        assert before[0].revision_id == original_revision_id
+        assert after[0].revision_id == changed_revision_id
         assert before[0].workout.steps[0].target.rpe == 3
         assert after[0].workout.phase == "base"
         uow.commit()

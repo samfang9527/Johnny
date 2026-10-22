@@ -182,6 +182,34 @@ def test_analysis_rejects_snapshot_from_another_activity_of_same_owner(seeded):
             repo.save_analysis('owner-a', Analysis())
 
 
+def test_analysis_can_cite_two_explicitly_owned_recordings_in_one_session(seeded):
+    with Session(seeded) as session:
+        session.add(ActivityModel(id='activity-a2', user_id='owner-a', provider_connection_id='conn-a',
+                                  provider_activity_id='other-provider-id', started_at=NOW,
+                                  activity_type='running'))
+        session.flush()
+        repo = SqlAlchemyActivityDetailRepository(session)
+        first = repo.save_snapshot(user_id='owner-a', details=details('activity-a'), fetched_at=NOW)
+        second = repo.save_snapshot(user_id='owner-a', details=details('activity-a2'), fetched_at=NOW)
+
+        class Analysis:
+            activity_id = 'activity-a'
+            activity_ids = ('activity-a', 'activity-a2')
+            fingerprint = 'owned-session-analysis'
+            algorithm_version = 'execution-analysis-v1'
+            prescription_revision_id = None
+            snapshot_ids = (first.id, second.id)
+
+            def to_payload(self):
+                return {'activity_ids': list(self.activity_ids)}
+
+        saved = repo.save_analysis('owner-a', Analysis())
+        assert repo.save_analysis('owner-a', Analysis()) == saved
+        Analysis.activity_ids = ('activity-a',)
+        with pytest.raises(ValueError, match='snapshot ownership'):
+            repo.save_analysis('owner-a', Analysis())
+
+
 def test_analysis_fingerprint_cannot_alias_another_activity(seeded):
     with Session(seeded) as session:
         session.add(ActivityModel(id='activity-a2', user_id='owner-a', provider_connection_id='conn-a',

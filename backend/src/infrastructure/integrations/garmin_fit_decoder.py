@@ -124,6 +124,12 @@ def _laps(messages: dict) -> tuple[ActivitySegment, ...]:
             occurrences[step_index] = occurrences.get(step_index, 0) + 1
             step_path = f'fit_step/{step_index}'
             metadata['repeat_occurrence'] = occurrences[step_index]
+            if planned.get('duration_type') == 'time':
+                if (planned_seconds := _number(planned.get('duration_time'))) is not None:
+                    metadata['fit_planned_duration_seconds'] = planned_seconds
+            elif planned.get('duration_type') == 'distance':
+                if (planned_meters := _number(planned.get('duration_distance'))) is not None:
+                    metadata['fit_planned_distance_meters'] = planned_meters
         if trigger in ('manual', 'time', 'distance', 'session_end'):
             metadata['lap_trigger'] = trigger
         start = _time(lap.get('start_time'))

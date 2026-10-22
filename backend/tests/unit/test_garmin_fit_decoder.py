@@ -51,6 +51,7 @@ def test_fit_timer_events_pause_samples_and_repeated_step_occurrences():
     assert result.coverage.state == 'partial'  # sparse synthetic record stream
     assert [segment.step_path for segment in result.segments] == ['fit_step/1', 'fit_step/1']
     assert [segment.metadata['repeat_occurrence'] for segment in result.segments] == [1, 2]
+    assert [segment.metadata['fit_planned_duration_seconds'] for segment in result.segments] == [180, 180]
     assert [segment.timer_seconds for segment in result.segments] == [300, 180]
     samples = result.sample_chunks[0].samples
     assert [sample['timer_running'] for sample in samples] == [True, False, True]

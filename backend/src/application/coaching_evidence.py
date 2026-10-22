@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -15,6 +16,12 @@ class ReviewEvidenceStore(Protocol):
     def list_review_activities(self, user_id, starts_on, ends_on) -> tuple[CompletedActivity, ...]: ...
     def list_prescriptions(self, user_id, starts_on, ends_on, timezone_name, activity_starts) -> tuple[PrescriptionSnapshot, ...]: ...
     def covered_review_dates(self, user_id, starts_on, ends_on, timezone_name, as_of) -> frozenset: ...
+
+
+@dataclass(frozen=True)
+class MatchedExecutionInput:
+    prescription: PrescriptionSnapshot
+    activities: tuple[CompletedActivity, ...]
 
 
 def build_review_evidence(
@@ -62,3 +69,15 @@ def build_review_evidence(
         user_id, period.starts_on, period.ends_on, timezone_name, cutoff,
     )
     return ReviewEvidence(period, timezone_name, cutoff, prescriptions, sessions, covered)
+
+
+def matched_execution_inputs(evidence: ReviewEvidence) -> tuple[MatchedExecutionInput, ...]:
+    """Expose already paired sessions; never infer a new match for analysis."""
+    by_workout = {snapshot.workout_id: snapshot for snapshot in evidence.prescriptions}
+    return tuple(MatchedExecutionInput(by_workout[session.workout_id],
+                 tuple(activity.with_matched_workout(session.workout_id)
+                       if session.status == 'automatic' else activity
+                       for activity in session.activities))
+                 for session in evidence.sessions
+                 if session.status in ('confirmed', 'automatic')
+                 and session.workout_id in by_workout and session.activities)

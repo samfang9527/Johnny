@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from src.application.coaching_evidence import build_review_evidence
+from src.application.coaching_evidence import build_review_evidence, matched_execution_inputs
 from src.domain.activity_health import CompletedActivity
 from src.domain.training_plan import Workout
 from src.domain.training_review import PrescriptionSnapshot, review_period
@@ -89,3 +89,40 @@ def test_unpaired_saturday_at_review_boundary_keeps_sunday_uncertain() -> None:
     result = build_review_evidence(user_id='athlete', period=period, timezone_name='UTC',
                                    as_of=datetime(2026, 10, 18, tzinfo=timezone.utc), store=Store())
     assert score_execution(result).reason == 'ambiguous_pairing'
+
+
+def test_matched_execution_inputs_exposes_existing_session_and_historical_prescription():
+    period = review_period(date(2026, 10, 16))
+    planned = Workout.create(id='w', scheduled_for=date(2026, 10, 15),
+                             workout_type='easy_run', purpose='Aerobic', planned_duration_minutes=35)
+    snapshot = PrescriptionSnapshot('athlete', 'plan', 'w', planned,
+        datetime(2026, 10, 1, tzinfo=timezone.utc), 'generation', 'known', revision_id='revision')
+    run = CompletedActivity.create(id='run', user_id='athlete', source='manual',
+        started_at=datetime(2026, 10, 15, 8, tzinfo=timezone.utc), sport_type='running',
+        duration_seconds=2100, distance_meters=5000, matched_workout_id='w', match_reviewed=True)
+    from src.domain.activity_sessions import match_sessions
+    from src.domain.training_review import ReviewEvidence
+    review = ReviewEvidence(period, 'UTC', datetime(2026, 10, 16, tzinfo=timezone.utc),
+                            (snapshot,), match_sessions((run,), (planned,), 'UTC'), frozenset())
+    inputs = matched_execution_inputs(review)
+    assert len(inputs) == 1
+    assert inputs[0].prescription.revision_id == 'revision'
+    assert inputs[0].activities == (run,)
+
+
+def test_automatic_session_carries_resolved_workout_identity_into_analysis_input():
+    period = review_period(date(2026, 10, 16))
+    planned = Workout.create(id='w', scheduled_for=date(2026, 10, 15),
+                             workout_type='easy_run', purpose='Aerobic', planned_duration_minutes=35)
+    snapshot = PrescriptionSnapshot('athlete', 'plan', 'w', planned,
+        datetime(2026, 10, 1, tzinfo=timezone.utc), 'generation', 'known')
+    run = CompletedActivity.create(id='auto', user_id='athlete', source='manual',
+        started_at=datetime(2026, 10, 15, 8, tzinfo=timezone.utc), sport_type='running',
+        duration_seconds=2100, distance_meters=5000)
+    from src.domain.activity_sessions import match_sessions
+    from src.domain.training_review import ReviewEvidence
+    review = ReviewEvidence(period, 'UTC', datetime(2026, 10, 16, tzinfo=timezone.utc),
+                            (snapshot,), match_sessions((run,), (planned,), 'UTC'), frozenset())
+    inputs = matched_execution_inputs(review)
+    assert len(inputs) == 1
+    assert inputs[0].activities[0].matched_workout_id == 'w'

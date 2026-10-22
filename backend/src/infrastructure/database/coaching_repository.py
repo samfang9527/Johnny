@@ -362,6 +362,7 @@ class SqlAlchemyCoachingRepository:
                 workout=Workout.from_payload(model.workout_payload), effective_at=_utc(model.effective_at),
                 source=model.source, confidence=model.confidence,
                 recommendation_id=model.recommendation_id,
+                revision_id=model.id,
             )
             for model in sorted(chosen.values(), key=lambda model: (model.scheduled_for, model.workout_id))
         )

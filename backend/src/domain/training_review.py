@@ -37,6 +37,7 @@ class PrescriptionSnapshot:
     source: str
     confidence: str
     recommendation_id: str | None = None
+    revision_id: str | None = None
 
 
 @dataclass(frozen=True)
