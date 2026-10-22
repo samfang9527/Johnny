@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from src.domain.activity_sessions import match_sessions, utc
 from src.domain.coaching_fingerprints import canonical_fingerprint
 from src.domain.training_plan import Workout
+from src.domain.workout_recovery import build_workout_recovery
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 from src.infrastructure.database.models import (
@@ -66,6 +67,13 @@ class CoachingApprovalService:
         plan_id = model.training_plan_id
         workout_id = before.get("id")
         advice_date = now.astimezone(zone).date()
+        if "recovery" in payload:
+            recovery = build_workout_recovery(user_id=user_id, advice_date=advice_date,
+                health_metrics=tuple(SqlAlchemyActivityRepository(self._session)
+                    .list_daily_health_metrics_for_user_between(
+                        user_id, advice_date - timedelta(days=1), advice_date)))
+            if canonical_fingerprint(recovery) != canonical_fingerprint(payload["recovery"]):
+                raise CoachingDecisionConflict("recovery_evidence_changed")
         plan = self._plans.get_plan_for_date_raw(user_id, advice_date)
         if plan is None or plan.status != "active" or plan.id != plan_id:
             raise CoachingDecisionConflict("plan_changed")

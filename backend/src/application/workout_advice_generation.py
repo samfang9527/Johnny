@@ -12,6 +12,7 @@ from src.domain.activity_sessions import match_sessions, utc
 from src.domain.coaching_fingerprints import canonical_fingerprint
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
 from src.domain.workout_advice import AdviceEvidence, WorkoutAdviceConstraints, assess_workout_advice
+from src.domain.workout_recovery import build_workout_recovery, recovery_guidance
 
 
 class GenerateWorkoutAdviceHandler:
@@ -48,25 +49,38 @@ class GenerateWorkoutAdviceHandler:
             and utc(item.started_at) <= utc(now)
         )
         sessions = match_sessions(recordings, workouts, timezone_name)
+        recovery = build_workout_recovery(user_id=user_id, advice_date=advice_date,
+            health_metrics=tuple(self._activities.list_daily_health_metrics_for_user_between(
+                user_id, advice_date - timedelta(days=1), advice_date)))
         facts = AdviceEvidence(
             timezone_name=timezone_name,
             matched_today=bool(workout and any(item.workout_id == workout.id for item in sessions)),
             unresolved_today=bool(workout and any(item.status == "needs_review" for item in sessions)),
             activity_sync_usable=activity_sync_usable,
+            recovery_label=recovery["readiness_label"],
+            recovery_observed_date=(date.fromisoformat(recovery["observed_date"])
+                                    if recovery["observed_date"] else None),
         )
         decision = assess_workout_advice(workout=workout, evidence=facts,
                                          constraints=constraints, now=now)
         before = workout.to_payload() if workout else None
         after = decision.after_workout.to_payload() if decision.after_workout else None
+        guidance = decision.guidance + " " + recovery_guidance(recovery)
         evidence_fingerprint = canonical_fingerprint({
             "date": advice_date, "timezone": timezone_name, "workout": before,
             "activities": [(item.id, item.started_at, item.duration_seconds,
                             item.distance_meters, item.matched_workout_id) for item in recordings],
             "constraints": asdict(constraints), "policy": decision.policy_version,
+            "recovery": recovery,
         })
         decision_fingerprint = canonical_fingerprint({
             "workout": before, "after": after, "constraints": asdict(constraints),
             "reason": decision.reason_code, "policy": decision.policy_version,
+            # Distinguish a materially different reason for a recovery proposal,
+            # without re-proposing a rejected action for tiny numeric fluctuations.
+            "recovery_findings": ([name for name, signal in recovery["days"][-1]["signals"].items()
+                                   if signal["level"] in {"caution", "rest"}]
+                                  if decision.reason_code == "same_day_recovery_rest" else []),
         })
         expires_at = datetime.combine(advice_date + timedelta(days=1), time.min,
                                        tzinfo=zone).astimezone(timezone.utc)
@@ -74,7 +88,8 @@ class GenerateWorkoutAdviceHandler:
             "kind": "workout_advice", "advice_date": advice_date.isoformat(),
             "timezone_name": timezone_name, "workout_id": workout.id if workout else None,
             "constraints": asdict(constraints), "mode": decision.mode,
-            "reason_code": decision.reason_code, "guidance": decision.guidance,
+            "reason_code": decision.reason_code, "guidance": guidance,
+            "recovery": recovery,
             "before": before, "after": after,
             "workout_fingerprint": canonical_fingerprint(before) if before else None,
             "evidence_fingerprint": evidence_fingerprint,
@@ -86,7 +101,7 @@ class GenerateWorkoutAdviceHandler:
         if decision.after_workout is not None and plan is not None and workout is not None:
             proposal = Recommendation.create(
                 user_id=user_id, recommendation_type="workout_adjustment", priority="medium",
-                title="今日課表調整建議", rationale=decision.guidance,
+                title="今日課表調整建議", rationale=guidance,
                 evidence=(EvidenceItem.create(source="johnny", metric="adjustment_reason",
                                               value=decision.reason_code),),
                 proposed_action=ProposedAction.adjust_workout(

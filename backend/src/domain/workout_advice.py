@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from src.domain.running import RUNNING_WORKOUT_TYPES
 from src.domain.training_plan import Workout
 
 
-POLICY_VERSION = "adjustment-v1"
+POLICY_VERSION = "adjustment-v2"
 
 
 @dataclass(frozen=True)
@@ -84,5 +84,18 @@ def assess_workout_advice(*, workout: Workout | None, evidence: AdviceEvidence,
     if constraints.feeling == "more_tired":
         return AdviceDecision("no_supported_adjustment", "more_tired",
                               "今天感到較疲倦，請放慢並留意身體狀態；目前沒有可靠的數值調整建議。")
+    if evidence.recovery_observed_date == today - timedelta(days=1):
+        if evidence.recovery_label in {"rest", "caution"}:
+            return AdviceDecision("no_supported_adjustment", "previous_day_recovery_" + evidence.recovery_label,
+                                  "昨天的恢復資料顯示需保守安排；今天資料尚未齊備，請先確認恢復與身體感受，再決定是否訓練。")
+        if evidence.recovery_label == "ready":
+            return AdviceDecision("no_supported_adjustment", "previous_day_recovery_ready",
+                                  "昨天的恢復指標未出現明顯警訊，但無法代表今天；請確認身體感受後保守執行。")
+    if evidence.recovery_observed_date == today and evidence.recovery_label == "caution":
+        return AdviceDecision("no_supported_adjustment", "recovery_caution",
+                              "今天部分恢復指標需要留意，請保守安排並留意身體感受；目前不提出數值調整。")
+    if evidence.recovery_label == "unknown":
+        return AdviceDecision("no_supported_adjustment", "recovery_unavailable",
+                              "恢復資料不足，尚無法判定今天的恢復狀況；請依身體感受保守安排。")
     return AdviceDecision("no_supported_adjustment", "follow_plan",
                           "目前可照原課表保守執行，留意身體感受。")
