@@ -9,7 +9,7 @@ from src.domain.training_analytics import RecoveryService
 
 
 SIGNAL_LABELS = {"sleep": "睡眠", "hrv": "HRV", "stress": "壓力", "body_battery": "Body Battery"}
-RECOVERY_POLICY_VERSION = "workout-recovery-v1"
+RECOVERY_POLICY_VERSION = "workout-recovery-v2"
 
 
 def build_workout_recovery(*, user_id: str, advice_date: date,
@@ -42,16 +42,33 @@ def build_workout_recovery(*, user_id: str, advice_date: date,
         row = {
             "date": day.isoformat(), "readiness_label": assessment.readiness_label,
             "signals": signals,
+            "source": metric.source if metric is not None else None,
             "missing_signals": [name for name in SIGNAL_LABELS if name not in signals],
         }
         days.append(row)
         if metric is not None:
             observed = row
+    latest_signals = {}
+    for name in SIGNAL_LABELS:
+        latest = next(((row, row['signals'][name]) for row in reversed(days)
+                       if name in row['signals']), None)
+        if latest is None:
+            latest_signals[name] = None
+            continue
+        row, signal = latest
+        latest_signals[name] = {
+            **signal, 'date': row['date'], 'source': row['source'],
+            'quality': ('previous_day' if row['date'] != advice_date.isoformat()
+                        else 'partial_current_day' if row['readiness_label'] == 'unknown'
+                        else 'current_day'),
+        }
     return {
         "policy_version": RECOVERY_POLICY_VERSION,
+        "readiness_threshold_policy": "workout-recovery-v1",
         "observed_date": observed["date"] if observed else None,
         "readiness_label": observed["readiness_label"] if observed else "unknown",
         "days": days,
+        "latest_signals": latest_signals,
     }
 
 

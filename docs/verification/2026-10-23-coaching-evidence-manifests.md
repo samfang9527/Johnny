@@ -1,0 +1,9 @@
+# Task 6 — Coaching evidence manifests
+
+The `daily_review` bundle carries yesterday and the seven closed local dates: effective prescriptions, paired session summaries, recorded coverage, owner-scoped execution analyses, and dated health values. The `workout_advice` bundle carries today's selected workout and sessions, a curated Athlete Baseline, the preceding 28 closed dates (seven most recent analyses plus aggregate counts), the next two planned workouts in seven days, constraints, and recovery signals. Both expose their source periods, available/missing action facts and a content fingerprint. Generated text, run IDs and fetch timestamps are excluded from that fingerprint. No activity samples or GPS coordinates enter the manifest.
+
+Recovery provenance is now `workout-recovery-v2`: each usable sleep, HRV, stress and Body Battery signal has its own observation date, source and quality. The decision's readiness label still uses the existing `workout-recovery-v1` thresholds and a single observation day. A partial current day can therefore retain yesterday's HRV as historical context without treating it as today's readiness. A zero HRV baseline remains missing evidence.
+
+Verification: 20 focused Task 6 tests passed on SQLite after the final action-fact change; the two new repository tests also passed on a freshly migrated disposable PostgreSQL database. Before that final action-fact-only change, the full backend suite passed **838 tests with 10 PostgreSQL-only skips** in the default environment and **848 tests with 0 skips** on the disposable PostgreSQL database. The database was dropped after verification. The two dependency deprecation warnings were pre-existing.
+
+Task 6 assembles evidence only. Generation deduplication, structured LLM output and UI presentation remain in Tasks 7–10.

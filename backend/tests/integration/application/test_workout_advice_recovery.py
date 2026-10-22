@@ -62,6 +62,9 @@ def test_today_recovery_proposes_skip_with_evidence_and_requires_acceptance(reco
     assert result["after"]["status"] == "skipped"
     assert result["recovery"]["observed_date"] == "2027-01-16"
     assert result["recovery"]["days"][1]["signals"]["hrv"]["baseline"] == 50
+    assert result["recovery"]["policy_version"] == "workout-recovery-v2"
+    assert result["recovery"]["readiness_threshold_policy"] == "workout-recovery-v1"
+    assert result["recovery"]["latest_signals"]["hrv"]["date"] == "2027-01-16"
     assert all(label in result["guidance"] for label in ("睡眠", "HRV", "壓力", "Body Battery"))
     assert plans.get_plan_for_date_raw("recovery-athlete", TODAY).workouts[0].status == "planned"
     accepted = CoachingApprovalService(session, now=lambda: NOW).accept(
@@ -77,6 +80,7 @@ def test_yesterday_recovery_informs_guidance_without_becoming_today_evidence(rec
     assert result["reason_code"] == "previous_day_recovery_rest"
     assert result["recovery"]["observed_date"] == "2027-01-15"
     assert result["recovery"]["readiness_label"] == "rest"
+    assert result["recovery"]["latest_signals"]["hrv"]["quality"] == "previous_day"
     assert "2027-01-15" in result["guidance"]
     assert "昨天" in result["guidance"]
     assert result.get("recommendation_id") is None
