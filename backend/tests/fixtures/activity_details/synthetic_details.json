@@ -11,7 +11,7 @@
   ],
   "activityDetailMetrics": [
     {"metrics": [0, 121.55555, 125]},
-    {"metrics": [1000, 121.66666, null]},
-    {"metrics": [2000, 121.77777, 130]}
+    {"metrics": [1, 121.66666, null]},
+    {"metrics": [2, 121.77777, 130]}
   ]
 }

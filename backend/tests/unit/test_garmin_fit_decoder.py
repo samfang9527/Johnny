@@ -98,20 +98,19 @@ def test_fit_recorded_channels_win_over_json_overlap_without_double_counting():
     assert sum(segment.distance_meters or 0 for segment in selected.segments) == 500
 
 
-def test_unverified_chart_factor_cannot_override_decoded_fit_speed():
+def test_fit_recording_has_priority_over_calibrated_chart_samples():
     fit = decode_activity_fit(activity_id='a', archive=_recording())
     chart = normalize_activity_details(activity_id='a', resource='details', payload={
         'metricDescriptors': [
             {'metricsIndex': 1, 'key': 'directSpeed', 'unit': {'key': 'mps', 'factor': 0.1}},
             {'metricsIndex': 0, 'key': 'sumElapsedDuration',
              'unit': {'key': 'second', 'factor': 1000}},
-        ], 'activityDetailMetrics': [{'metrics': [10000, 25]},
-                                     {'metrics': [310000, 0]}, {'metrics': [370000, 30]}]})
+        ], 'activityDetailMetrics': [{'metrics': [10, 2.5]},
+                                     {'metrics': [310, 0]}, {'metrics': [370, 3]}]})
     fit_points = fit.sample_chunks[0].samples
     chart_points = chart.sample_chunks[0].samples
-    assert chart_points[0]['raw_elapsed_value'] == 10000
-    assert chart_points[0]['raw_speed_value'] == 25
-    assert chart_points[0].get('speed_mps') is None
+    assert chart_points[0]['elapsed_seconds'] == 10
+    assert chart_points[0]['speed_mps'] == 2.5
     assert fit_points[0]['elapsed_seconds'] == 10
     assert fit_points[0]['speed_mps'] == 2.5
     assert select_execution_evidence((chart, fit)).sample_resource == 'fit'

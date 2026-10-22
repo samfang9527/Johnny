@@ -16,7 +16,7 @@ def test_reordered_chart_descriptors_missing_hr_and_private_fields():
     assert result.coverage.state == 'partial'
     assert len(result.sample_chunks) == 1
     points = result.sample_chunks[0].samples
-    assert [point['raw_timer_value'] for point in points] == [0, 1000, 2000]
+    assert [point['timer_seconds'] for point in points] == [0, 1, 2]
     assert [point.get('heart_rate_bpm') for point in points] == [125, None, 130]
     serialized = json.dumps(result.to_payload())
     for private in ('PRIVATE', '121.55555', 'activityName', 'geoPolyline', 'session_data'):
@@ -34,20 +34,37 @@ def test_unknown_descriptor_unit_cannot_claim_complete_coverage():
     assert result.sample_chunks[0].samples[0].get('elapsed_seconds') is None
 
 
-def test_observed_second_and_meter_descriptor_aliases_preserve_raw_values_and_factors():
+def test_observed_descriptor_values_are_already_in_physical_units():
     result = normalize_activity_details(activity_id='a', resource='details', payload={
         'metricDescriptors': [
             {'metricsIndex': 2, 'key': 'sumDistance', 'unit': {'key': 'meter', 'factor': 100}},
             {'metricsIndex': 0, 'key': 'sumDuration', 'unit': {'key': 'second', 'factor': 1000}},
             {'metricsIndex': 1, 'key': 'sumElapsedDuration', 'unit': {'key': 'second', 'factor': 1000}},
-        ], 'activityDetailMetrics': [{'metrics': [1000, 2000, 1234]}]})
+            {'metricsIndex': 3, 'key': 'directSpeed', 'unit': {'key': 'mps', 'factor': 0.1}},
+        ], 'activityDetailMetrics': [{'metrics': [10, 12, 34, 2.5]}]})
     point = result.sample_chunks[0].samples[0]
-    assert point['raw_timer_value'] == 1000
-    assert point['raw_elapsed_value'] == 2000
-    assert point['raw_distance_value'] == 1234
-    assert result.source_payload['metric_units']['raw_elapsed_value'] == {'unit': 'second', 'factor': 1000}
+    assert point['timer_seconds'] == 10
+    assert point['elapsed_seconds'] == 12
+    assert point['distance_meters'] == 34
+    assert point['speed_mps'] == 2.5
+    assert point['pace_seconds_per_km'] == 400
+    assert result.source_payload['metric_units']['elapsed_seconds'] == {'unit': 'second', 'factor': 1000}
     assert result.coverage.state == 'partial'
-    assert 'elapsed_seconds' in result.coverage.missing_channels
+    assert 'elapsed_seconds' not in result.coverage.missing_channels
+    assert 'descriptor_scale_not_fit_verified' not in result.coverage.limitations
+    assert select_execution_evidence((result,)).sample_resource == 'details'
+
+
+def test_unobserved_chart_factor_does_not_claim_normalized_speed():
+    result = normalize_activity_details(activity_id='a', resource='details', payload={
+        'metricDescriptors': [
+            {'metricsIndex': 0, 'key': 'sumElapsedDuration',
+             'unit': {'key': 'second', 'factor': 1000}},
+            {'metricsIndex': 1, 'key': 'directSpeed',
+             'unit': {'key': 'mps', 'factor': 10}},
+        ], 'activityDetailMetrics': [{'metrics': [10, 2.5]}]})
+    assert result.sample_chunks[0].samples[0] == {'elapsed_seconds': 10}
+    assert 'speed_mps' in result.coverage.missing_channels
 
 
 def test_laps_preserve_timer_elapsed_and_auto_laps_have_no_step_path():
@@ -96,7 +113,7 @@ def test_chart_limit_and_zero_speed_remain_partial():
             {'metricsIndex': 1, 'key': 'directSpeed', 'unit': {'key': 'mps', 'factor': 0.1}},
             {'metricsIndex': 0, 'key': 'sumDuration', 'unit': {'key': 's', 'factor': 1000}},
         ],
-        'activityDetailMetrics': [{'metrics': [i * 1000, 0]} for i in range(2000)],
+        'activityDetailMetrics': [{'metrics': [i, 0]} for i in range(2000)],
     })
     assert result.coverage.state == 'partial'
     assert 'chart_limit_reached' in result.coverage.limitations

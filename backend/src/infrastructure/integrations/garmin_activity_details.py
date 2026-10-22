@@ -14,13 +14,16 @@ from src.domain.activity_details import (
     ActivitySampleChunk, ActivitySegment, DetailCoverage, DetailResource, NormalizedDetails,
 )
 
-SCHEMA_VERSION = 'garmin-json-v1'
+# Three owned Garmin chart/FIT pairs confirmed that chart values are already in
+# seconds, meters, m/s and bpm. The descriptor factor is a shape guard, not a
+# multiplier or divisor for these observed metric/unit combinations.
+SCHEMA_VERSION = 'garmin-json-v2'
 _METRIC_CHANNELS = {
-    'sumDuration': ('raw_timer_value', {'s', 'second'}, 1000.0),
-    'sumElapsedDuration': ('raw_elapsed_value', {'s', 'second'}, 1000.0),
-    'sumDistance': ('raw_distance_value', {'m', 'meter'}, 100.0),
+    'sumDuration': ('timer_seconds', {'s', 'second'}, 1000.0),
+    'sumElapsedDuration': ('elapsed_seconds', {'s', 'second'}, 1000.0),
+    'sumDistance': ('distance_meters', {'m', 'meter'}, 100.0),
     'directHeartRate': ('heart_rate_bpm', {'bpm'}, 1.0),
-    'directSpeed': ('raw_speed_value', {'mps'}, 0.1),
+    'directSpeed': ('speed_mps', {'mps'}, 0.1),
 }
 
 
@@ -151,14 +154,16 @@ def _chart(activity_id: str, payload: dict) -> NormalizedDetails:
         for index, channel in indexes.items():
             if index < len(values) and (value := _number(values[index])) is not None:
                 sample[channel] = value
+        if (speed := sample.get('speed_mps')) is not None and speed > 0:
+            sample['pace_seconds_per_km'] = 1000 / speed
         samples.append(sample)
     chunks = tuple(ActivitySampleChunk(ordinal=index // 2000, samples=tuple(samples[index:index + 2000]))
                    for index in range(0, len(samples), 2000))
-    missing_set = rejected | {'timer_seconds', 'elapsed_seconds', 'distance_meters', 'speed_mps'}
-    if samples and not any('heart_rate_bpm' in sample for sample in samples):
-        missing_set.add('heart_rate_bpm')
+    observed = {channel for sample in samples for channel in sample}
+    missing_set = rejected | ({'timer_seconds', 'elapsed_seconds', 'distance_meters',
+                               'speed_mps', 'heart_rate_bpm'} - observed)
     missing = tuple(sorted(missing_set))
-    limitations = ['chart_sampling_not_recorded', 'descriptor_scale_not_fit_verified']
+    limitations = ['chart_sampling_not_recorded']
     if len(rows) >= 2000:
         limitations.append('chart_limit_reached')
     return NormalizedDetails(activity_id=activity_id, resource='details', schema_version=SCHEMA_VERSION,
