@@ -1,0 +1,17 @@
+{
+  "activityId": 111111111,
+  "activityName": "PRIVATE RUN NAME",
+  "startTimeGMT": "2000-01-01 00:00:00",
+  "session_data": "PRIVATE SESSION",
+  "geoPolylineDTO": {"polyline": "PRIVATE TRACK"},
+  "metricDescriptors": [
+    {"metricsIndex": 2, "key": "directHeartRate", "unit": {"key": "bpm", "factor": 1.0}},
+    {"metricsIndex": 0, "key": "sumDuration", "unit": {"key": "s", "factor": 1000.0}},
+    {"metricsIndex": 1, "key": "directLongitude", "unit": {"key": "degree"}}
+  ],
+  "activityDetailMetrics": [
+    {"metrics": [0, 121.55555, 125]},
+    {"metrics": [1000, 121.66666, null]},
+    {"metrics": [2000, 121.77777, 130]}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "provenance": "Synthetic decoded FIT contract example; not an athlete recording",
+  "lap_mesgs": [
+    {"message_index": 0, "wkt_step_index": 0, "intensity": "warmup", "total_timer_time": 600, "lap_trigger": "manual"},
+    {"message_index": 1, "wkt_step_index": 1, "intensity": "active", "total_timer_time": 180, "lap_trigger": "manual"},
+    {"message_index": 2, "wkt_step_index": 2, "intensity": "recovery", "total_timer_time": 120, "lap_trigger": "manual"},
+    {"message_index": 3, "wkt_step_index": 1, "intensity": "active", "total_timer_time": 180, "lap_trigger": "manual"}
+  ],
+  "event_mesgs": [
+    {"timestamp": "2000-01-01T00:00:00+00:00", "event": "timer", "event_type": "start"},
+    {"timestamp": "2000-01-01T00:05:00+00:00", "event": "timer", "event_type": "stop_all"},
+    {"timestamp": "2000-01-01T00:06:00+00:00", "event": "timer", "event_type": "start"},
+    {"timestamp": "2000-01-01T00:19:00+00:00", "event": "timer", "event_type": "stop_all"}
+  ]
+}

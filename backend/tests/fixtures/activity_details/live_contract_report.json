@@ -1,0 +1,3568 @@
+{
+  "schema_version": "activity-detail-probe-v1",
+  "samples": [
+    {
+      "sample_id": "sample-1",
+      "resources": {
+        "summary": {
+          "status": "available",
+          "fields": {
+            "accessControlRuleDTO": [
+              "dict"
+            ],
+            "accessControlRuleDTO.typeKey": [
+              "str"
+            ],
+            "activityTypeDTO": [
+              "dict"
+            ],
+            "activityTypeDTO.isHidden": [
+              "bool"
+            ],
+            "activityTypeDTO.restricted": [
+              "bool"
+            ],
+            "activityTypeDTO.trimmable": [
+              "bool"
+            ],
+            "activityTypeDTO.typeKey": [
+              "str"
+            ],
+            "eventTypeDTO": [
+              "dict"
+            ],
+            "eventTypeDTO.sortOrder": [
+              "int"
+            ],
+            "eventTypeDTO.typeKey": [
+              "str"
+            ],
+            "isMultiSportParent": [
+              "bool"
+            ],
+            "metadataDTO": [
+              "dict"
+            ],
+            "metadataDTO.activityImages": [
+              "list"
+            ],
+            "metadataDTO.agentString": [
+              "NoneType"
+            ],
+            "metadataDTO.autoCalcCalories": [
+              "bool"
+            ],
+            "metadataDTO.calendarEventInfo": [
+              "NoneType"
+            ],
+            "metadataDTO.childActivityTypes": [
+              "list"
+            ],
+            "metadataDTO.childIds": [
+              "list"
+            ],
+            "metadataDTO.deviceMetaDataDTO": [
+              "dict"
+            ],
+            "metadataDTO.deviceMetaDataDTO.deviceTypePk": [
+              "int"
+            ],
+            "metadataDTO.deviceMetaDataDTO.deviceVersionPk": [
+              "int"
+            ],
+            "metadataDTO.diveNumber": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeAssistModeInfoDTOList": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeBatteryRemaining": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeBatteryUsage": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeMaxAssistModes": [
+              "NoneType"
+            ],
+            "metadataDTO.elevationCorrected": [
+              "bool"
+            ],
+            "metadataDTO.favorite": [
+              "bool"
+            ],
+            "metadataDTO.fileFormat": [
+              "dict"
+            ],
+            "metadataDTO.fileFormat.formatKey": [
+              "str"
+            ],
+            "metadataDTO.gcj02": [
+              "bool"
+            ],
+            "metadataDTO.hasChartData": [
+              "bool"
+            ],
+            "metadataDTO.hasHeatMap": [
+              "bool"
+            ],
+            "metadataDTO.hasHrTimeInZones": [
+              "bool"
+            ],
+            "metadataDTO.hasIntensityIntervals": [
+              "bool"
+            ],
+            "metadataDTO.hasMultiDayActivities": [
+              "bool"
+            ],
+            "metadataDTO.hasPowerTimeInZones": [
+              "bool"
+            ],
+            "metadataDTO.hasRunPowerWindData": [
+              "bool"
+            ],
+            "metadataDTO.hasSplits": [
+              "bool"
+            ],
+            "metadataDTO.isAtpActivity": [
+              "NoneType"
+            ],
+            "metadataDTO.isOriginal": [
+              "bool"
+            ],
+            "metadataDTO.lapCount": [
+              "int"
+            ],
+            "metadataDTO.lastUpdateDate": [
+              "str"
+            ],
+            "metadataDTO.manualActivity": [
+              "bool"
+            ],
+            "metadataDTO.manufacturer": [
+              "str"
+            ],
+            "metadataDTO.personalRecord": [
+              "bool"
+            ],
+            "metadataDTO.runPowerWindDataEnabled": [
+              "bool"
+            ],
+            "metadataDTO.sensors": [
+              "NoneType"
+            ],
+            "metadataDTO.sessionResultType": [
+              "str"
+            ],
+            "metadataDTO.trimmed": [
+              "bool"
+            ],
+            "metadataDTO.uploadedDate": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto": [
+              "dict"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlLarge": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlMedium": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlSmall": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.userPro": [
+              "bool"
+            ],
+            "metadataDTO.userInfoDto.userProfilePk": [
+              "int"
+            ],
+            "metadataDTO.videoUrl": [
+              "NoneType"
+            ],
+            "splitSummaries": [
+              "list"
+            ],
+            "splitSummaries[].averageElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].averageHR": [
+              "float"
+            ],
+            "splitSummaries[].averageMovingSpeed": [
+              "float"
+            ],
+            "splitSummaries[].averagePower": [
+              "float"
+            ],
+            "splitSummaries[].averageRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].averageSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgStepFrequency": [
+              "float"
+            ],
+            "splitSummaries[].avgStepLength": [
+              "float"
+            ],
+            "splitSummaries[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splitSummaries[].bmrCalories": [
+              "float"
+            ],
+            "splitSummaries[].calories": [
+              "float"
+            ],
+            "splitSummaries[].distance": [
+              "float"
+            ],
+            "splitSummaries[].duration": [
+              "float"
+            ],
+            "splitSummaries[].elevationGain": [
+              "float"
+            ],
+            "splitSummaries[].elevationLoss": [
+              "float"
+            ],
+            "splitSummaries[].groundContactTime": [
+              "float"
+            ],
+            "splitSummaries[].maxDistance": [
+              "int"
+            ],
+            "splitSummaries[].maxDistanceWithPrecision": [
+              "float"
+            ],
+            "splitSummaries[].maxElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].maxHR": [
+              "float"
+            ],
+            "splitSummaries[].maxPower": [
+              "float"
+            ],
+            "splitSummaries[].maxRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].maxSpeed": [
+              "float"
+            ],
+            "splitSummaries[].movingDuration": [
+              "float"
+            ],
+            "splitSummaries[].noOfSplits": [
+              "int"
+            ],
+            "splitSummaries[].normalizedPower": [
+              "float"
+            ],
+            "splitSummaries[].splitType": [
+              "str"
+            ],
+            "splitSummaries[].strideLength": [
+              "float"
+            ],
+            "splitSummaries[].totalExerciseReps": [
+              "int"
+            ],
+            "splitSummaries[].verticalOscillation": [
+              "float"
+            ],
+            "splitSummaries[].verticalRatio": [
+              "float"
+            ],
+            "summaryDTO": [
+              "dict"
+            ],
+            "summaryDTO.activityTrainingLoad": [
+              "float"
+            ],
+            "summaryDTO.aerobicTrainingEffectMessage": [
+              "str"
+            ],
+            "summaryDTO.anaerobicTrainingEffect": [
+              "float"
+            ],
+            "summaryDTO.anaerobicTrainingEffectMessage": [
+              "str"
+            ],
+            "summaryDTO.averageHR": [
+              "float"
+            ],
+            "summaryDTO.averageMovingSpeed": [
+              "float"
+            ],
+            "summaryDTO.averagePower": [
+              "float"
+            ],
+            "summaryDTO.averageRunCadence": [
+              "float"
+            ],
+            "summaryDTO.averageSpeed": [
+              "float"
+            ],
+            "summaryDTO.avgElevation": [
+              "float"
+            ],
+            "summaryDTO.beginPotentialStamina": [
+              "float"
+            ],
+            "summaryDTO.bmrCalories": [
+              "float"
+            ],
+            "summaryDTO.calories": [
+              "float"
+            ],
+            "summaryDTO.differenceBodyBattery": [
+              "int"
+            ],
+            "summaryDTO.directWorkoutFeel": [
+              "int"
+            ],
+            "summaryDTO.directWorkoutRpe": [
+              "int"
+            ],
+            "summaryDTO.distance": [
+              "float"
+            ],
+            "summaryDTO.duration": [
+              "float"
+            ],
+            "summaryDTO.elapsedDuration": [
+              "float"
+            ],
+            "summaryDTO.elevationGain": [
+              "float"
+            ],
+            "summaryDTO.elevationLoss": [
+              "float"
+            ],
+            "summaryDTO.endPotentialStamina": [
+              "float"
+            ],
+            "summaryDTO.groundContactTime": [
+              "float"
+            ],
+            "summaryDTO.maxElevation": [
+              "float"
+            ],
+            "summaryDTO.maxHR": [
+              "float"
+            ],
+            "summaryDTO.maxPower": [
+              "float"
+            ],
+            "summaryDTO.maxRunCadence": [
+              "float"
+            ],
+            "summaryDTO.maxSpeed": [
+              "float"
+            ],
+            "summaryDTO.maxVerticalSpeed": [
+              "float"
+            ],
+            "summaryDTO.minActivityLapDuration": [
+              "float"
+            ],
+            "summaryDTO.minAvailableStamina": [
+              "float"
+            ],
+            "summaryDTO.minElevation": [
+              "float"
+            ],
+            "summaryDTO.minHR": [
+              "float"
+            ],
+            "summaryDTO.minPower": [
+              "float"
+            ],
+            "summaryDTO.moderateIntensityMinutes": [
+              "int"
+            ],
+            "summaryDTO.movingDuration": [
+              "float"
+            ],
+            "summaryDTO.normalizedPower": [
+              "float"
+            ],
+            "summaryDTO.steps": [
+              "int"
+            ],
+            "summaryDTO.strideLength": [
+              "float"
+            ],
+            "summaryDTO.totalWork": [
+              "float"
+            ],
+            "summaryDTO.trainingEffect": [
+              "float"
+            ],
+            "summaryDTO.trainingEffectLabel": [
+              "str"
+            ],
+            "summaryDTO.verticalOscillation": [
+              "float"
+            ],
+            "summaryDTO.verticalRatio": [
+              "float"
+            ],
+            "summaryDTO.vigorousIntensityMinutes": [
+              "int"
+            ],
+            "summaryDTO.waterEstimated": [
+              "float"
+            ],
+            "timeZoneUnitDTO": [
+              "dict"
+            ],
+            "timeZoneUnitDTO.factor": [
+              "float"
+            ],
+            "timeZoneUnitDTO.timeZone": [
+              "str"
+            ],
+            "timeZoneUnitDTO.unitKey": [
+              "str"
+            ]
+          },
+          "collection_counts": {
+            "metadataDTO.childIds": 0,
+            "metadataDTO.childActivityTypes": 0,
+            "metadataDTO.activityImages": 0,
+            "splitSummaries": 2
+          },
+          "payload_bytes": 5731,
+          "elapsed_ms": 263
+        },
+        "splits": {
+          "status": "available",
+          "fields": {
+            "eventDTOs": [
+              "list"
+            ],
+            "eventDTOs[].sectionTypeDTO": [
+              "dict"
+            ],
+            "eventDTOs[].sectionTypeDTO.key": [
+              "str"
+            ],
+            "eventDTOs[].sectionTypeDTO.sectionTypeKey": [
+              "str"
+            ],
+            "lapDTOs": [
+              "list"
+            ],
+            "lapDTOs[].averageHR": [
+              "float"
+            ],
+            "lapDTOs[].averageMovingSpeed": [
+              "float"
+            ],
+            "lapDTOs[].averagePower": [
+              "float"
+            ],
+            "lapDTOs[].averageRunCadence": [
+              "float"
+            ],
+            "lapDTOs[].averageSpeed": [
+              "float"
+            ],
+            "lapDTOs[].bmrCalories": [
+              "float"
+            ],
+            "lapDTOs[].calories": [
+              "float"
+            ],
+            "lapDTOs[].connectIQMeasurement": [
+              "list"
+            ],
+            "lapDTOs[].distance": [
+              "float"
+            ],
+            "lapDTOs[].duration": [
+              "float"
+            ],
+            "lapDTOs[].elapsedDuration": [
+              "float"
+            ],
+            "lapDTOs[].elevationGain": [
+              "float"
+            ],
+            "lapDTOs[].elevationLoss": [
+              "float"
+            ],
+            "lapDTOs[].groundContactTime": [
+              "float"
+            ],
+            "lapDTOs[].intensityType": [
+              "str"
+            ],
+            "lapDTOs[].lapIndex": [
+              "int"
+            ],
+            "lapDTOs[].lengthDTOs": [
+              "list"
+            ],
+            "lapDTOs[].maxElevation": [
+              "float"
+            ],
+            "lapDTOs[].maxHR": [
+              "float"
+            ],
+            "lapDTOs[].maxPower": [
+              "float"
+            ],
+            "lapDTOs[].maxRunCadence": [
+              "float"
+            ],
+            "lapDTOs[].maxSpeed": [
+              "float"
+            ],
+            "lapDTOs[].maxVerticalSpeed": [
+              "float"
+            ],
+            "lapDTOs[].messageIndex": [
+              "int"
+            ],
+            "lapDTOs[].minElevation": [
+              "float"
+            ],
+            "lapDTOs[].minPower": [
+              "float"
+            ],
+            "lapDTOs[].movingDuration": [
+              "float"
+            ],
+            "lapDTOs[].normalizedPower": [
+              "float"
+            ],
+            "lapDTOs[].strideLength": [
+              "float"
+            ],
+            "lapDTOs[].totalWork": [
+              "float"
+            ],
+            "lapDTOs[].verticalOscillation": [
+              "float"
+            ],
+            "lapDTOs[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "lapDTOs": 22,
+            "lapDTOs[].lengthDTOs": 0,
+            "lapDTOs[].connectIQMeasurement": 0,
+            "eventDTOs": 2
+          },
+          "payload_bytes": 22599,
+          "elapsed_ms": 754
+        },
+        "typed_splits": {
+          "status": "available",
+          "fields": {
+            "splits": [
+              "list"
+            ],
+            "splits[].averageHR": [
+              "float"
+            ],
+            "splits[].averageMovingSpeed": [
+              "float"
+            ],
+            "splits[].averagePower": [
+              "float"
+            ],
+            "splits[].averageRunCadence": [
+              "float"
+            ],
+            "splits[].averageSpeed": [
+              "float"
+            ],
+            "splits[].avgElapsedDurationVerticalSpeed": [
+              "float"
+            ],
+            "splits[].avgStepLength": [
+              "float"
+            ],
+            "splits[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splits[].bmrCalories": [
+              "float"
+            ],
+            "splits[].calories": [
+              "float"
+            ],
+            "splits[].distance": [
+              "float"
+            ],
+            "splits[].duration": [
+              "float"
+            ],
+            "splits[].elapsedDuration": [
+              "float"
+            ],
+            "splits[].elevationGain": [
+              "float"
+            ],
+            "splits[].elevationLoss": [
+              "float"
+            ],
+            "splits[].endTimeGMT": [
+              "str"
+            ],
+            "splits[].groundContactTime": [
+              "float"
+            ],
+            "splits[].maxHR": [
+              "float"
+            ],
+            "splits[].maxPower": [
+              "float"
+            ],
+            "splits[].maxRunCadence": [
+              "float"
+            ],
+            "splits[].maxSpeed": [
+              "float"
+            ],
+            "splits[].messageIndex": [
+              "int"
+            ],
+            "splits[].movingDuration": [
+              "float"
+            ],
+            "splits[].normalizedPower": [
+              "float"
+            ],
+            "splits[].startElevation": [
+              "float"
+            ],
+            "splits[].strideLength": [
+              "float"
+            ],
+            "splits[].totalExerciseReps": [
+              "int"
+            ],
+            "splits[].type": [
+              "str"
+            ],
+            "splits[].verticalOscillation": [
+              "float"
+            ],
+            "splits[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "splits": 2
+          },
+          "payload_bytes": 2279,
+          "elapsed_ms": 231
+        },
+        "split_summaries": {
+          "status": "available",
+          "fields": {
+            "splitSummaries": [
+              "list"
+            ],
+            "splitSummaries[].averageElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].averageHR": [
+              "float"
+            ],
+            "splitSummaries[].averageMovingSpeed": [
+              "float"
+            ],
+            "splitSummaries[].averagePower": [
+              "float"
+            ],
+            "splitSummaries[].averageRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].averageSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgStepFrequency": [
+              "float"
+            ],
+            "splitSummaries[].avgStepLength": [
+              "float"
+            ],
+            "splitSummaries[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splitSummaries[].bmrCalories": [
+              "float"
+            ],
+            "splitSummaries[].calories": [
+              "float"
+            ],
+            "splitSummaries[].distance": [
+              "float"
+            ],
+            "splitSummaries[].duration": [
+              "float"
+            ],
+            "splitSummaries[].elevationGain": [
+              "float"
+            ],
+            "splitSummaries[].elevationLoss": [
+              "float"
+            ],
+            "splitSummaries[].groundContactTime": [
+              "float"
+            ],
+            "splitSummaries[].maxDistance": [
+              "int"
+            ],
+            "splitSummaries[].maxDistanceWithPrecision": [
+              "float"
+            ],
+            "splitSummaries[].maxElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].maxHR": [
+              "float"
+            ],
+            "splitSummaries[].maxPower": [
+              "float"
+            ],
+            "splitSummaries[].maxRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].maxSpeed": [
+              "float"
+            ],
+            "splitSummaries[].movingDuration": [
+              "float"
+            ],
+            "splitSummaries[].noOfSplits": [
+              "int"
+            ],
+            "splitSummaries[].normalizedPower": [
+              "float"
+            ],
+            "splitSummaries[].splitType": [
+              "str"
+            ],
+            "splitSummaries[].strideLength": [
+              "float"
+            ],
+            "splitSummaries[].totalExerciseReps": [
+              "int"
+            ],
+            "splitSummaries[].verticalOscillation": [
+              "float"
+            ],
+            "splitSummaries[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "splitSummaries": 2
+          },
+          "payload_bytes": 1814,
+          "elapsed_ms": 231
+        },
+        "hr_zones": {
+          "status": "available",
+          "fields": {
+            "[].secsInZone": [
+              "float"
+            ],
+            "[].zoneLowBoundary": [
+              "int"
+            ],
+            "[].zoneNumber": [
+              "int"
+            ]
+          },
+          "collection_counts": {
+            "$": 5
+          },
+          "payload_bytes": 323,
+          "elapsed_ms": 241
+        },
+        "details": {
+          "status": "available",
+          "fields": {
+            "activityDetailMetrics": [
+              "list"
+            ],
+            "activityDetailMetrics[].metrics": [
+              "list"
+            ],
+            "detailsAvailable": [
+              "bool"
+            ],
+            "heartRateDTOs": [
+              "NoneType"
+            ],
+            "measurementCount": [
+              "int"
+            ],
+            "metricDescriptors": [
+              "list"
+            ],
+            "metricDescriptors[].key": [
+              "str"
+            ],
+            "metricDescriptors[].metricsIndex": [
+              "int"
+            ],
+            "metricDescriptors[].unit": [
+              "dict"
+            ],
+            "metricDescriptors[].unit.factor": [
+              "float"
+            ],
+            "metricDescriptors[].unit.key": [
+              "str"
+            ],
+            "metricsCount": [
+              "int"
+            ],
+            "pendingData": [
+              "NoneType"
+            ],
+            "totalMetricsCount": [
+              "int"
+            ]
+          },
+          "collection_counts": {
+            "metricDescriptors": 24,
+            "activityDetailMetrics": 1321,
+            "activityDetailMetrics[].metrics": 24
+          },
+          "sample_count": 1321,
+          "metrics": [
+            {
+              "index": 0,
+              "key": "directRunCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 1,
+              "key": "directPotentialStamina",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 3,
+              "key": "sumMovingDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 4,
+              "key": "directElevation",
+              "unit": "meter",
+              "factor": 100.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 5,
+              "key": "directPower",
+              "unit": "watt",
+              "factor": 1.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 6,
+              "key": "sumElapsedDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 7,
+              "key": "directHeartRate",
+              "unit": "bpm",
+              "factor": 1.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 8,
+              "key": "sumDistance",
+              "unit": "meter",
+              "factor": 100.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 9,
+              "key": "directBodyBattery",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 10,
+              "key": "directFractionalCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 13,
+              "key": "sumDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 14,
+              "key": "directAvailableStamina",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 15,
+              "key": "directSpeed",
+              "unit": "mps",
+              "factor": 0.1,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 16,
+              "key": "directDoubleCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1321,
+              "missing": 0
+            },
+            {
+              "index": 17,
+              "key": "directStrideLength",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1319,
+              "missing": 2
+            },
+            {
+              "index": 18,
+              "key": "sumAccumulatedPower",
+              "unit": "watt",
+              "factor": 1.0,
+              "present": 1319,
+              "missing": 2
+            },
+            {
+              "index": 19,
+              "key": "directVerticalOscillation",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1319,
+              "missing": 2
+            },
+            {
+              "index": 20,
+              "key": "directVerticalSpeed",
+              "unit": "mps",
+              "factor": 0.1,
+              "present": 1320,
+              "missing": 1
+            },
+            {
+              "index": 21,
+              "key": "directVerticalRatio",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1319,
+              "missing": 2
+            },
+            {
+              "index": 22,
+              "key": "directGroundContactTime",
+              "unit": "ms",
+              "factor": 1.0,
+              "present": 1317,
+              "missing": 4
+            },
+            {
+              "index": 23,
+              "key": "directPerformanceCondition",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 541,
+              "missing": 780
+            }
+          ],
+          "sampling": "chart",
+          "complete_recording_verified": false,
+          "payload_bytes": 368686,
+          "elapsed_ms": 1013
+        },
+        "fit": {
+          "status": "available",
+          "recordings": [
+            {
+              "integrity": true,
+              "decode_error_count": 0,
+              "message_counts": {
+                "session_mesgs": 1,
+                "lap_mesgs": 22,
+                "record_mesgs": 2624,
+                "event_mesgs": 2,
+                "workout_mesgs": 0,
+                "workout_step_mesgs": 0
+              },
+              "message_fields": {
+                "session_mesgs": [
+                  "avg_cadence",
+                  "avg_flow",
+                  "avg_fractional_cadence",
+                  "avg_heart_rate",
+                  "avg_power",
+                  "avg_running_cadence",
+                  "avg_stance_time",
+                  "avg_step_length",
+                  "avg_vertical_oscillation",
+                  "avg_vertical_ratio",
+                  "enhanced_avg_speed",
+                  "enhanced_max_speed",
+                  "event",
+                  "event_type",
+                  "first_lap_index",
+                  "max_cadence",
+                  "max_fractional_cadence",
+                  "max_heart_rate",
+                  "max_power",
+                  "max_running_cadence",
+                  "message_index",
+                  "metabolic_calories",
+                  "nec_lat",
+                  "nec_long",
+                  "normalized_power",
+                  "num_laps",
+                  "num_segment_laps",
+                  "sport",
+                  "start_time",
+                  "sub_sport",
+                  "swc_lat",
+                  "swc_long",
+                  "total_anaerobic_training_effect",
+                  "total_ascent",
+                  "total_calories",
+                  "total_cycles",
+                  "total_descent",
+                  "total_distance",
+                  "total_elapsed_time",
+                  "total_grit",
+                  "total_strides",
+                  "total_timer_time",
+                  "total_training_effect",
+                  "total_work",
+                  "training_load_peak",
+                  "trigger",
+                  "workout_feel",
+                  "workout_rpe"
+                ],
+                "lap_mesgs": [
+                  "avg_cadence",
+                  "avg_flow",
+                  "avg_fractional_cadence",
+                  "avg_heart_rate",
+                  "avg_power",
+                  "avg_running_cadence",
+                  "avg_stance_time",
+                  "avg_step_length",
+                  "avg_vertical_oscillation",
+                  "avg_vertical_ratio",
+                  "enhanced_avg_speed",
+                  "enhanced_max_altitude",
+                  "enhanced_max_speed",
+                  "enhanced_min_altitude",
+                  "event",
+                  "event_type",
+                  "intensity",
+                  "lap_trigger",
+                  "max_cadence",
+                  "max_fractional_cadence",
+                  "max_heart_rate",
+                  "max_power",
+                  "max_running_cadence",
+                  "message_index",
+                  "metabolic_calories",
+                  "nec_lat",
+                  "nec_long",
+                  "normalized_power",
+                  "sport",
+                  "start_time",
+                  "sub_sport",
+                  "swc_lat",
+                  "swc_long",
+                  "total_ascent",
+                  "total_calories",
+                  "total_cycles",
+                  "total_descent",
+                  "total_distance",
+                  "total_elapsed_time",
+                  "total_grit",
+                  "total_strides",
+                  "total_timer_time",
+                  "total_work"
+                ],
+                "record_mesgs": [
+                  "accumulated_power",
+                  "activity_type",
+                  "cadence",
+                  "cycle_length16",
+                  "distance",
+                  "enhanced_altitude",
+                  "enhanced_speed",
+                  "fractional_cadence",
+                  "heart_rate",
+                  "power",
+                  "stance_time",
+                  "step_length",
+                  "vertical_oscillation",
+                  "vertical_ratio"
+                ],
+                "event_mesgs": [
+                  "data",
+                  "event",
+                  "event_group",
+                  "event_type",
+                  "timer_trigger"
+                ],
+                "workout_mesgs": [],
+                "workout_step_mesgs": []
+              },
+              "laps_with_step_index": 0,
+              "lap_triggers": {
+                "distance": 21,
+                "session_end": 1
+              },
+              "timer_event_count": 2
+            }
+          ],
+          "payload_bytes": 83652,
+          "elapsed_ms": 871
+        }
+      }
+    },
+    {
+      "sample_id": "sample-2",
+      "resources": {
+        "summary": {
+          "status": "available",
+          "fields": {
+            "accessControlRuleDTO": [
+              "dict"
+            ],
+            "accessControlRuleDTO.typeKey": [
+              "str"
+            ],
+            "activityTypeDTO": [
+              "dict"
+            ],
+            "activityTypeDTO.isHidden": [
+              "bool"
+            ],
+            "activityTypeDTO.restricted": [
+              "bool"
+            ],
+            "activityTypeDTO.trimmable": [
+              "bool"
+            ],
+            "activityTypeDTO.typeKey": [
+              "str"
+            ],
+            "eventTypeDTO": [
+              "dict"
+            ],
+            "eventTypeDTO.sortOrder": [
+              "int"
+            ],
+            "eventTypeDTO.typeKey": [
+              "str"
+            ],
+            "isMultiSportParent": [
+              "bool"
+            ],
+            "metadataDTO": [
+              "dict"
+            ],
+            "metadataDTO.activityImages": [
+              "list"
+            ],
+            "metadataDTO.agentString": [
+              "NoneType"
+            ],
+            "metadataDTO.autoCalcCalories": [
+              "bool"
+            ],
+            "metadataDTO.calendarEventInfo": [
+              "NoneType"
+            ],
+            "metadataDTO.childActivityTypes": [
+              "list"
+            ],
+            "metadataDTO.childIds": [
+              "list"
+            ],
+            "metadataDTO.deviceMetaDataDTO": [
+              "dict"
+            ],
+            "metadataDTO.deviceMetaDataDTO.deviceTypePk": [
+              "int"
+            ],
+            "metadataDTO.deviceMetaDataDTO.deviceVersionPk": [
+              "int"
+            ],
+            "metadataDTO.diveNumber": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeAssistModeInfoDTOList": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeBatteryRemaining": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeBatteryUsage": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeMaxAssistModes": [
+              "NoneType"
+            ],
+            "metadataDTO.elevationCorrected": [
+              "bool"
+            ],
+            "metadataDTO.favorite": [
+              "bool"
+            ],
+            "metadataDTO.fileFormat": [
+              "dict"
+            ],
+            "metadataDTO.fileFormat.formatKey": [
+              "str"
+            ],
+            "metadataDTO.gcj02": [
+              "bool"
+            ],
+            "metadataDTO.hasChartData": [
+              "bool"
+            ],
+            "metadataDTO.hasHeatMap": [
+              "bool"
+            ],
+            "metadataDTO.hasHrTimeInZones": [
+              "bool"
+            ],
+            "metadataDTO.hasIntensityIntervals": [
+              "bool"
+            ],
+            "metadataDTO.hasMultiDayActivities": [
+              "bool"
+            ],
+            "metadataDTO.hasPowerTimeInZones": [
+              "bool"
+            ],
+            "metadataDTO.hasRunPowerWindData": [
+              "bool"
+            ],
+            "metadataDTO.hasSplits": [
+              "bool"
+            ],
+            "metadataDTO.isAtpActivity": [
+              "NoneType"
+            ],
+            "metadataDTO.isOriginal": [
+              "bool"
+            ],
+            "metadataDTO.lapCount": [
+              "int"
+            ],
+            "metadataDTO.lastUpdateDate": [
+              "str"
+            ],
+            "metadataDTO.manualActivity": [
+              "bool"
+            ],
+            "metadataDTO.manufacturer": [
+              "str"
+            ],
+            "metadataDTO.personalRecord": [
+              "bool"
+            ],
+            "metadataDTO.runPowerWindDataEnabled": [
+              "bool"
+            ],
+            "metadataDTO.sensors": [
+              "NoneType"
+            ],
+            "metadataDTO.sessionResultType": [
+              "str"
+            ],
+            "metadataDTO.trimmed": [
+              "bool"
+            ],
+            "metadataDTO.uploadedDate": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto": [
+              "dict"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlLarge": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlMedium": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlSmall": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.userPro": [
+              "bool"
+            ],
+            "metadataDTO.userInfoDto.userProfilePk": [
+              "int"
+            ],
+            "metadataDTO.videoUrl": [
+              "NoneType"
+            ],
+            "splitSummaries": [
+              "list"
+            ],
+            "splitSummaries[].averageElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].averageHR": [
+              "float"
+            ],
+            "splitSummaries[].averageMovingSpeed": [
+              "float"
+            ],
+            "splitSummaries[].averagePower": [
+              "float"
+            ],
+            "splitSummaries[].averageRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].averageSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgStepFrequency": [
+              "float"
+            ],
+            "splitSummaries[].avgStepLength": [
+              "float"
+            ],
+            "splitSummaries[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splitSummaries[].bmrCalories": [
+              "float"
+            ],
+            "splitSummaries[].calories": [
+              "float"
+            ],
+            "splitSummaries[].distance": [
+              "float"
+            ],
+            "splitSummaries[].duration": [
+              "float"
+            ],
+            "splitSummaries[].elevationGain": [
+              "float"
+            ],
+            "splitSummaries[].elevationLoss": [
+              "float"
+            ],
+            "splitSummaries[].groundContactTime": [
+              "float"
+            ],
+            "splitSummaries[].maxDistance": [
+              "int"
+            ],
+            "splitSummaries[].maxDistanceWithPrecision": [
+              "float"
+            ],
+            "splitSummaries[].maxElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].maxHR": [
+              "float"
+            ],
+            "splitSummaries[].maxPower": [
+              "float"
+            ],
+            "splitSummaries[].maxRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].maxSpeed": [
+              "float"
+            ],
+            "splitSummaries[].movingDuration": [
+              "float"
+            ],
+            "splitSummaries[].noOfSplits": [
+              "int"
+            ],
+            "splitSummaries[].normalizedPower": [
+              "float"
+            ],
+            "splitSummaries[].splitType": [
+              "str"
+            ],
+            "splitSummaries[].strideLength": [
+              "float"
+            ],
+            "splitSummaries[].totalExerciseReps": [
+              "int"
+            ],
+            "splitSummaries[].verticalOscillation": [
+              "float"
+            ],
+            "splitSummaries[].verticalRatio": [
+              "float"
+            ],
+            "summaryDTO": [
+              "dict"
+            ],
+            "summaryDTO.activityTrainingLoad": [
+              "float"
+            ],
+            "summaryDTO.aerobicTrainingEffectMessage": [
+              "str"
+            ],
+            "summaryDTO.anaerobicTrainingEffect": [
+              "float"
+            ],
+            "summaryDTO.anaerobicTrainingEffectMessage": [
+              "str"
+            ],
+            "summaryDTO.averageHR": [
+              "float"
+            ],
+            "summaryDTO.averageMovingSpeed": [
+              "float"
+            ],
+            "summaryDTO.averagePower": [
+              "float"
+            ],
+            "summaryDTO.averageRunCadence": [
+              "float"
+            ],
+            "summaryDTO.averageSpeed": [
+              "float"
+            ],
+            "summaryDTO.avgElevation": [
+              "float"
+            ],
+            "summaryDTO.avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "summaryDTO.beginPotentialStamina": [
+              "float"
+            ],
+            "summaryDTO.bmrCalories": [
+              "float"
+            ],
+            "summaryDTO.calories": [
+              "float"
+            ],
+            "summaryDTO.differenceBodyBattery": [
+              "int"
+            ],
+            "summaryDTO.directWorkoutFeel": [
+              "int"
+            ],
+            "summaryDTO.directWorkoutRpe": [
+              "int"
+            ],
+            "summaryDTO.distance": [
+              "float"
+            ],
+            "summaryDTO.duration": [
+              "float"
+            ],
+            "summaryDTO.elapsedDuration": [
+              "float"
+            ],
+            "summaryDTO.elevationGain": [
+              "float"
+            ],
+            "summaryDTO.elevationLoss": [
+              "float"
+            ],
+            "summaryDTO.endPotentialStamina": [
+              "float"
+            ],
+            "summaryDTO.groundContactTime": [
+              "float"
+            ],
+            "summaryDTO.maxElevation": [
+              "float"
+            ],
+            "summaryDTO.maxHR": [
+              "float"
+            ],
+            "summaryDTO.maxPower": [
+              "float"
+            ],
+            "summaryDTO.maxRunCadence": [
+              "float"
+            ],
+            "summaryDTO.maxSpeed": [
+              "float"
+            ],
+            "summaryDTO.maxVerticalSpeed": [
+              "float"
+            ],
+            "summaryDTO.minActivityLapDuration": [
+              "float"
+            ],
+            "summaryDTO.minAvailableStamina": [
+              "float"
+            ],
+            "summaryDTO.minElevation": [
+              "float"
+            ],
+            "summaryDTO.minHR": [
+              "float"
+            ],
+            "summaryDTO.minPower": [
+              "float"
+            ],
+            "summaryDTO.moderateIntensityMinutes": [
+              "int"
+            ],
+            "summaryDTO.movingDuration": [
+              "float"
+            ],
+            "summaryDTO.normalizedPower": [
+              "float"
+            ],
+            "summaryDTO.recoveryHeartRate": [
+              "int"
+            ],
+            "summaryDTO.steps": [
+              "int"
+            ],
+            "summaryDTO.strideLength": [
+              "float"
+            ],
+            "summaryDTO.totalWork": [
+              "float"
+            ],
+            "summaryDTO.trainingEffect": [
+              "float"
+            ],
+            "summaryDTO.trainingEffectLabel": [
+              "str"
+            ],
+            "summaryDTO.verticalOscillation": [
+              "float"
+            ],
+            "summaryDTO.verticalRatio": [
+              "float"
+            ],
+            "summaryDTO.vigorousIntensityMinutes": [
+              "int"
+            ],
+            "summaryDTO.waterEstimated": [
+              "float"
+            ],
+            "timeZoneUnitDTO": [
+              "dict"
+            ],
+            "timeZoneUnitDTO.factor": [
+              "float"
+            ],
+            "timeZoneUnitDTO.timeZone": [
+              "str"
+            ],
+            "timeZoneUnitDTO.unitKey": [
+              "str"
+            ]
+          },
+          "collection_counts": {
+            "metadataDTO.childIds": 0,
+            "metadataDTO.childActivityTypes": 0,
+            "metadataDTO.activityImages": 0,
+            "splitSummaries": 4
+          },
+          "payload_bytes": 7228,
+          "elapsed_ms": 238
+        },
+        "splits": {
+          "status": "available",
+          "fields": {
+            "eventDTOs": [
+              "list"
+            ],
+            "eventDTOs[].sectionTypeDTO": [
+              "dict"
+            ],
+            "eventDTOs[].sectionTypeDTO.key": [
+              "str"
+            ],
+            "eventDTOs[].sectionTypeDTO.sectionTypeKey": [
+              "str"
+            ],
+            "lapDTOs": [
+              "list"
+            ],
+            "lapDTOs[].averageHR": [
+              "float"
+            ],
+            "lapDTOs[].averageMovingSpeed": [
+              "float"
+            ],
+            "lapDTOs[].averagePower": [
+              "float"
+            ],
+            "lapDTOs[].averageRunCadence": [
+              "float"
+            ],
+            "lapDTOs[].averageSpeed": [
+              "float"
+            ],
+            "lapDTOs[].avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "lapDTOs[].bmrCalories": [
+              "float"
+            ],
+            "lapDTOs[].calories": [
+              "float"
+            ],
+            "lapDTOs[].connectIQMeasurement": [
+              "list"
+            ],
+            "lapDTOs[].distance": [
+              "float"
+            ],
+            "lapDTOs[].duration": [
+              "float"
+            ],
+            "lapDTOs[].elapsedDuration": [
+              "float"
+            ],
+            "lapDTOs[].elevationGain": [
+              "float"
+            ],
+            "lapDTOs[].elevationLoss": [
+              "float"
+            ],
+            "lapDTOs[].groundContactTime": [
+              "float"
+            ],
+            "lapDTOs[].intensityType": [
+              "str"
+            ],
+            "lapDTOs[].lapIndex": [
+              "int"
+            ],
+            "lapDTOs[].lengthDTOs": [
+              "list"
+            ],
+            "lapDTOs[].maxElevation": [
+              "float"
+            ],
+            "lapDTOs[].maxHR": [
+              "float"
+            ],
+            "lapDTOs[].maxPower": [
+              "float"
+            ],
+            "lapDTOs[].maxRunCadence": [
+              "float"
+            ],
+            "lapDTOs[].maxSpeed": [
+              "float"
+            ],
+            "lapDTOs[].maxVerticalSpeed": [
+              "float"
+            ],
+            "lapDTOs[].messageIndex": [
+              "int"
+            ],
+            "lapDTOs[].minElevation": [
+              "float"
+            ],
+            "lapDTOs[].minPower": [
+              "float"
+            ],
+            "lapDTOs[].movingDuration": [
+              "float"
+            ],
+            "lapDTOs[].normalizedPower": [
+              "float"
+            ],
+            "lapDTOs[].strideLength": [
+              "float"
+            ],
+            "lapDTOs[].totalWork": [
+              "float"
+            ],
+            "lapDTOs[].verticalOscillation": [
+              "float"
+            ],
+            "lapDTOs[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "lapDTOs": 6,
+            "lapDTOs[].lengthDTOs": 0,
+            "lapDTOs[].connectIQMeasurement": 0,
+            "eventDTOs": 3
+          },
+          "payload_bytes": 6992,
+          "elapsed_ms": 239
+        },
+        "typed_splits": {
+          "status": "available",
+          "fields": {
+            "splits": [
+              "list"
+            ],
+            "splits[].averageHR": [
+              "float"
+            ],
+            "splits[].averageMovingSpeed": [
+              "float"
+            ],
+            "splits[].averagePower": [
+              "float"
+            ],
+            "splits[].averageRunCadence": [
+              "float"
+            ],
+            "splits[].averageSpeed": [
+              "float"
+            ],
+            "splits[].avgElapsedDurationVerticalSpeed": [
+              "float"
+            ],
+            "splits[].avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "splits[].avgStepLength": [
+              "float"
+            ],
+            "splits[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splits[].bmrCalories": [
+              "float"
+            ],
+            "splits[].calories": [
+              "float"
+            ],
+            "splits[].distance": [
+              "float"
+            ],
+            "splits[].duration": [
+              "float"
+            ],
+            "splits[].elapsedDuration": [
+              "float"
+            ],
+            "splits[].elevationGain": [
+              "float"
+            ],
+            "splits[].elevationLoss": [
+              "float"
+            ],
+            "splits[].endTimeGMT": [
+              "str"
+            ],
+            "splits[].groundContactTime": [
+              "float"
+            ],
+            "splits[].maxHR": [
+              "float"
+            ],
+            "splits[].maxPower": [
+              "float"
+            ],
+            "splits[].maxRunCadence": [
+              "float"
+            ],
+            "splits[].maxSpeed": [
+              "float"
+            ],
+            "splits[].messageIndex": [
+              "int"
+            ],
+            "splits[].movingDuration": [
+              "float"
+            ],
+            "splits[].normalizedPower": [
+              "float"
+            ],
+            "splits[].startElevation": [
+              "float"
+            ],
+            "splits[].strideLength": [
+              "float"
+            ],
+            "splits[].totalExerciseReps": [
+              "int"
+            ],
+            "splits[].type": [
+              "str"
+            ],
+            "splits[].verticalOscillation": [
+              "float"
+            ],
+            "splits[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "splits": 10
+          },
+          "payload_bytes": 10086,
+          "elapsed_ms": 259
+        },
+        "split_summaries": {
+          "status": "available",
+          "fields": {
+            "splitSummaries": [
+              "list"
+            ],
+            "splitSummaries[].averageElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].averageHR": [
+              "float"
+            ],
+            "splitSummaries[].averageMovingSpeed": [
+              "float"
+            ],
+            "splitSummaries[].averagePower": [
+              "float"
+            ],
+            "splitSummaries[].averageRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].averageSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgStepFrequency": [
+              "float"
+            ],
+            "splitSummaries[].avgStepLength": [
+              "float"
+            ],
+            "splitSummaries[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splitSummaries[].bmrCalories": [
+              "float"
+            ],
+            "splitSummaries[].calories": [
+              "float"
+            ],
+            "splitSummaries[].distance": [
+              "float"
+            ],
+            "splitSummaries[].duration": [
+              "float"
+            ],
+            "splitSummaries[].elevationGain": [
+              "float"
+            ],
+            "splitSummaries[].elevationLoss": [
+              "float"
+            ],
+            "splitSummaries[].groundContactTime": [
+              "float"
+            ],
+            "splitSummaries[].maxDistance": [
+              "int"
+            ],
+            "splitSummaries[].maxDistanceWithPrecision": [
+              "float"
+            ],
+            "splitSummaries[].maxElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].maxHR": [
+              "float"
+            ],
+            "splitSummaries[].maxPower": [
+              "float"
+            ],
+            "splitSummaries[].maxRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].maxSpeed": [
+              "float"
+            ],
+            "splitSummaries[].movingDuration": [
+              "float"
+            ],
+            "splitSummaries[].noOfSplits": [
+              "int"
+            ],
+            "splitSummaries[].normalizedPower": [
+              "float"
+            ],
+            "splitSummaries[].splitType": [
+              "str"
+            ],
+            "splitSummaries[].strideLength": [
+              "float"
+            ],
+            "splitSummaries[].totalExerciseReps": [
+              "int"
+            ],
+            "splitSummaries[].verticalOscillation": [
+              "float"
+            ],
+            "splitSummaries[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "splitSummaries": 4
+          },
+          "payload_bytes": 3252,
+          "elapsed_ms": 217
+        },
+        "hr_zones": {
+          "status": "available",
+          "fields": {
+            "[].secsInZone": [
+              "float"
+            ],
+            "[].zoneLowBoundary": [
+              "int"
+            ],
+            "[].zoneNumber": [
+              "int"
+            ]
+          },
+          "collection_counts": {
+            "$": 5
+          },
+          "payload_bytes": 322,
+          "elapsed_ms": 206
+        },
+        "details": {
+          "status": "available",
+          "fields": {
+            "activityDetailMetrics": [
+              "list"
+            ],
+            "activityDetailMetrics[].metrics": [
+              "list"
+            ],
+            "detailsAvailable": [
+              "bool"
+            ],
+            "heartRateDTOs": [
+              "NoneType"
+            ],
+            "measurementCount": [
+              "int"
+            ],
+            "metricDescriptors": [
+              "list"
+            ],
+            "metricDescriptors[].key": [
+              "str"
+            ],
+            "metricDescriptors[].metricsIndex": [
+              "int"
+            ],
+            "metricDescriptors[].unit": [
+              "dict"
+            ],
+            "metricDescriptors[].unit.factor": [
+              "float"
+            ],
+            "metricDescriptors[].unit.key": [
+              "str"
+            ],
+            "metricsCount": [
+              "int"
+            ],
+            "pendingData": [
+              "NoneType"
+            ],
+            "totalMetricsCount": [
+              "int"
+            ]
+          },
+          "collection_counts": {
+            "metricDescriptors": 25,
+            "activityDetailMetrics": 1032,
+            "activityDetailMetrics[].metrics": 25
+          },
+          "sample_count": 1032,
+          "metrics": [
+            {
+              "index": 0,
+              "key": "directElevation",
+              "unit": "meter",
+              "factor": 100.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 2,
+              "key": "sumDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 3,
+              "key": "sumElapsedDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 4,
+              "key": "sumMovingDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 5,
+              "key": "directAvailableStamina",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 6,
+              "key": "directPotentialStamina",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 7,
+              "key": "directBodyBattery",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 8,
+              "key": "directGradeAdjustedSpeed",
+              "unit": "mps",
+              "factor": 0.1,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 9,
+              "key": "directHeartRate",
+              "unit": "bpm",
+              "factor": 1.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 11,
+              "key": "sumDistance",
+              "unit": "meter",
+              "factor": 100.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 13,
+              "key": "directSpeed",
+              "unit": "mps",
+              "factor": 0.1,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 14,
+              "key": "directRunCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 15,
+              "key": "directDoubleCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 16,
+              "key": "directFractionalCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 17,
+              "key": "directPower",
+              "unit": "watt",
+              "factor": 1.0,
+              "present": 1032,
+              "missing": 0
+            },
+            {
+              "index": 18,
+              "key": "directVerticalSpeed",
+              "unit": "mps",
+              "factor": 0.1,
+              "present": 1031,
+              "missing": 1
+            },
+            {
+              "index": 19,
+              "key": "directGroundContactTime",
+              "unit": "ms",
+              "factor": 1.0,
+              "present": 994,
+              "missing": 38
+            },
+            {
+              "index": 20,
+              "key": "sumAccumulatedPower",
+              "unit": "watt",
+              "factor": 1.0,
+              "present": 1026,
+              "missing": 6
+            },
+            {
+              "index": 21,
+              "key": "directVerticalRatio",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 993,
+              "missing": 39
+            },
+            {
+              "index": 22,
+              "key": "directVerticalOscillation",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 995,
+              "missing": 37
+            },
+            {
+              "index": 23,
+              "key": "directStrideLength",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 993,
+              "missing": 39
+            },
+            {
+              "index": 24,
+              "key": "directPerformanceCondition",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 804,
+              "missing": 228
+            }
+          ],
+          "sampling": "chart",
+          "complete_recording_verified": false,
+          "payload_bytes": 308531,
+          "elapsed_ms": 984
+        },
+        "fit": {
+          "status": "available",
+          "recordings": [
+            {
+              "integrity": true,
+              "decode_error_count": 0,
+              "message_counts": {
+                "session_mesgs": 1,
+                "lap_mesgs": 6,
+                "record_mesgs": 2038,
+                "event_mesgs": 4,
+                "workout_mesgs": 0,
+                "workout_step_mesgs": 0
+              },
+              "message_fields": {
+                "session_mesgs": [
+                  "avg_cadence",
+                  "avg_flow",
+                  "avg_fractional_cadence",
+                  "avg_grade_adjusted_speed",
+                  "avg_heart_rate",
+                  "avg_power",
+                  "avg_running_cadence",
+                  "avg_stance_time",
+                  "avg_step_length",
+                  "avg_vertical_oscillation",
+                  "avg_vertical_ratio",
+                  "enhanced_avg_speed",
+                  "enhanced_max_speed",
+                  "event",
+                  "event_type",
+                  "first_lap_index",
+                  "max_cadence",
+                  "max_fractional_cadence",
+                  "max_heart_rate",
+                  "max_power",
+                  "max_running_cadence",
+                  "message_index",
+                  "metabolic_calories",
+                  "nec_lat",
+                  "nec_long",
+                  "normalized_power",
+                  "num_laps",
+                  "num_segment_laps",
+                  "sport",
+                  "start_time",
+                  "sub_sport",
+                  "swc_lat",
+                  "swc_long",
+                  "total_anaerobic_training_effect",
+                  "total_ascent",
+                  "total_calories",
+                  "total_cycles",
+                  "total_descent",
+                  "total_distance",
+                  "total_elapsed_time",
+                  "total_grit",
+                  "total_strides",
+                  "total_timer_time",
+                  "total_training_effect",
+                  "total_work",
+                  "training_load_peak",
+                  "trigger",
+                  "workout_feel",
+                  "workout_rpe"
+                ],
+                "lap_mesgs": [
+                  "avg_cadence",
+                  "avg_flow",
+                  "avg_fractional_cadence",
+                  "avg_grade_adjusted_speed",
+                  "avg_heart_rate",
+                  "avg_power",
+                  "avg_running_cadence",
+                  "avg_stance_time",
+                  "avg_step_length",
+                  "avg_vertical_oscillation",
+                  "avg_vertical_ratio",
+                  "enhanced_avg_speed",
+                  "enhanced_max_altitude",
+                  "enhanced_max_speed",
+                  "enhanced_min_altitude",
+                  "event",
+                  "event_type",
+                  "intensity",
+                  "lap_trigger",
+                  "max_cadence",
+                  "max_fractional_cadence",
+                  "max_heart_rate",
+                  "max_power",
+                  "max_running_cadence",
+                  "message_index",
+                  "metabolic_calories",
+                  "nec_lat",
+                  "nec_long",
+                  "normalized_power",
+                  "sport",
+                  "start_time",
+                  "sub_sport",
+                  "swc_lat",
+                  "swc_long",
+                  "total_ascent",
+                  "total_calories",
+                  "total_cycles",
+                  "total_descent",
+                  "total_distance",
+                  "total_elapsed_time",
+                  "total_grit",
+                  "total_strides",
+                  "total_timer_time",
+                  "total_work"
+                ],
+                "record_mesgs": [
+                  "accumulated_power",
+                  "activity_type",
+                  "cadence",
+                  "cycle_length16",
+                  "distance",
+                  "enhanced_altitude",
+                  "enhanced_speed",
+                  "fractional_cadence",
+                  "heart_rate",
+                  "power",
+                  "stance_time",
+                  "step_length",
+                  "vertical_oscillation",
+                  "vertical_ratio"
+                ],
+                "event_mesgs": [
+                  "data",
+                  "event",
+                  "event_group",
+                  "event_type",
+                  "timer_trigger"
+                ],
+                "workout_mesgs": [],
+                "workout_step_mesgs": []
+              },
+              "laps_with_step_index": 0,
+              "lap_triggers": {
+                "distance": 5,
+                "session_end": 1
+              },
+              "timer_event_count": 2
+            }
+          ],
+          "payload_bytes": 78313,
+          "elapsed_ms": 849
+        }
+      }
+    },
+    {
+      "sample_id": "sample-3",
+      "resources": {
+        "summary": {
+          "status": "available",
+          "fields": {
+            "accessControlRuleDTO": [
+              "dict"
+            ],
+            "accessControlRuleDTO.typeKey": [
+              "str"
+            ],
+            "activityTypeDTO": [
+              "dict"
+            ],
+            "activityTypeDTO.isHidden": [
+              "bool"
+            ],
+            "activityTypeDTO.restricted": [
+              "bool"
+            ],
+            "activityTypeDTO.trimmable": [
+              "bool"
+            ],
+            "activityTypeDTO.typeKey": [
+              "str"
+            ],
+            "description": [
+              "str"
+            ],
+            "eventTypeDTO": [
+              "dict"
+            ],
+            "eventTypeDTO.sortOrder": [
+              "int"
+            ],
+            "eventTypeDTO.typeKey": [
+              "str"
+            ],
+            "isMultiSportParent": [
+              "bool"
+            ],
+            "metadataDTO": [
+              "dict"
+            ],
+            "metadataDTO.activityImages": [
+              "list"
+            ],
+            "metadataDTO.agentString": [
+              "NoneType"
+            ],
+            "metadataDTO.autoCalcCalories": [
+              "bool"
+            ],
+            "metadataDTO.calendarEventInfo": [
+              "NoneType"
+            ],
+            "metadataDTO.childActivityTypes": [
+              "list"
+            ],
+            "metadataDTO.childIds": [
+              "list"
+            ],
+            "metadataDTO.deviceMetaDataDTO": [
+              "dict"
+            ],
+            "metadataDTO.deviceMetaDataDTO.deviceTypePk": [
+              "int"
+            ],
+            "metadataDTO.deviceMetaDataDTO.deviceVersionPk": [
+              "int"
+            ],
+            "metadataDTO.diveNumber": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeAssistModeInfoDTOList": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeBatteryRemaining": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeBatteryUsage": [
+              "NoneType"
+            ],
+            "metadataDTO.eBikeMaxAssistModes": [
+              "NoneType"
+            ],
+            "metadataDTO.elevationCorrected": [
+              "bool"
+            ],
+            "metadataDTO.favorite": [
+              "bool"
+            ],
+            "metadataDTO.fileFormat": [
+              "dict"
+            ],
+            "metadataDTO.fileFormat.formatKey": [
+              "str"
+            ],
+            "metadataDTO.gcj02": [
+              "bool"
+            ],
+            "metadataDTO.hasChartData": [
+              "bool"
+            ],
+            "metadataDTO.hasHeatMap": [
+              "bool"
+            ],
+            "metadataDTO.hasHrTimeInZones": [
+              "bool"
+            ],
+            "metadataDTO.hasIntensityIntervals": [
+              "bool"
+            ],
+            "metadataDTO.hasMultiDayActivities": [
+              "bool"
+            ],
+            "metadataDTO.hasPowerTimeInZones": [
+              "bool"
+            ],
+            "metadataDTO.hasRunPowerWindData": [
+              "bool"
+            ],
+            "metadataDTO.hasSplits": [
+              "bool"
+            ],
+            "metadataDTO.isAtpActivity": [
+              "NoneType"
+            ],
+            "metadataDTO.isOriginal": [
+              "bool"
+            ],
+            "metadataDTO.lapCount": [
+              "int"
+            ],
+            "metadataDTO.lastUpdateDate": [
+              "str"
+            ],
+            "metadataDTO.manualActivity": [
+              "bool"
+            ],
+            "metadataDTO.manufacturer": [
+              "str"
+            ],
+            "metadataDTO.personalRecord": [
+              "bool"
+            ],
+            "metadataDTO.runPowerWindDataEnabled": [
+              "bool"
+            ],
+            "metadataDTO.sensors": [
+              "NoneType"
+            ],
+            "metadataDTO.sessionResultType": [
+              "str"
+            ],
+            "metadataDTO.trimmed": [
+              "bool"
+            ],
+            "metadataDTO.uploadedDate": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto": [
+              "dict"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlLarge": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlMedium": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.profileImageUrlSmall": [
+              "str"
+            ],
+            "metadataDTO.userInfoDto.userPro": [
+              "bool"
+            ],
+            "metadataDTO.userInfoDto.userProfilePk": [
+              "int"
+            ],
+            "metadataDTO.videoUrl": [
+              "NoneType"
+            ],
+            "splitSummaries": [
+              "list"
+            ],
+            "splitSummaries[].averageElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].averageHR": [
+              "float"
+            ],
+            "splitSummaries[].averageMovingSpeed": [
+              "float"
+            ],
+            "splitSummaries[].averagePower": [
+              "float"
+            ],
+            "splitSummaries[].averageRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].averageSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgStepFrequency": [
+              "float"
+            ],
+            "splitSummaries[].avgStepLength": [
+              "float"
+            ],
+            "splitSummaries[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splitSummaries[].bmrCalories": [
+              "float"
+            ],
+            "splitSummaries[].calories": [
+              "float"
+            ],
+            "splitSummaries[].distance": [
+              "float"
+            ],
+            "splitSummaries[].duration": [
+              "float"
+            ],
+            "splitSummaries[].elevationGain": [
+              "float"
+            ],
+            "splitSummaries[].elevationLoss": [
+              "float"
+            ],
+            "splitSummaries[].groundContactTime": [
+              "float"
+            ],
+            "splitSummaries[].maxDistance": [
+              "int"
+            ],
+            "splitSummaries[].maxDistanceWithPrecision": [
+              "float"
+            ],
+            "splitSummaries[].maxElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].maxHR": [
+              "float"
+            ],
+            "splitSummaries[].maxPower": [
+              "float"
+            ],
+            "splitSummaries[].maxRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].maxSpeed": [
+              "float"
+            ],
+            "splitSummaries[].movingDuration": [
+              "float"
+            ],
+            "splitSummaries[].noOfSplits": [
+              "int"
+            ],
+            "splitSummaries[].normalizedPower": [
+              "float"
+            ],
+            "splitSummaries[].splitType": [
+              "str"
+            ],
+            "splitSummaries[].strideLength": [
+              "float"
+            ],
+            "splitSummaries[].totalExerciseReps": [
+              "int"
+            ],
+            "splitSummaries[].verticalOscillation": [
+              "float"
+            ],
+            "splitSummaries[].verticalRatio": [
+              "float"
+            ],
+            "summaryDTO": [
+              "dict"
+            ],
+            "summaryDTO.activityTrainingLoad": [
+              "float"
+            ],
+            "summaryDTO.aerobicTrainingEffectMessage": [
+              "str"
+            ],
+            "summaryDTO.anaerobicTrainingEffect": [
+              "float"
+            ],
+            "summaryDTO.anaerobicTrainingEffectMessage": [
+              "str"
+            ],
+            "summaryDTO.averageHR": [
+              "float"
+            ],
+            "summaryDTO.averageMovingSpeed": [
+              "float"
+            ],
+            "summaryDTO.averagePower": [
+              "float"
+            ],
+            "summaryDTO.averageRunCadence": [
+              "float"
+            ],
+            "summaryDTO.averageSpeed": [
+              "float"
+            ],
+            "summaryDTO.avgElevation": [
+              "float"
+            ],
+            "summaryDTO.avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "summaryDTO.beginPotentialStamina": [
+              "float"
+            ],
+            "summaryDTO.bmrCalories": [
+              "float"
+            ],
+            "summaryDTO.calories": [
+              "float"
+            ],
+            "summaryDTO.differenceBodyBattery": [
+              "int"
+            ],
+            "summaryDTO.directWorkoutFeel": [
+              "int"
+            ],
+            "summaryDTO.directWorkoutRpe": [
+              "int"
+            ],
+            "summaryDTO.distance": [
+              "float"
+            ],
+            "summaryDTO.duration": [
+              "float"
+            ],
+            "summaryDTO.elapsedDuration": [
+              "float"
+            ],
+            "summaryDTO.elevationGain": [
+              "float"
+            ],
+            "summaryDTO.elevationLoss": [
+              "float"
+            ],
+            "summaryDTO.endPotentialStamina": [
+              "float"
+            ],
+            "summaryDTO.groundContactTime": [
+              "float"
+            ],
+            "summaryDTO.maxElevation": [
+              "float"
+            ],
+            "summaryDTO.maxHR": [
+              "float"
+            ],
+            "summaryDTO.maxPower": [
+              "float"
+            ],
+            "summaryDTO.maxRunCadence": [
+              "float"
+            ],
+            "summaryDTO.maxSpeed": [
+              "float"
+            ],
+            "summaryDTO.maxVerticalSpeed": [
+              "float"
+            ],
+            "summaryDTO.minActivityLapDuration": [
+              "float"
+            ],
+            "summaryDTO.minAvailableStamina": [
+              "float"
+            ],
+            "summaryDTO.minElevation": [
+              "float"
+            ],
+            "summaryDTO.minHR": [
+              "float"
+            ],
+            "summaryDTO.minPower": [
+              "float"
+            ],
+            "summaryDTO.moderateIntensityMinutes": [
+              "int"
+            ],
+            "summaryDTO.movingDuration": [
+              "float"
+            ],
+            "summaryDTO.normalizedPower": [
+              "float"
+            ],
+            "summaryDTO.steps": [
+              "int"
+            ],
+            "summaryDTO.strideLength": [
+              "float"
+            ],
+            "summaryDTO.totalWork": [
+              "float"
+            ],
+            "summaryDTO.trainingEffect": [
+              "float"
+            ],
+            "summaryDTO.trainingEffectLabel": [
+              "str"
+            ],
+            "summaryDTO.verticalOscillation": [
+              "float"
+            ],
+            "summaryDTO.verticalRatio": [
+              "float"
+            ],
+            "summaryDTO.vigorousIntensityMinutes": [
+              "int"
+            ],
+            "summaryDTO.waterEstimated": [
+              "float"
+            ],
+            "timeZoneUnitDTO": [
+              "dict"
+            ],
+            "timeZoneUnitDTO.factor": [
+              "float"
+            ],
+            "timeZoneUnitDTO.timeZone": [
+              "str"
+            ],
+            "timeZoneUnitDTO.unitKey": [
+              "str"
+            ]
+          },
+          "collection_counts": {
+            "metadataDTO.childIds": 0,
+            "metadataDTO.childActivityTypes": 0,
+            "metadataDTO.activityImages": 0,
+            "splitSummaries": 4
+          },
+          "payload_bytes": 7316,
+          "elapsed_ms": 379
+        },
+        "splits": {
+          "status": "available",
+          "fields": {
+            "eventDTOs": [
+              "list"
+            ],
+            "eventDTOs[].sectionTypeDTO": [
+              "dict"
+            ],
+            "eventDTOs[].sectionTypeDTO.key": [
+              "str"
+            ],
+            "eventDTOs[].sectionTypeDTO.sectionTypeKey": [
+              "str"
+            ],
+            "lapDTOs": [
+              "list"
+            ],
+            "lapDTOs[].averageHR": [
+              "float"
+            ],
+            "lapDTOs[].averageMovingSpeed": [
+              "float"
+            ],
+            "lapDTOs[].averagePower": [
+              "float"
+            ],
+            "lapDTOs[].averageRunCadence": [
+              "float"
+            ],
+            "lapDTOs[].averageSpeed": [
+              "float"
+            ],
+            "lapDTOs[].avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "lapDTOs[].bmrCalories": [
+              "float"
+            ],
+            "lapDTOs[].calories": [
+              "float"
+            ],
+            "lapDTOs[].connectIQMeasurement": [
+              "list"
+            ],
+            "lapDTOs[].distance": [
+              "float"
+            ],
+            "lapDTOs[].duration": [
+              "float"
+            ],
+            "lapDTOs[].elapsedDuration": [
+              "float"
+            ],
+            "lapDTOs[].elevationGain": [
+              "float"
+            ],
+            "lapDTOs[].elevationLoss": [
+              "float"
+            ],
+            "lapDTOs[].groundContactTime": [
+              "float"
+            ],
+            "lapDTOs[].intensityType": [
+              "str"
+            ],
+            "lapDTOs[].lapIndex": [
+              "int"
+            ],
+            "lapDTOs[].lengthDTOs": [
+              "list"
+            ],
+            "lapDTOs[].maxElevation": [
+              "float"
+            ],
+            "lapDTOs[].maxHR": [
+              "float"
+            ],
+            "lapDTOs[].maxPower": [
+              "float"
+            ],
+            "lapDTOs[].maxRunCadence": [
+              "float"
+            ],
+            "lapDTOs[].maxSpeed": [
+              "float"
+            ],
+            "lapDTOs[].maxVerticalSpeed": [
+              "float"
+            ],
+            "lapDTOs[].messageIndex": [
+              "int"
+            ],
+            "lapDTOs[].minElevation": [
+              "float"
+            ],
+            "lapDTOs[].minPower": [
+              "float"
+            ],
+            "lapDTOs[].movingDuration": [
+              "float"
+            ],
+            "lapDTOs[].normalizedPower": [
+              "float"
+            ],
+            "lapDTOs[].strideLength": [
+              "float"
+            ],
+            "lapDTOs[].totalWork": [
+              "float"
+            ],
+            "lapDTOs[].verticalOscillation": [
+              "float"
+            ],
+            "lapDTOs[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "lapDTOs": 13,
+            "lapDTOs[].lengthDTOs": 0,
+            "lapDTOs[].connectIQMeasurement": 0,
+            "eventDTOs": 3
+          },
+          "payload_bytes": 14452,
+          "elapsed_ms": 279
+        },
+        "typed_splits": {
+          "status": "available",
+          "fields": {
+            "splits": [
+              "list"
+            ],
+            "splits[].averageHR": [
+              "float"
+            ],
+            "splits[].averageMovingSpeed": [
+              "float"
+            ],
+            "splits[].averagePower": [
+              "float"
+            ],
+            "splits[].averageRunCadence": [
+              "float"
+            ],
+            "splits[].averageSpeed": [
+              "float"
+            ],
+            "splits[].avgElapsedDurationVerticalSpeed": [
+              "float"
+            ],
+            "splits[].avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "splits[].avgStepLength": [
+              "float"
+            ],
+            "splits[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splits[].bmrCalories": [
+              "float"
+            ],
+            "splits[].calories": [
+              "float"
+            ],
+            "splits[].distance": [
+              "float"
+            ],
+            "splits[].duration": [
+              "float"
+            ],
+            "splits[].elapsedDuration": [
+              "float"
+            ],
+            "splits[].elevationGain": [
+              "float"
+            ],
+            "splits[].elevationLoss": [
+              "float"
+            ],
+            "splits[].endTimeGMT": [
+              "str"
+            ],
+            "splits[].groundContactTime": [
+              "float"
+            ],
+            "splits[].lapIndexes": [
+              "list"
+            ],
+            "splits[].maxHR": [
+              "float"
+            ],
+            "splits[].maxPower": [
+              "float"
+            ],
+            "splits[].maxRunCadence": [
+              "float"
+            ],
+            "splits[].maxSpeed": [
+              "float"
+            ],
+            "splits[].messageIndex": [
+              "int"
+            ],
+            "splits[].movingDuration": [
+              "float"
+            ],
+            "splits[].normalizedPower": [
+              "float"
+            ],
+            "splits[].startElevation": [
+              "float"
+            ],
+            "splits[].strideLength": [
+              "float"
+            ],
+            "splits[].totalExerciseReps": [
+              "int"
+            ],
+            "splits[].type": [
+              "str"
+            ],
+            "splits[].verticalOscillation": [
+              "float"
+            ],
+            "splits[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "splits": 5,
+            "splits[].lapIndexes": 13
+          },
+          "payload_bytes": 5445,
+          "elapsed_ms": 293
+        },
+        "split_summaries": {
+          "status": "available",
+          "fields": {
+            "splitSummaries": [
+              "list"
+            ],
+            "splitSummaries[].averageElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].averageHR": [
+              "float"
+            ],
+            "splitSummaries[].averageMovingSpeed": [
+              "float"
+            ],
+            "splitSummaries[].averagePower": [
+              "float"
+            ],
+            "splitSummaries[].averageRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].averageSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgGradeAdjustedSpeed": [
+              "float"
+            ],
+            "splitSummaries[].avgStepFrequency": [
+              "float"
+            ],
+            "splitSummaries[].avgStepLength": [
+              "float"
+            ],
+            "splitSummaries[].avgVerticalSpeed": [
+              "float"
+            ],
+            "splitSummaries[].bmrCalories": [
+              "float"
+            ],
+            "splitSummaries[].calories": [
+              "float"
+            ],
+            "splitSummaries[].distance": [
+              "float"
+            ],
+            "splitSummaries[].duration": [
+              "float"
+            ],
+            "splitSummaries[].elevationGain": [
+              "float"
+            ],
+            "splitSummaries[].elevationLoss": [
+              "float"
+            ],
+            "splitSummaries[].groundContactTime": [
+              "float"
+            ],
+            "splitSummaries[].maxDistance": [
+              "int"
+            ],
+            "splitSummaries[].maxDistanceWithPrecision": [
+              "float"
+            ],
+            "splitSummaries[].maxElevationGain": [
+              "float"
+            ],
+            "splitSummaries[].maxHR": [
+              "float"
+            ],
+            "splitSummaries[].maxPower": [
+              "float"
+            ],
+            "splitSummaries[].maxRunCadence": [
+              "float"
+            ],
+            "splitSummaries[].maxSpeed": [
+              "float"
+            ],
+            "splitSummaries[].movingDuration": [
+              "float"
+            ],
+            "splitSummaries[].noOfSplits": [
+              "int"
+            ],
+            "splitSummaries[].normalizedPower": [
+              "float"
+            ],
+            "splitSummaries[].splitType": [
+              "str"
+            ],
+            "splitSummaries[].strideLength": [
+              "float"
+            ],
+            "splitSummaries[].totalExerciseReps": [
+              "int"
+            ],
+            "splitSummaries[].verticalOscillation": [
+              "float"
+            ],
+            "splitSummaries[].verticalRatio": [
+              "float"
+            ]
+          },
+          "collection_counts": {
+            "splitSummaries": 4
+          },
+          "payload_bytes": 3321,
+          "elapsed_ms": 242
+        },
+        "hr_zones": {
+          "status": "available",
+          "fields": {
+            "[].secsInZone": [
+              "float"
+            ],
+            "[].zoneLowBoundary": [
+              "int"
+            ],
+            "[].zoneNumber": [
+              "int"
+            ]
+          },
+          "collection_counts": {
+            "$": 5
+          },
+          "payload_bytes": 330,
+          "elapsed_ms": 266
+        },
+        "details": {
+          "status": "available",
+          "fields": {
+            "activityDetailMetrics": [
+              "list"
+            ],
+            "activityDetailMetrics[].metrics": [
+              "list"
+            ],
+            "detailsAvailable": [
+              "bool"
+            ],
+            "heartRateDTOs": [
+              "NoneType"
+            ],
+            "measurementCount": [
+              "int"
+            ],
+            "metricDescriptors": [
+              "list"
+            ],
+            "metricDescriptors[].key": [
+              "str"
+            ],
+            "metricDescriptors[].metricsIndex": [
+              "int"
+            ],
+            "metricDescriptors[].unit": [
+              "dict"
+            ],
+            "metricDescriptors[].unit.factor": [
+              "float"
+            ],
+            "metricDescriptors[].unit.key": [
+              "str"
+            ],
+            "metricsCount": [
+              "int"
+            ],
+            "pendingData": [
+              "NoneType"
+            ],
+            "totalMetricsCount": [
+              "int"
+            ]
+          },
+          "collection_counts": {
+            "metricDescriptors": 25,
+            "activityDetailMetrics": 1970,
+            "activityDetailMetrics[].metrics": 25
+          },
+          "sample_count": 1970,
+          "metrics": [
+            {
+              "index": 0,
+              "key": "directElevation",
+              "unit": "meter",
+              "factor": 100.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 1,
+              "key": "directDoubleCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 2,
+              "key": "directGradeAdjustedSpeed",
+              "unit": "mps",
+              "factor": 0.1,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 3,
+              "key": "directStrideLength",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1944,
+              "missing": 26
+            },
+            {
+              "index": 4,
+              "key": "directPower",
+              "unit": "watt",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 5,
+              "key": "directAvailableStamina",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 6,
+              "key": "directRunCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 8,
+              "key": "sumDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 9,
+              "key": "directVerticalOscillation",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1949,
+              "missing": 21
+            },
+            {
+              "index": 10,
+              "key": "sumAccumulatedPower",
+              "unit": "watt",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 11,
+              "key": "directPotentialStamina",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 12,
+              "key": "sumDistance",
+              "unit": "meter",
+              "factor": 100.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 13,
+              "key": "directVerticalRatio",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1944,
+              "missing": 26
+            },
+            {
+              "index": 14,
+              "key": "directBodyBattery",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 17,
+              "key": "sumElapsedDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 18,
+              "key": "directSpeed",
+              "unit": "mps",
+              "factor": 0.1,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 19,
+              "key": "directHeartRate",
+              "unit": "bpm",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 20,
+              "key": "directFractionalCadence",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 21,
+              "key": "sumMovingDuration",
+              "unit": "second",
+              "factor": 1000.0,
+              "present": 1970,
+              "missing": 0
+            },
+            {
+              "index": 22,
+              "key": "directVerticalSpeed",
+              "unit": "mps",
+              "factor": 0.1,
+              "present": 1969,
+              "missing": 1
+            },
+            {
+              "index": 23,
+              "key": "directGroundContactTime",
+              "unit": "ms",
+              "factor": 1.0,
+              "present": 1942,
+              "missing": 28
+            },
+            {
+              "index": 24,
+              "key": "directPerformanceCondition",
+              "unit": "unverified",
+              "factor": 1.0,
+              "present": 1786,
+              "missing": 184
+            }
+          ],
+          "sampling": "chart",
+          "complete_recording_verified": false,
+          "payload_bytes": 583041,
+          "elapsed_ms": 1165
+        },
+        "fit": {
+          "status": "available",
+          "recordings": [
+            {
+              "integrity": true,
+              "decode_error_count": 0,
+              "message_counts": {
+                "session_mesgs": 1,
+                "lap_mesgs": 13,
+                "record_mesgs": 3916,
+                "event_mesgs": 3,
+                "workout_mesgs": 0,
+                "workout_step_mesgs": 0
+              },
+              "message_fields": {
+                "session_mesgs": [
+                  "avg_cadence",
+                  "avg_flow",
+                  "avg_fractional_cadence",
+                  "avg_grade_adjusted_speed",
+                  "avg_heart_rate",
+                  "avg_power",
+                  "avg_running_cadence",
+                  "avg_stance_time",
+                  "avg_step_length",
+                  "avg_vertical_oscillation",
+                  "avg_vertical_ratio",
+                  "enhanced_avg_speed",
+                  "enhanced_max_speed",
+                  "event",
+                  "event_type",
+                  "first_lap_index",
+                  "max_cadence",
+                  "max_fractional_cadence",
+                  "max_heart_rate",
+                  "max_power",
+                  "max_running_cadence",
+                  "message_index",
+                  "metabolic_calories",
+                  "nec_lat",
+                  "nec_long",
+                  "normalized_power",
+                  "num_laps",
+                  "num_segment_laps",
+                  "sport",
+                  "start_time",
+                  "sub_sport",
+                  "swc_lat",
+                  "swc_long",
+                  "total_anaerobic_training_effect",
+                  "total_ascent",
+                  "total_calories",
+                  "total_cycles",
+                  "total_descent",
+                  "total_distance",
+                  "total_elapsed_time",
+                  "total_grit",
+                  "total_strides",
+                  "total_timer_time",
+                  "total_training_effect",
+                  "total_work",
+                  "training_load_peak",
+                  "trigger",
+                  "workout_feel",
+                  "workout_rpe"
+                ],
+                "lap_mesgs": [
+                  "avg_cadence",
+                  "avg_flow",
+                  "avg_fractional_cadence",
+                  "avg_grade_adjusted_speed",
+                  "avg_heart_rate",
+                  "avg_power",
+                  "avg_running_cadence",
+                  "avg_stance_time",
+                  "avg_step_length",
+                  "avg_vertical_oscillation",
+                  "avg_vertical_ratio",
+                  "enhanced_avg_speed",
+                  "enhanced_max_altitude",
+                  "enhanced_max_speed",
+                  "enhanced_min_altitude",
+                  "event",
+                  "event_type",
+                  "intensity",
+                  "lap_trigger",
+                  "max_cadence",
+                  "max_fractional_cadence",
+                  "max_heart_rate",
+                  "max_power",
+                  "max_running_cadence",
+                  "message_index",
+                  "metabolic_calories",
+                  "nec_lat",
+                  "nec_long",
+                  "normalized_power",
+                  "sport",
+                  "start_time",
+                  "sub_sport",
+                  "swc_lat",
+                  "swc_long",
+                  "total_ascent",
+                  "total_calories",
+                  "total_cycles",
+                  "total_descent",
+                  "total_distance",
+                  "total_elapsed_time",
+                  "total_grit",
+                  "total_strides",
+                  "total_timer_time",
+                  "total_work"
+                ],
+                "record_mesgs": [
+                  "accumulated_power",
+                  "activity_type",
+                  "cadence",
+                  "cycle_length16",
+                  "distance",
+                  "enhanced_altitude",
+                  "enhanced_speed",
+                  "fractional_cadence",
+                  "heart_rate",
+                  "power",
+                  "stance_time",
+                  "step_length",
+                  "vertical_oscillation",
+                  "vertical_ratio"
+                ],
+                "event_mesgs": [
+                  "data",
+                  "event",
+                  "event_group",
+                  "event_type",
+                  "timer_trigger"
+                ],
+                "workout_mesgs": [],
+                "workout_step_mesgs": []
+              },
+              "laps_with_step_index": 0,
+              "lap_triggers": {
+                "distance": 11,
+                "manual": 1,
+                "session_end": 1
+              },
+              "timer_event_count": 2
+            }
+          ],
+          "payload_bytes": 135527,
+          "elapsed_ms": 1663
+        }
+      }
+    }
+  ],
+  "stop_reason": null
+}
