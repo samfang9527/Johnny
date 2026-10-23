@@ -11,11 +11,15 @@ class OpenAIModelGatewayError(RuntimeError):
 
 
 class OpenAIModelGateway:
-    def __init__(self, *, model: str, api_key: str | None = None, client=None) -> None:
+    def __init__(self, *, model: str, api_key: str | None = None, client=None,
+                 timeout_seconds: float = 20, max_retries: int = 0) -> None:
         if not model:
             raise OpenAIModelGatewayError("OpenAI model is required")
+        if timeout_seconds <= 0 or max_retries < 0:
+            raise OpenAIModelGatewayError('Invalid OpenAI call limits')
         self._model = model
-        self._client = client or _openai_client(api_key=api_key)
+        self._client = client or _openai_client(api_key=api_key,
+            timeout_seconds=timeout_seconds, max_retries=max_retries)
         self._api_key = api_key
 
     def complete(self, request: ModelRequest) -> ModelResponse:
@@ -40,12 +44,14 @@ class OpenAIModelGateway:
             raise OpenAIModelGatewayError(_provider_error_summary(exc, api_key=self._api_key)) from exc
 
 
-def _openai_client(*, api_key: str | None):
+def _openai_client(*, api_key: str | None, timeout_seconds: float, max_retries: int):
     try:
         from openai import OpenAI
     except ImportError as exc:
         raise OpenAIModelGatewayError("OpenAI SDK is not installed") from exc
-    return OpenAI(api_key=api_key) if api_key else OpenAI()
+    return OpenAI(api_key=api_key, timeout=timeout_seconds,
+                  max_retries=max_retries) if api_key else OpenAI(
+                      timeout=timeout_seconds, max_retries=max_retries)
 
 
 def _input_messages(request: ModelRequest) -> list[dict[str, str]]:

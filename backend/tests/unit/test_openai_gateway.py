@@ -6,6 +6,20 @@ from src.domain.agent_runtime import ModelRequest
 from src.infrastructure.llm.openai_gateway import OpenAIModelGateway, OpenAIModelGatewayError
 
 
+def test_gateway_bounds_transport_timeout_and_disables_sdk_retries(monkeypatch) -> None:
+    from src.infrastructure.llm import openai_gateway
+    captured = {}
+
+    def client_factory(*, api_key, timeout_seconds, max_retries):
+        captured.update(api_key=api_key, timeout_seconds=timeout_seconds,
+                        max_retries=max_retries)
+        return FakeOpenAIClient(response=_response(output_text='{}'))
+
+    monkeypatch.setattr(openai_gateway, '_openai_client', client_factory)
+    OpenAIModelGateway(model='configured-model', api_key='test-key')
+    assert captured == {'api_key': 'test-key', 'timeout_seconds': 20, 'max_retries': 0}
+
+
 class FakeResponsesResource:
     def __init__(self, response=None, error: Exception | None = None) -> None:
         self._response = response

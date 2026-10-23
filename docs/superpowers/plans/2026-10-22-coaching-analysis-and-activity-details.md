@@ -10,7 +10,7 @@
 
 **Spec:** [已確認的完整改善評估](../../verification/2026-10-22-coaching-complete-improvement-assessment.md)；[Garmin 可行性研究](../../verification/2026-10-22-garmin-activity-detail-feasibility.md)；`CONTEXT.md`、`DESIGN.md`。使用者於 2026-10-22 確認完整範圍並要求準備 implementation plan。
 
-**Status:** Task 1 completed in `81771ee`, pending user review. Tasks 2–12 not started. Live probe completed; no migration, backfill or deployment. User requires a pause after every task.
+**Status:** Tasks 1–7 committed; Task 8 implemented and awaiting user review. Tasks 9–12 have not started. User requires a pause after every task.
 
 ## Global Constraints
 
@@ -156,11 +156,11 @@
 **Files:** Create `backend/src/domain/coaching_analysis.py`, `backend/src/application/coaching_analysis_generation.py`, `backend/tests/unit/test_coaching_analysis_generation.py`; modify `backend/src/infrastructure/llm/settings.py` and existing gateway only for bounded call timeout/retry configuration if needed.
 **Interfaces:** `generate_coaching_analysis(*, evidence: CoachingEvidenceBundle, gateway: ReviewModelGateway|None) -> AnalysisGenerationResult`; result holds validated `CoachingAnalysis`, actual provider/model/token usage and error category. `build_basic_analysis(evidence: CoachingEvidenceBundle, reason: str) -> CoachingAnalysis` uses exactly the same facts and display schema.
 
-- [ ] Write gateway stub tests for JSON, fenced/invalid response, fabricated fact IDs, unsupported numeric/causal claims, proposed canonical changes without recommendation, malicious activity name, timeout, disabled provider and fallback with rich detail. Assert `analysis.analysis_mode == 'rules'` and nonempty interpretation/action on fallback; score cannot be supplied by model.
-- [ ] Run `pytest backend/tests/unit/test_coaching_analysis_generation.py -q`; confirm failures.
-- [ ] Implement versioned Traditional Chinese prompts (`johnny-workout-analysis-v2`, `johnny-review-analysis-v2`) and strict parsing. Model findings select existing fact IDs and actions select allowed action IDs; numeric statements must match referenced fact values/units, otherwise reject. Exact numeric plan changes come from approved action data, not prose. Unknown fields, too-long output and unresolved evidence references fail validation. Enforce shared call limits at transport as well as app level so SDK retries do not multiply attempts. Record fallback reason, not raw provider errors or secrets.
-- [ ] Run tests and a fixed adversarial quality fixture set: check observation → meaning → action, evidence limits, no duplicated score, no unsupported recovery guarantees. Record that validation/evals constrain but do not mathematically guarantee all natural-language truthfulness.
-- [ ] Commit: `feat: generate structured coaching analysis with fallback`.
+- [x] Write gateway stub tests for JSON, fenced/invalid response, fabricated fact IDs, unsupported numeric/causal claims, proposed canonical changes without recommendation, malicious activity name, timeout, disabled provider and fallback with rich detail. Assert `analysis.analysis_mode == 'rules'` and nonempty interpretation/action on fallback; score cannot be supplied by model.
+- [x] Run `pytest backend/tests/unit/test_coaching_analysis_generation.py -q`; confirm failures.
+- [x] Implement versioned Traditional Chinese prompts (`johnny-workout-analysis-v2`, `johnny-review-analysis-v2`) and strict parsing. Model findings select existing fact IDs and actions select allowed action IDs; numeric statements must match referenced fact values/units, otherwise reject. Exact numeric plan changes come from approved action data, not prose. Unknown fields, too-long output and unresolved evidence references fail validation. Enforce shared call limits at transport as well as app level so SDK retries do not multiply attempts. Record fallback reason, not raw provider errors or secrets.
+- [x] Run tests and a fixed adversarial quality fixture set: check observation → meaning → action, evidence limits, no duplicated score, no unsupported recovery guarantees. Record that validation/evals constrain but do not mathematically guarantee all natural-language truthfulness.
+- [x] Commit: `feat: generate structured coaching analysis with fallback`.
 
 ### Task 9: Wire both workflows, provenance and safe approvals
 
