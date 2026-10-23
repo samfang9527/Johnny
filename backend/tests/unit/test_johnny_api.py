@@ -1,8 +1,27 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from src.api.dependencies import get_session
+from src.api.routes.johnny import _queue_handler
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 from tests.unit.api_test_helpers import create_sqlite_test_client
+
+
+def test_v2_queue_freezes_same_configured_provider_for_review_and_advice(monkeypatch):
+    client = create_sqlite_test_client()
+    monkeypatch.setenv('JOHNNY_COACHING_ANALYSIS_V2_ENABLED', 'true')
+    monkeypatch.setenv('LLM_API_KEY', 'fake-key')
+    monkeypatch.setenv('LLM_MODEL', 'fake-model')
+    scope = client.app.dependency_overrides[get_session]()
+    session = next(scope)
+    review = _queue_handler(session, review=True)
+    advice = _queue_handler(session)
+    assert review._prompt_version == 'johnny-review-analysis-v2'
+    assert advice._prompt_version == 'johnny-workout-analysis-v2'
+    assert (review._provider, review._model) == ('openai', 'fake-model')
+    assert (advice._provider, advice._model) == ('openai', 'fake-model')
+    scope.close()
 
 
 def test_overview_keeps_review_and_advice_independent():
@@ -36,7 +55,12 @@ def test_overview_keeps_review_and_advice_independent():
     scope.close()
 
 
-def test_manual_advice_request_is_idempotent_and_never_enqueues_review():
+@pytest.mark.parametrize('structured', [False, True])
+def test_manual_advice_request_is_idempotent_and_never_enqueues_review(monkeypatch, structured):
+    if structured:
+        monkeypatch.setenv('JOHNNY_COACHING_ANALYSIS_V2_ENABLED', 'true')
+        monkeypatch.delenv('LLM_API_KEY', raising=False)
+        monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     client = create_sqlite_test_client()
     headers = {"X-Johnny-User-Id": "manual-athlete"}
     body = {"client_request_id": "63e9c25b-1af0-4277-9e6f-710aa3b3fb06",

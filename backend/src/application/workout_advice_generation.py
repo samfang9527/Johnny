@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
 
 from src.application.coaching_analysis_evidence import build_coaching_evidence
+from src.application.coaching_analysis_generation import AnalysisGenerationResult
 from src.application.training_analytics import resolve_plan_for_date
 from src.domain.activity_sessions import match_sessions, utc
 from src.domain.coaching_fingerprints import canonical_fingerprint
+from src.domain.coaching_analysis import CoachingAction
 from src.domain.recommendation_approval import EvidenceItem, ProposedAction, Recommendation
 from src.domain.workout_advice import AdviceEvidence, WorkoutAdviceConstraints, assess_workout_advice
 from src.domain.workout_recovery import build_workout_recovery, recovery_guidance
@@ -18,10 +20,14 @@ from src.domain.workout_recovery import build_workout_recovery, recovery_guidanc
 
 class GenerateWorkoutAdviceHandler:
     def __init__(self, *, coaching, plans, activities,
-                 now: Callable[[], datetime] | None = None, analysis_evidence=None) -> None:
+                 now: Callable[[], datetime] | None = None, analysis_evidence=None,
+                 gateway=None, analysis_generator=None) -> None:
         self._coaching = coaching
         self._plans = plans
         self._activities = activities
+        self._gateway = gateway
+        self._analysis_generator = analysis_generator
+        self.last_analysis_result: AnalysisGenerationResult | None = None
         self._now = now or (lambda: datetime.now(timezone.utc))
         if analysis_evidence is None and hasattr(coaching, '_session'):
             from src.infrastructure.database.coaching_analysis_evidence_repository import (
@@ -78,6 +84,18 @@ class GenerateWorkoutAdviceHandler:
         before = workout.to_payload() if workout else None
         after = decision.after_workout.to_payload() if decision.after_workout else None
         guidance = decision.guidance + " " + recovery_guidance(recovery)
+        analysis_result = None
+        if self._analysis_generator is not None and bundle is not None:
+            analysis_result = self._analysis_generator(evidence=bundle, gateway=self._gateway)
+            analysis = analysis_result.analysis
+            if decision.after_workout is not None:
+                refs = analysis.evidence_refs or ('evidence:window',)
+                analysis = replace(analysis, headline='今日課表有調整建議',
+                    summary=decision.guidance,
+                    actions=(CoachingAction('inspect_evidence',
+                        '先檢視並確認課表調整建議。', refs[:1]),))
+            guidance = f'{analysis.headline}。{analysis.summary}'
+            self.last_analysis_result = analysis_result
         evidence_fingerprint = canonical_fingerprint({
             "date": advice_date, "timezone": timezone_name, "workout": before,
             "activities": [(item.id, item.started_at, item.duration_seconds,
@@ -113,6 +131,13 @@ class GenerateWorkoutAdviceHandler:
             payload['legacy_evidence_fingerprint'] = payload['evidence_fingerprint']
             payload['evidence_manifest'] = bundle.manifest
             payload['evidence_fingerprint'] = bundle.fingerprint
+        if analysis_result is not None:
+            payload['analysis'] = analysis.to_payload()
+            payload['analysis_provenance'] = {
+                'provider': analysis_result.provider, 'model': analysis_result.model,
+                'token_usage': analysis_result.token_usage.to_payload(),
+                'error_category': analysis_result.error_category,
+                'attempts': analysis_result.attempts}
         proposal = None
         if decision.after_workout is not None and plan is not None and workout is not None:
             proposal = Recommendation.create(

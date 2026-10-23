@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import re
 from typing import Protocol
 
@@ -16,6 +17,11 @@ from src.domain.coaching_analysis import CoachingAction, CoachingAnalysis, Coach
 
 PROMPT_VERSIONS = {'daily_review': 'johnny-review-analysis-v2',
                    'workout_advice': 'johnny-workout-analysis-v2'}
+
+
+def coaching_analysis_v2_enabled() -> bool:
+    return os.getenv('JOHNNY_COACHING_ANALYSIS_V2_ENABLED', '').strip().lower() in {
+        '1', 'true', 'yes', 'on'}
 MAX_ATTEMPTS = 2
 MAX_RESPONSE_BYTES = 12_000
 UNSUPPORTED = re.compile(

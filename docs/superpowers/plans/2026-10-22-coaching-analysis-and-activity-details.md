@@ -10,7 +10,7 @@
 
 **Spec:** [已確認的完整改善評估](../../verification/2026-10-22-coaching-complete-improvement-assessment.md)；[Garmin 可行性研究](../../verification/2026-10-22-garmin-activity-detail-feasibility.md)；`CONTEXT.md`、`DESIGN.md`。使用者於 2026-10-22 確認完整範圍並要求準備 implementation plan。
 
-**Status:** Tasks 1–7 committed; Task 8 implemented and awaiting user review. Tasks 9–12 have not started. User requires a pause after every task.
+**Status:** Tasks 1–8 committed; Task 9 implemented and awaiting user review. Tasks 10–12 have not started. User requires a pause after every task.
 
 ## Global Constraints
 
@@ -167,11 +167,11 @@
 **Files:** Modify `backend/src/application/workout_advice_generation.py`, `backend/src/application/training_review_generation.py`, `backend/src/application/coaching_approval.py`, `backend/src/api/routes/johnny.py`, `scripts/agent_runtime.py`; create `backend/tests/integration/application/test_structured_coaching_flows.py`; extend `backend/tests/unit/test_johnny_api.py`, `backend/tests/integration/application/test_agent_runtime_worker_scheduler.py`.
 **Interfaces:** Both handler constructors accept `analysis_evidence` and `analysis_generator`; existing handle arguments remain compatible. Result adds `analysis: CoachingAnalysis payload`; guidance/narrative is derived short compatibility text. `_queue_handler` resolves configured provider for both workflows and stores matching prompt/model provenance.
 
-- [ ] Write end-to-end fake-provider tests: requested advice reaches gateway; review reaches gateway for no-plan activity/missed/uncertain cases too; model failure publishes useful basic result; `assert plan_before == plan_after` until acceptance; invalidated manifest cannot be accepted. Assert one workflow result does not overwrite the other's content and unchanged evidence leaves the other's freshness intact.
-- [ ] Run `pytest backend/tests/integration/application/test_structured_coaching_flows.py backend/tests/unit/test_johnny_api.py -q`; confirm failures.
-- [ ] Wire completed summary sync through detail batch continuation, then evidence/analysis/generation. Persist actual model usage and mode in run/output; local-only is explicit rules mode. Keep same-day scope, race/started workout restrictions, constraints and exact before/after recommendation semantics. Remove raw recovery-value dump from default guidance, retain values in evidence. Honor manual request IDs and date expiration throughout delayed sync.
-- [ ] Run suites plus existing workout advice flow/recovery/invalidation, training review generation and worker scheduler tests; verify unavailable detail reduces analysis depth without declaring a completed activity missed.
-- [ ] Commit: `feat: connect coaching analysis to review and advice workflows`.
+- [x] Write end-to-end fake-provider tests: requested advice reaches gateway; review reaches gateway for no-plan activity/missed/uncertain cases too; model failure publishes useful basic result; `assert plan_before == plan_after` until acceptance; invalidated manifest cannot be accepted. Assert one workflow result does not overwrite the other's content and unchanged evidence leaves the other's freshness intact.
+- [x] Run `pytest backend/tests/integration/application/test_structured_coaching_flows.py backend/tests/unit/test_johnny_api.py -q`; confirm failures.
+- [x] Wire completed summary sync through detail batch continuation, then evidence/analysis/generation. Persist actual model usage and mode in run/output; local-only is explicit rules mode. Keep same-day scope, race/started workout restrictions, constraints and exact before/after recommendation semantics. Remove raw recovery-value dump from default guidance, retain values in evidence. Honor manual request IDs and date expiration throughout delayed sync.
+- [x] Run suites plus existing workout advice flow/recovery/invalidation, training review generation and worker scheduler tests; verify unavailable detail reduces analysis depth without declaring a completed activity missed.
+- [x] Commit: `feat: connect coaching analysis to review and advice workflows`.
 
 ### Task 10: Expose compatible APIs and evidence freshness
 

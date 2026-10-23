@@ -8,6 +8,7 @@ from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
 from src.application.coaching_analysis_evidence import build_coaching_evidence
+from src.application.coaching_analysis_generation import AnalysisGenerationResult
 from src.application.coaching_evidence import build_review_evidence
 from src.domain.agent_runtime import ModelRequest, ModelResponse
 from src.domain.execution_score import score_execution
@@ -42,10 +43,13 @@ def _execution_comparison(row: dict) -> str | None:
 
 class GenerateTrainingReviewHandler:
     def __init__(self, *, coaching, evidence, gateway: ReviewModelGateway | None = None,
-                 now: Callable[[], datetime] | None = None, analysis_evidence=None) -> None:
+                 now: Callable[[], datetime] | None = None, analysis_evidence=None,
+                 analysis_generator=None) -> None:
         self._coaching = coaching
         self._evidence = evidence
         self._gateway = gateway
+        self._analysis_generator = analysis_generator
+        self.last_analysis_result: AnalysisGenerationResult | None = None
         self._now = now or (lambda: datetime.now(timezone.utc))
         if analysis_evidence is None and hasattr(coaching, '_session'):
             from src.infrastructure.database.coaching_analysis_evidence_repository import (
@@ -114,7 +118,7 @@ class GenerateTrainingReviewHandler:
                        if (description := _execution_comparison(row))]
         if comparisons:
             yesterday_summary += " " + " ".join(comparisons)
-            if self._gateway is not None:
+            if self._gateway is not None and self._analysis_generator is None:
                 try:
                     response = self._gateway.complete(ModelRequest(
                         user_id=user_id, workflow_name="daily_review",
@@ -152,6 +156,12 @@ class GenerateTrainingReviewHandler:
         else:
             narrative = (f"{yesterday_summary} 過去七天課表執行分數 {score.value} 分；"
                          f"完成 {score.completed_count} 堂、確認未完成 {score.missed_count} 堂。")
+        analysis_result = None
+        if self._analysis_generator is not None and bundle is not None:
+            analysis_result = self._analysis_generator(evidence=bundle, gateway=self._gateway)
+            self.last_analysis_result = analysis_result
+            analysis = analysis_result.analysis
+            narrative = f'{analysis.headline}。{analysis.summary}'
         result = {
             "kind": "daily_review", "publication_date": publication_date.isoformat(),
             "reviewed_date": period.reviewed_date.isoformat(),
@@ -165,6 +175,13 @@ class GenerateTrainingReviewHandler:
         if bundle is not None:
             result['evidence_manifest'] = bundle.manifest
             result['evidence_fingerprint'] = bundle.fingerprint
+        if analysis_result is not None:
+            result['analysis'] = analysis.to_payload()
+            result['analysis_provenance'] = {
+                'provider': analysis_result.provider, 'model': analysis_result.model,
+                'token_usage': analysis_result.token_usage.to_payload(),
+                'error_category': analysis_result.error_category,
+                'attempts': analysis_result.attempts}
         if not self._coaching.publish_review(reservation, result):
             raise ValueError("review inputs changed or a newer generation owns this date")
         return result

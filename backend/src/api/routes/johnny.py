@@ -14,6 +14,7 @@ from src.api.schemas.agent_runs import QueuedAgentRunResponse
 from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
 from src.api.schemas.johnny import WorkoutAdviceRequest
 from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.coaching_analysis_generation import PROMPT_VERSIONS, coaching_analysis_v2_enabled
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
 from src.infrastructure.database.agent_task_queue import SqlAlchemyAgentTaskQueue
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
@@ -39,11 +40,14 @@ def _local_context(session, user_id: str):
 
 
 def _queue_handler(session, *, review: bool = False):
-    provider, model = (resolve_queued_training_plan_provider() if review else
+    structured = coaching_analysis_v2_enabled()
+    provider, model = (resolve_queued_training_plan_provider() if review or structured else
                        ("local", "deterministic-local-companion"))
     return QueueAgentRunHandler(
         runs=SqlAlchemyAgentRunRepository(session), queue=SqlAlchemyAgentTaskQueue(session),
-        prompt_version="johnny-review-analysis-v1" if review else "johnny-coaching-v1",
+        prompt_version=(PROMPT_VERSIONS['daily_review' if review else 'workout_advice']
+                        if structured else
+                        "johnny-review-analysis-v1" if review else "johnny-coaching-v1"),
         provider=provider, model=model,
     )
 

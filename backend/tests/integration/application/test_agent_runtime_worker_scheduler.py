@@ -89,6 +89,91 @@ def test_schedule_once_queues_independent_reviews_at_local_four(sqlite_session_f
             AgentTaskModel.task_type == "daily_advice.sync")))
 
 
+def test_v2_scheduled_local_review_records_rules_mode_and_prompt(sqlite_session_factory, monkeypatch) -> None:
+    monkeypatch.setenv('JOHNNY_COACHING_ANALYSIS_V2_ENABLED', 'true')
+    monkeypatch.delenv('LLM_API_KEY', raising=False)
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    Base.metadata.create_all(sqlite_session_factory.kw['bind'])
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        _create_context_ready_user(uow.session, 'v2-local')
+        today = datetime.now(timezone.utc).date()
+        schedule_once(uow.session, now=datetime.combine(today, datetime.min.time(),
+                      tzinfo=timezone.utc) + timedelta(hours=4))
+        assert work_drain(uow.session, max_tasks=3) >= 2
+        run = uow.session.scalar(select(AgentRunModel).where(
+            AgentRunModel.user_id == 'v2-local', AgentRunModel.workflow_name == 'daily_review'))
+        assert run.prompt_version == 'johnny-review-analysis-v2'
+        assert run.metadata_json['analysis_mode'] == 'rules'
+        assert run.provider == 'local'
+        from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
+        result = SqlAlchemyCoachingRepository(uow.session).get_review_slot('v2-local', today)['current']
+        assert result['analysis']['fallback_reason'] == 'disabled'
+
+
+def test_v2_advice_worker_records_model_usage_and_falls_back_if_credentials_disappear(
+        sqlite_session_factory, monkeypatch) -> None:
+    import json
+    from src.application.coaching_analysis_generation import PROMPT_VERSIONS
+    from src.domain.agent_runtime import AgentRun, TokenUsage
+    from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
+
+    Base.metadata.create_all(sqlite_session_factory.kw['bind'])
+    with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
+        ensure_current_user(uow.session, CurrentUser(id='v2-advice'))
+        today = datetime.now(timezone.utc).date()
+        request = dict(advice_date=today.isoformat(), timezone_name='UTC', workout_id=None,
+                       constraints={}, manual_only=True)
+
+        class Gateway:
+            def __init__(self, **kwargs):
+                pass
+
+            def complete(self, model_request):
+                return ModelResponse(content=json.dumps({
+                    'headline': '先確認今日安排', 'summary': '依身體狀況保守安排。',
+                    'findings': [{'observation': '今天沒有課表。',
+                                  'interpretation': '先檢視目前安排。',
+                                  'evidence_refs': ['evidence:window']}],
+                    'actions': [{'action_id': 'rest', 'text': '先休息並確認安排。',
+                                 'evidence_refs': ['evidence:window']}],
+                    'limitations': [], 'evidence_refs': ['evidence:window'],
+                }, ensure_ascii=False), provider='openai', model='fake-model',
+                    token_usage=TokenUsage(input_tokens=5, output_tokens=7))
+
+        monkeypatch.setattr(agent_runtime, 'OpenAIModelGateway', Gateway)
+        monkeypatch.setenv('LLM_API_KEY', 'fake-key')
+        run_store = SqlAlchemyAgentRunRepository(uow.session)
+        run = run_store.create_run(AgentRun.queue(user_id='v2-advice', trigger_type='manual',
+            workflow_name='workout_advice', prompt_version=PROMPT_VERSIONS['workout_advice'],
+            provider='openai', model='fake-model'))
+        completed = agent_runtime._dispatch_workflow(uow.session, run, 'workout_advice', request)
+        assert completed.metadata['analysis_mode'] == 'llm'
+        assert completed.metadata['requested_model'] == 'fake-model'
+        assert (completed.input_tokens, completed.output_tokens) == (5, 7)
+        result = SqlAlchemyCoachingRepository(uow.session).get_advice_slot(
+            'v2-advice', today, 'no-workout')['current']
+        assert result['analysis']['analysis_mode'] == 'llm'
+        assert result['analysis_provenance']['token_usage']['total_tokens'] == 12
+
+        monkeypatch.delenv('LLM_API_KEY')
+        fallback_run = run_store.create_run(AgentRun.queue(user_id='v2-advice', trigger_type='manual',
+            workflow_name='workout_advice', prompt_version=PROMPT_VERSIONS['workout_advice'],
+            provider='openai', model='fake-model'))
+        fallback = agent_runtime._dispatch_workflow(
+            uow.session, fallback_run, 'workout_advice', request)
+        assert fallback.metadata['analysis_mode'] == 'llm'  # unchanged evidence reuses published revision
+        assert fallback.metadata['analysis_attempt_mode'] == 'rules'
+        assert fallback.metadata['analysis_error_category'] == 'provider_error'
+        assert fallback.metadata['requested_provider'] == 'openai'
+        assert fallback.provider == 'local'
+        expired_run = run_store.create_run(AgentRun.queue(user_id='v2-advice', trigger_type='manual',
+            workflow_name='workout_advice', prompt_version=PROMPT_VERSIONS['workout_advice'],
+            provider='local', model='deterministic-local-companion'))
+        with pytest.raises(ValueError, match='request_date_expired'):
+            agent_runtime._dispatch_workflow(uow.session, expired_run, 'workout_advice',
+                {**request, 'advice_date': (today - timedelta(days=1)).isoformat()})
+
+
 def test_smoke_defaults_to_current_daily_review_not_retired_advice(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:

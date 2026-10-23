@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.application.async_agent_runs import QueueAgentRunHandler
 from src.application.coaching_analysis_evidence import build_coaching_evidence
+from src.application.coaching_analysis_generation import PROMPT_VERSIONS, coaching_analysis_v2_enabled
 from src.application.coaching_generation_requests import CoachingGenerationRequests
 from src.domain.integrations_notifications import SyncSummary
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
@@ -82,7 +83,8 @@ class CoachingRefreshService:
         ))
         provider, model = resolve_queued_training_plan_provider()
         queued = QueueAgentRunHandler(
-            runs=runs, queue=tasks, prompt_version="johnny-review-analysis-v1",
+            runs=runs, queue=tasks, prompt_version=(PROMPT_VERSIONS['daily_review']
+                if coaching_analysis_v2_enabled() else "johnny-review-analysis-v1"),
             provider=provider, model=model,
         ).queue_run(
             user_id=user_id, workflow_name="daily_review", trigger_type="scheduled",
@@ -188,7 +190,9 @@ class CoachingRefreshService:
         queue = QueueAgentRunHandler(
             runs=SqlAlchemyAgentRunRepository(self.session),
             queue=SqlAlchemyAgentTaskQueue(self.session),
-            prompt_version='johnny-review-analysis-v1', provider=provider, model=model)
+            prompt_version=(PROMPT_VERSIONS['daily_review']
+                if coaching_analysis_v2_enabled() else 'johnny-review-analysis-v1'),
+            provider=provider, model=model)
         result = queue.queue_run(user_id=review.user_id, workflow_name='daily_review',
             trigger_type='evidence_change', idempotency_key=f'review-correction:{request_id}',
             payload={'publication_date': review.publication_date.isoformat(),

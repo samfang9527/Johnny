@@ -167,7 +167,18 @@ class SqlAlchemyCoachingRepository:
             proposal = None
             payload["mode"] = "previously_declined"
             payload["reason_code"] = "previously_rejected"
-            payload["guidance"] = f"{payload['guidance']} 你先前已婉拒這項相同調整，原課表維持不變。"
+            if isinstance(payload.get('analysis'), dict):
+                analysis = dict(payload['analysis'])
+                analysis['headline'] = '原課表維持不變'
+                analysis['summary'] = '你先前已婉拒相同調整，請依原課表與當下體感安排。'
+                analysis['actions'] = [{'action_id': 'inspect_evidence',
+                    'text': '先檢視恢復資料與體感，再決定是否執行原課表。',
+                    'evidence_refs': (analysis.get('evidence_refs') or ['evidence:window'])[:1],
+                    'recommendation_id': None}]
+                payload['analysis'] = analysis
+                payload['guidance'] = f"{analysis['headline']}。{analysis['summary']}"
+            else:
+                payload["guidance"] = f"{payload['guidance']} 你先前已婉拒這項相同調整，原課表維持不變。"
         if manifest is not None and slot.current_revision_id:
             current = self._session.get(WorkoutAdviceRevisionModel, slot.current_revision_id)
             old = current.payload or {} if current else {}

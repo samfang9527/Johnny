@@ -22,6 +22,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.api.dependencies import build_request_companion_agent
 from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.coaching_analysis_generation import (
+    PROMPT_VERSIONS, coaching_analysis_v2_enabled, generate_coaching_analysis,
+)
 from src.application.activity_detail_sync import (
     ActivityDetailDeferred, ActivityDetailRetry, ActivityDetailSyncService,
     FETCH_TASK as ACTIVITY_DETAIL_FETCH_TASK, FINALIZE_TASK as ACTIVITY_DETAIL_FINALIZE_TASK,
@@ -54,7 +57,7 @@ from src.infrastructure.database.session import create_database_engine, create_s
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
 from src.infrastructure.llm.openai_gateway import OpenAIModelGateway
-from src.infrastructure.llm.settings import load_llm_settings, load_openai_settings_for_queued_model, resolve_queued_daily_advice_provider, resolve_queued_training_plan_provider
+from src.infrastructure.llm.settings import LlmSettingsError, load_llm_settings, load_openai_settings_for_queued_model, resolve_queued_daily_advice_provider, resolve_queued_training_plan_provider
 from src.infrastructure.integrations.garminconnect_adapter import GarminConnectResourceAdapter
 from src.infrastructure.integrations.garmin_normalizer import normalize_garmin_activity, normalize_garmin_daily_health, normalize_garmin_training_evidence
 from src.infrastructure.security.integration_credentials import load_garmin_credential_cipher
@@ -451,9 +454,25 @@ def _review_queue_handler(session: Session) -> QueueAgentRunHandler:
     return QueueAgentRunHandler(
         runs=SqlAlchemyAgentRunRepository(session),
         queue=SqlAlchemyAgentTaskQueue(session),
-        prompt_version="johnny-review-analysis-v1",
+        prompt_version=(PROMPT_VERSIONS['daily_review'] if coaching_analysis_v2_enabled()
+                        else "johnny-review-analysis-v1"),
         provider=provider, model=model,
     )
+
+
+class _UnavailableCoachingGateway:
+    def complete(self, request):
+        raise RuntimeError('queued coaching model credentials unavailable')
+
+
+def _queued_coaching_gateway(run: AgentRun):
+    if run.provider != 'openai':
+        return None
+    try:
+        settings = load_openai_settings_for_queued_model(run.model or '')
+        return OpenAIModelGateway(model=run.model or '', api_key=settings.api_key)
+    except LlmSettingsError:
+        return _UnavailableCoachingGateway()
 
 
 def _training_plan_queue_handler(session: Session) -> QueueAgentRunHandler:
@@ -1010,35 +1029,56 @@ def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, work
         runs = SqlAlchemyAgentRunRepository(session)
         if run.status == "queued":
             run = runs.complete_run(run.mark_started())
-        gateway = (OpenAIModelGateway(
-            model=run.model or "",
-            api_key=load_openai_settings_for_queued_model(run.model or "").api_key,
-        ) if run.provider == "openai" else None)
+        structured = run.prompt_version == PROMPT_VERSIONS['daily_review']
+        gateway = (_queued_coaching_gateway(run) if structured else
+            OpenAIModelGateway(model=run.model or "",
+                api_key=load_openai_settings_for_queued_model(run.model or "").api_key)
+            if run.provider == "openai" else None)
         request_id = workflow_input.get('generation_request_id')
-        result = GenerateTrainingReviewHandler(
+        handler = GenerateTrainingReviewHandler(
             coaching=SqlAlchemyCoachingRepository(session),
             evidence=SqlAlchemyCoachingRepository(session),
             gateway=gateway,
-        ).handle(user_id=run.user_id, publication_date=publication_date,
+            analysis_generator=generate_coaching_analysis if structured else None,
+        )
+        result = handler.handle(user_id=run.user_id, publication_date=publication_date,
                  timezone_name=timezone_name, run_id=run.id)
         if request_id:
             from src.application.coaching_refresh import CoachingRefreshService
             CoachingRefreshService(session).finish_review_request(
                 request_id, result['evidence_fingerprint'])
         slot = SqlAlchemyCoachingRepository(session).get_review_slot(run.user_id, publication_date)
-        return runs.complete_run(replace(run, metadata={
-            **run.metadata, "training_review_id": slot["id"], "result_state": "ready",
-        }).complete(output_summary=result["narrative"]))
+        published = slot['current']
+        analysis_result = handler.last_analysis_result
+        return runs.complete_run(replace(run,
+            provider=(analysis_result.provider or (run.provider if analysis_result.analysis.analysis_mode == 'llm'
+                else 'local')) if analysis_result else run.provider,
+            model=(analysis_result.model or (run.model if analysis_result.analysis.analysis_mode == 'llm'
+                else 'deterministic-local-companion')) if analysis_result else run.model,
+            metadata={**run.metadata, "training_review_id": slot["id"], "result_state": "ready",
+                **({'analysis_mode': published['analysis']['analysis_mode'],
+                    'analysis_attempt_mode': analysis_result.analysis.analysis_mode,
+                    'analysis_error_category': analysis_result.error_category,
+                    'analysis_attempts': analysis_result.attempts,
+                    'requested_provider': run.provider, 'requested_model': run.model}
+                   if analysis_result else {}),
+        }).complete(output_summary=published["narrative"],
+                    token_usage=analysis_result.token_usage if analysis_result else None))
     if workflow_name == "workout_advice":
         advice_date = date.fromisoformat(workflow_input["advice_date"])
         runs = SqlAlchemyAgentRunRepository(session)
         if run.status == "queued":
             run = runs.complete_run(run.mark_started())
-        result = GenerateWorkoutAdviceHandler(
+        structured = run.prompt_version == PROMPT_VERSIONS['workout_advice']
+        gateway = _queued_coaching_gateway(run) if structured else None
+        handler = GenerateWorkoutAdviceHandler(
             coaching=SqlAlchemyCoachingRepository(session),
             plans=SqlAlchemyTrainingPlanRepository(session),
             activities=SqlAlchemyActivityRepository(session),
-        ).handle(user_id=run.user_id, advice_date=advice_date,
+            gateway=gateway,
+            analysis_generator=generate_coaching_analysis if structured else None,
+        )
+        result = handler.handle(user_id=run.user_id, advice_date=advice_date,
                  timezone_name=workflow_input["timezone_name"],
                  workout_id=workflow_input.get("workout_id"),
                  constraints=WorkoutAdviceConstraints(**workflow_input["constraints"]),
@@ -1047,9 +1087,21 @@ def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, work
                                        or workflow_input.get("manual_only") is True))
         slot_key = result.get("workout_id") or "no-workout"
         slot = SqlAlchemyCoachingRepository(session).get_advice_slot(run.user_id, advice_date, slot_key)
-        return runs.complete_run(replace(run, metadata={
-            **run.metadata, "workout_advice_id": slot["id"], "result_state": "ready",
+        analysis_result = handler.last_analysis_result
+        return runs.complete_run(replace(run,
+            provider=(analysis_result.provider or (run.provider if analysis_result.analysis.analysis_mode == 'llm'
+                else 'local')) if analysis_result else run.provider,
+            model=(analysis_result.model or (run.model if analysis_result.analysis.analysis_mode == 'llm'
+                else 'deterministic-local-companion')) if analysis_result else run.model,
+            metadata={**run.metadata, "workout_advice_id": slot["id"], "result_state": "ready",
+                **({'analysis_mode': result['analysis']['analysis_mode'],
+                    'analysis_attempt_mode': analysis_result.analysis.analysis_mode,
+                    'analysis_error_category': analysis_result.error_category,
+                    'analysis_attempts': analysis_result.attempts,
+                    'requested_provider': run.provider, 'requested_model': run.model}
+                   if analysis_result else {}),
         }).complete(output_summary=result["guidance"],
+                    token_usage=analysis_result.token_usage if analysis_result else None,
                     recommendation_id=result.get("recommendation_id")))
     if workflow_name == "daily_recommendation":
         anchor = workflow_input.get("anchor_date")
