@@ -53,7 +53,8 @@ class AgentTaskQueue(Protocol):
     def enqueue_or_requeue_terminal(self, task: TaskEnvelope) -> AgentTask:
         ...
 
-    def claim_next(self, *, now: datetime, claim_timeout: timedelta) -> AgentTask | None:
+    def claim_next(self, *, now: datetime, claim_timeout: timedelta,
+                   supported_contracts: dict[str, tuple[int, ...]] | None = None) -> AgentTask | None:
         ...
 
     def complete(self, task_id: str | None, *, now: datetime) -> AgentTask | None:

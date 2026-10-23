@@ -303,6 +303,12 @@ The connection row remains metadata: it must not contain Garmin passwords, cooki
 
 `activities` and `health_metrics` store normalized imported data. Provider-specific fields that are useful for debugging but not central to querying stay in `provider_summary`.
 
+`activity_detail_fetches` is the mutable activity/resource pointer and retry state. `activity_detail_snapshots` is immutable per activity/resource/schema/semantic hash; `activity_segments` and `activity_sample_chunks` belong to a snapshot. An unchanged refetch reuses its snapshot ID. Coverage distinguishes complete, partial, and unknown, and sampling distinguishes recorded samples from chart samples. No raw FIT archive or GPS is retained for coaching.
+
+`activity_detail_batches` and `activity_detail_batch_items` group resource jobs for one owner and source sync. A batch can close partial at its deadline; only its changed activity IDs flow into review correction. `activity_execution_analyses` records the effective Prescription Snapshot revision and detail snapshot IDs used for deterministic segment comparison. A historical result can therefore open its original evidence after newer detail arrives.
+
+`training_reviews` and `workout_advices` are dated slots; their revision tables retain prior payloads and evidence fingerprints. `coaching_generation_requests` stores the desired fingerprint and at most one active run for a review slot, merging later input changes into one successor. Workout Advice remains user-requested. Only accepting a current, owner-scoped Recommendation may change a canonical workout.
+
 ### AI Observability
 
 `agent_runs` is the top-level execution record. It keeps queryable dashboard fields such as trigger, workflow, prompt version, provider, model, token usage, latency, cost, summaries, errors, and trace references.
@@ -310,6 +316,8 @@ The connection row remains metadata: it must not contain Garmin passwords, cooki
 `agent_run_steps` records ordered context-building, model-call, tool-call, formatting, and safety-check steps. This avoids parsing one large trace blob for latency and failure analysis.
 
 `agent_context_sources` records the evidence used by an agent run, such as activity, health metric, plan, memory, race, or workout context. This supports future "why did the AI recommend this?" explanations.
+
+`agent_tasks.payload.contract_version` is `1` for newly queued tasks. Existing rows without the field are legacy version `0`. A worker claims only task types and versions it supports; an unknown version or type remains queued for inspection and a compatible worker. Stale claims may be reclaimed after the worker lease expires.
 
 ### Sync, Outbox, and Notifications
 

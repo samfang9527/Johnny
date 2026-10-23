@@ -126,20 +126,20 @@ class CoachingRefreshService:
                 store=SqlAlchemyCoachingAnalysisEvidenceRepository(self.session))
             current = self.session.get(TrainingReviewRevisionModel, review.current_revision_id)
             prior = (current.payload or {}).get('evidence_fingerprint') if current else None
+            affected.append((review, bundle.fingerprint, prior != bundle.fingerprint))
             if prior == bundle.fingerprint:
                 continue
             review.freshness = "stale"
-            if review.publication_date == exclude_review_date:
-                continue
-            affected.append((review, bundle.fingerprint))
         if affected and queue_auto_reviews:
-            review, fingerprint = max(affected, key=lambda pair: (pair[0].publication_date, pair[0].id))
-            request_id = CoachingGenerationRequests(self.session).request(
-                user_id=user_id, kind='daily_review', slot_id=review.id,
-                fingerprint=fingerprint, reason=reason)
-            if request_id:
-                review_runs.append(self._queue_review_request(
-                    review, request_id, fingerprint, reason, source_sync_run_id))
+            review, fingerprint, changed = max(
+                affected, key=lambda pair: (pair[0].publication_date, pair[0].id))
+            if changed and review.publication_date != exclude_review_date:
+                request_id = CoachingGenerationRequests(self.session).request(
+                    user_id=user_id, kind='daily_review', slot_id=review.id,
+                    fingerprint=fingerprint, reason=reason)
+                if request_id:
+                    review_runs.append(self._queue_review_request(
+                        review, request_id, fingerprint, reason, source_sync_run_id))
         advice_ids: list[str] = []
         recommendation_ids: list[str] = []
         invalidated_revision_ids: set[str] = set()

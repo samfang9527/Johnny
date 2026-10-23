@@ -10,7 +10,8 @@ def test_health_endpoint_identifies_reachable_api() -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "Johnny-api"}
+    assert response.json() == {"status": "ok", "service": "Johnny-api",
+                               "worker_contract": {"build": "unknown", "versions": [0, 1]}}
 
 
 def test_ready_endpoint_reports_readiness() -> None:
@@ -19,7 +20,8 @@ def test_ready_endpoint_reports_readiness() -> None:
     response = client.get("/ready")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready"}
+    assert response.json() == {"status": "ready",
+                               "worker_contract": {"build": "unknown", "versions": [0, 1]}}
 
 
 def test_run_uses_src_application_import_path(monkeypatch) -> None:

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from src.api.dependencies import build_request_companion_agent
 from src.application.async_agent_runs import QueueAgentRunHandler
+from src.application.task_contracts import SUPPORTED_TASK_CONTRACTS
 from src.application.coaching_analysis_generation import (
     PROMPT_VERSIONS, coaching_analysis_v2_enabled, generate_coaching_analysis,
 )
@@ -158,7 +159,8 @@ def schedule_loop(session_factory, *, max_iterations: int | None = None, interva
 def work_one(session: Session, *, now: datetime | None = None) -> bool:
     instant = now or _utc_now()
     queue = SqlAlchemyAgentTaskQueue(session)
-    claimed = queue.claim_next(now=instant, claim_timeout=DEFAULT_CLAIM_TIMEOUT)
+    claimed = queue.claim_next(now=instant, claim_timeout=DEFAULT_CLAIM_TIMEOUT,
+                               supported_contracts=SUPPORTED_TASK_CONTRACTS)
     if claimed is None:
         return False
     started = time.monotonic()

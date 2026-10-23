@@ -4,7 +4,7 @@ set -euo pipefail
 mountpoint -q /srv/johnny/data
 test -L /opt/johnny/current
 cd /opt/johnny/current
-python3 load_secrets.py
+JOHNNY_BUILD_SHA="$(basename "$(readlink -f /opt/johnny/current)")" python3 load_secrets.py
 BACKEND_IMAGE=$(cat /opt/johnny/current-image)
 export BACKEND_IMAGE
 REGION=$(sed -n 's/^AWS_REGION=//p' /etc/johnny/production.env)

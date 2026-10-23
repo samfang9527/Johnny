@@ -799,7 +799,7 @@ def test_retired_daily_workflow_preserves_previous_advice(sqlite_session_factory
     assert steps == []
 
 
-def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_session_factory) -> None:
+def test_work_drain_leaves_unknown_type_queued_and_fails_malformed_supported_tasks(sqlite_session_factory) -> None:
     Base.metadata.create_all(sqlite_session_factory.kw["bind"])
     with SqlAlchemyUnitOfWork(sqlite_session_factory) as uow:
         queue = SqlAlchemyAgentTaskQueue(uow.session)
@@ -835,10 +835,10 @@ def test_work_drain_marks_unknown_and_malformed_tasks_non_retryable(sqlite_sessi
         retry_counts = [task.retry_count for task in tasks]
         uow.commit()
 
-    assert processed == 3
-    assert statuses == ["failed", "failed", "failed"]
-    assert errors == ["UnknownTaskType", "MalformedTaskPayload", "MalformedTaskPayload"]
-    assert retry_counts == [1, 1, 1]
+    assert processed == 2
+    assert statuses == ["queued", "failed", "failed"]
+    assert errors == [None, "MalformedTaskPayload", "MalformedTaskPayload"]
+    assert retry_counts == [0, 1, 1]
 
 
 def test_agent_runtime_cli_work_drain_does_not_require_smoke_openai_flag(tmp_path, monkeypatch, capsys) -> None:

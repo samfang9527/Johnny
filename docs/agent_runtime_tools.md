@@ -44,7 +44,7 @@ The local queue table is intentionally shaped like a future SQS envelope:
 - claim/completion/failure timestamps
 - retry count, max attempts, and safe error summary fields
 
-Workers claim the oldest available task by `available_at`, then `created_at`. A stale `processing` task can be reclaimed after the configured claim timeout. Retryable failures can be requeued with delay until attempts are exhausted; non-retryable validation, malformed payload, unknown workflow, and unknown task failures are marked failed without storing tracebacks.
+New durable tasks carry `payload.contract_version=1`; existing unversioned rows are legacy version `0`. Workers claim the oldest available *supported* type/version by `available_at`, then `created_at`. Unknown types or versions remain queued for operator inspection instead of being consumed by an incompatible worker. A stale compatible `processing` task can be reclaimed after the configured claim timeout. Retryable failures can be requeued with delay until attempts are exhausted; non-retryable validation, malformed supported payload, and unknown workflow failures are marked failed without storing tracebacks. An old worker does not have this filter, so it must be drained/stopped before version-1 producers are enabled.
 
 ## Scheduler And Worker
 
@@ -65,7 +65,7 @@ Make targets wrap the common commands:
 - `make smoke-agent-local`
 - `make smoke-agent-openai`
 
-The scheduler only emits today's daily recommendation jobs for active users with both an athlete profile and an active training plan. It does not backfill missed days.
+The scheduler emits a dated Daily Review after the athlete's local 04:00, plus the training-plan daily check. Workout Advice is requested by the athlete. Activity detail fetch/finalize/recheck jobs run only when `JOHNNY_ACTIVITY_DETAILS_ENABLED=true`; with the flag off, existing detail jobs defer instead of losing their checkpoint. Structured coaching generation is separately controlled by `JOHNNY_COACHING_ANALYSIS_V2_ENABLED`. Both flags default off in the production env loader. `/health` and `/ready` expose the declared release build and worker contract versions; compare the actual worker image digest with the release manifest during cutover.
 
 ## Generated Training Plans
 

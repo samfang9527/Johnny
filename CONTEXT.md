@@ -60,6 +60,26 @@ _Avoid_: Fitness score, missed workout inferred from failed sync
 An append-only record of the canonical workout that was effective when training occurred, including steps and Targets. It lets retrospective reviews survive plan replacement and later approved adjustments; uncertain legacy ordering is marked rather than guessed.
 _Avoid_: Current display-only target estimate
 
+**Activity Detail Snapshot**:
+An immutable, owner-scoped record of one activity detail resource and its explicit coverage. Repeated identical content refers to the same snapshot; a later changed resource creates another snapshot without erasing the earlier evidence.
+_Avoid_: Live Garmin response, complete activity recording
+
+**Execution Analysis**:
+Johnny's deterministic comparison of recorded activity evidence with the applicable Prescription Snapshot. It states whether segment-to-Workout-Step mapping is exact, estimated, or unmatched and keeps missing channels distinct from zero values.
+_Avoid_: Execution Score, exact lap-to-step match
+
+**Detail Batch**:
+A bounded group of activity/resource fetches whose changed evidence is released to coaching together when the group completes or reaches its deadline. A partial batch remains explicit rather than claiming complete coverage.
+_Avoid_: Whole-account sync, one review per resource
+
+**Coaching Evidence Bundle**:
+The dated set of prescription, execution, recovery, and coverage facts selected for one Daily Review or Workout Advice revision. Its effective fingerprint identifies a meaningful input change rather than a new fetch or run.
+_Avoid_: Latest provider data, generated text
+
+**Coaching Analysis**:
+A bounded explanation of a Coaching Evidence Bundle produced by a model or deterministic rules, with an observation, meaning, action, and stated limits. It never changes a canonical workout on its own.
+_Avoid_: Raw metric dump, approved Recommendation
+
 **Legacy Daily Advice**:
 The earlier combined Today coaching result, retained internally for transition reads. No new scheduled or sync-triggered producer writes it; the public Johnny surface uses Daily Review and Workout Advice instead.
 _Avoid_: Daily Review, Workout Advice

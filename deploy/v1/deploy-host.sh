@@ -35,7 +35,7 @@ PY
 export BACKEND_IMAGE
 
 test -f /etc/johnny/production.env
-python3 "$RELEASE_DIR/load_secrets.py"
+JOHNNY_BUILD_SHA="$RELEASE_SHA" python3 "$RELEASE_DIR/load_secrets.py"
 REGISTRY="${BACKEND_IMAGE%%/*}"
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY" >/dev/null
 cd "$RELEASE_DIR"
@@ -77,7 +77,7 @@ on_error() {
   local status=$?
   if [ "$PHASE" = "before-migration" ] && [ -n "$CURRENT_IMAGE" ] && [ -L /opt/johnny/current ]; then
     echo "Deployment failed before migration; restoring previous services" >&2
-    (cd /opt/johnny/current && BACKEND_IMAGE="$CURRENT_IMAGE" docker compose -f compose.yml up -d --no-deps api worker scheduler) || true
+    (cd /opt/johnny/current && JOHNNY_BUILD_SHA="$(basename "$(readlink -f /opt/johnny/current)")" python3 load_secrets.py && BACKEND_IMAGE="$CURRENT_IMAGE" docker compose -f compose.yml up -d --no-deps api worker scheduler) || true
     rm -f /run/johnny-maintenance
   else
     echo "Deployment failed after migration or during first launch; maintenance remains enabled" >&2

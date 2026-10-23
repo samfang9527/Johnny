@@ -45,8 +45,8 @@ make run-api
 Expected:
 
 - FastAPI runs at `http://127.0.0.1:8000`.
-- `curl http://127.0.0.1:8000/health` returns `{"status":"ok","service":"Johnny-api"}`.
-- `curl http://127.0.0.1:8000/ready` returns `{"status":"ready"}`.
+- `curl http://127.0.0.1:8000/health` returns `status: ok`, `service: Johnny-api`, and `worker_contract` with a build (`unknown` locally) and supported versions `[0,1]`.
+- `curl http://127.0.0.1:8000/ready` returns `status: ready` and the same declared worker contract.
 
 ## 4. Start Frontend
 
@@ -204,6 +204,20 @@ Expected:
 - Records token usage on the `agent_runs` row when OpenAI returns usage.
 
 If the command exits with code `2`, required OpenAI settings are missing.
+
+## Coaching Detail Acceptance
+
+Use a disposable PostgreSQL database whose name contains `test`; do not point `JOHNNY_TEST_DATABASE_URL` at the live `johnny` database. Apply Alembic through head, then run:
+
+```bash
+JOHNNY_TEST_DATABASE_URL='postgresql+psycopg://johnny:johnny@localhost:5432/johnny_test_coaching' \
+  PYTHONPATH=.:backend ./.venv/bin/python -m pytest backend/tests -q -rs
+npm --prefix frontend test
+npm --prefix frontend run build
+npm --prefix frontend run verify:tokens
+```
+
+The integration acceptance test exercises five historical Daily Review slots, a user-requested Workout Advice, three detail resources, replay after a worker interruption, one late changed batch and one coalesced successor. The PostgreSQL migration suite checks the `0012_coaching_history` to head upgrade and legacy activity/pairing preservation. Rehearse a `pg_dump -Fc`/`pg_restore --exit-on-error` into a separate disposable database, comparing Alembic revision, table and representative row counts before considering release. Inspect task rows whose type/version is unsupported; they must remain queued. The flag-off check confirms detail tasks defer while legacy advice stays readable. See [release runbook](deployment-v1.md#coaching-detail-cutover-additive-release) for production sequencing and [verification record](verification/2026-10-22-coaching-detail-acceptance.md) for measured local results and remaining live gates.
 
 ## 11. Cleanup
 

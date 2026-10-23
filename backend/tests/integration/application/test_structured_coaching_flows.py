@@ -9,12 +9,14 @@ from src.application.coaching_analysis_generation import generate_coaching_analy
 from src.application.coaching_approval import CoachingApprovalService, CoachingDecisionConflict
 from src.application.training_review_generation import GenerateTrainingReviewHandler
 from src.application.workout_advice_generation import GenerateWorkoutAdviceHandler
+from src.domain.activity_details import DetailCoverage, NormalizedDetails
 from src.domain.activity_health import DailyHealthMetrics
 from src.domain.athlete_race import AthleteProfile
 from src.domain.agent_runtime import ModelResponse, TokenUsage
 from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, WorkoutTarget
 from src.domain.workout_advice import WorkoutAdviceConstraints
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
+from src.infrastructure.database.activity_detail_repository import SqlAlchemyActivityDetailRepository
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 from src.infrastructure.database.models import (
@@ -49,7 +51,7 @@ class FakeGateway:
             token_usage=TokenUsage(input_tokens=11, output_tokens=13))
 
 
-@pytest.mark.parametrize('decision', ['accept', 'invalidate', 'reject'])
+@pytest.mark.parametrize('decision', ['accept', 'invalidate', 'invalidate_detail', 'reject'])
 def test_advice_uses_gateway_without_raw_recovery_dump_or_early_plan_change(
         sqlite_session_factory, decision):
     Base.metadata.create_all(sqlite_session_factory.kw['bind'])
@@ -63,7 +65,11 @@ def test_advice_uses_gateway_without_raw_recovery_dump_or_early_plan_change(
                                       target=WorkoutTarget.rpe(3)),))
         plans.save_plan('athlete', TrainingPlan.create(user_id='athlete', name='Base',
             starts_on=TODAY, ends_on=TODAY, workouts=(workout,)))
+        session.add(IntegrationConnectionModel(id='prior-connection', user_id='athlete',
+                                               provider='garmin_connect'))
+        session.flush()
         session.add(ActivityModel(id='prior-run', user_id='athlete',
+            provider_connection_id='prior-connection', provider_activity_id='provider-prior-run',
             started_at=datetime(2027, 1, 14, 16, 30, tzinfo=timezone.utc),
             activity_type='running', duration_seconds=2100, distance_meters=5000))
         session.flush()
@@ -103,7 +109,17 @@ def test_advice_uses_gateway_without_raw_recovery_dump_or_early_plan_change(
         assert review['analysis']['input_fingerprint'] != result['analysis']['input_fingerprint']
         assert SqlAlchemyCoachingRepository(session).get_advice_slot('athlete', TODAY, 'run')['freshness'] == 'current'
         assert SqlAlchemyCoachingRepository(session).get_review_slot('athlete', TODAY)['freshness'] == 'current'
-        if decision == 'invalidate':
+        if decision == 'invalidate_detail':
+            SqlAlchemyActivityDetailRepository(session).save_snapshot(
+                user_id='athlete', fetched_at=NOW,
+                details=NormalizedDetails(activity_id='prior-run', resource='fit',
+                    schema_version='acceptance-v1',
+                    coverage=DetailCoverage(state='complete', sampling='recorded')))
+            with pytest.raises(CoachingDecisionConflict, match='evidence_manifest_changed'):
+                CoachingApprovalService(session, now=lambda: NOW).accept(
+                    'athlete', result['recommendation_id'])
+            assert plans.get_plan_for_date_raw('athlete', TODAY).workouts[0].status == 'planned'
+        elif decision == 'invalidate':
             SqlAlchemyAthleteRaceRepository(session).save_profile('athlete', AthleteProfile.create(
                 user_id='athlete', timezone='Asia/Taipei', experience_level='intermediate',
                 current_weekly_mileage_km=35, preferred_training_days=('sunday',),

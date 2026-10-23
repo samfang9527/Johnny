@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from urllib.parse import quote, urlsplit
 
@@ -79,12 +80,21 @@ def write_env(path: Path, values: dict[str, str]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def render(settings: dict[str, str], secrets: dict[str, str], output_dir: Path) -> None:
+def render(settings: dict[str, str], secrets: dict[str, str], output_dir: Path,
+           *, build_sha: str = 'unknown') -> None:
     if settings.get("ENV", "production") != "production":
         raise ValueError("Production must run with ENV=production")
     for key, value in secrets.items():
         if not value or "\n" in value or "\r" in value or "\x00" in value:
             raise ValueError(f"Invalid secret value: {key}")
+    if build_sha != 'unknown' and not re.fullmatch(r'[0-9a-f]{40}', build_sha):
+        raise ValueError('Invalid JOHNNY_BUILD_SHA')
+    flags = {}
+    for key in ('JOHNNY_ACTIVITY_DETAILS_ENABLED', 'JOHNNY_COACHING_ANALYSIS_V2_ENABLED'):
+        value = settings.get(key, 'false').strip().lower()
+        if value not in ('true', 'false'):
+            raise ValueError(f'Invalid {key}')
+        flags[key] = value
     output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(output_dir, 0o700)
     database_url = (
@@ -92,7 +102,8 @@ def render(settings: dict[str, str], secrets: dict[str, str], output_dir: Path) 
         + quote(secrets["POSTGRES_PASSWORD"], safe="")
         + "@postgres:5432/johnny"
     )
-    common = {"ENV": "production", "DATABASE_URL": database_url}
+    common = {"ENV": "production", "DATABASE_URL": database_url,
+              'JOHNNY_BUILD_SHA': build_sha, **flags}
     write_env(output_dir / "postgres.env", {"POSTGRES_USER": "johnny", "POSTGRES_DB": "johnny", "POSTGRES_PASSWORD": secrets["POSTGRES_PASSWORD"]})
     write_env(output_dir / "api.env", {
         **common,
@@ -130,7 +141,8 @@ def main() -> None:
     args = parser.parse_args()
     settings = read_settings(args.settings)
     secrets = fetch_secrets(settings["AWS_REGION"], args.prefix)
-    render(settings, secrets, args.output_dir)
+    render(settings, secrets, args.output_dir,
+           build_sha=os.getenv('JOHNNY_BUILD_SHA', 'unknown'))
     print("Production environment files refreshed")
 
 

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import String, and_, cast, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.application.interfaces.task_queue import AgentTask, TaskEnvelope
+from src.application.task_contracts import CURRENT_CONTRACT_VERSION
 
 from .models import AgentTaskModel, utc_now
 
@@ -28,7 +29,7 @@ class SqlAlchemyAgentTaskQueue:
             status="queued",
             correlation_id=correlation_id,
             idempotency_key=idempotency_key,
-            payload=dict(task.payload),
+            payload=_versioned_payload(task.payload),
             available_at=task.available_at or now,
             retry_count=0,
             max_attempts=task.max_attempts,
@@ -60,7 +61,7 @@ class SqlAlchemyAgentTaskQueue:
                 task_type=task.task_type,
                 status="queued",
                 correlation_id=correlation_id,
-                payload=dict(task.payload),
+                payload=_versioned_payload(task.payload),
                 available_at=task.available_at or now,
                 claimed_at=None,
                 completed_at=None,
@@ -116,12 +117,27 @@ class SqlAlchemyAgentTaskQueue:
             return None
         return _task_from_model(model)
 
-    def claim_next(self, *, now: datetime, claim_timeout: timedelta) -> AgentTask | None:
+    def claim_next(self, *, now: datetime, claim_timeout: timedelta,
+                   supported_contracts: dict[str, tuple[int, ...]] | None = None) -> AgentTask | None:
         stale_before = now - claim_timeout
         claimable = or_(
             (AgentTaskModel.status == "queued") & (AgentTaskModel.available_at <= now),
             (AgentTaskModel.status == "processing") & (AgentTaskModel.claimed_at <= stale_before),
         )
+        if supported_contracts is not None:
+            accepted = []
+            version = cast(AgentTaskModel.payload['contract_version'].as_string(), String)
+            if self._session.get_bind().dialect.name == 'postgresql':
+                legacy = func.json_typeof(
+                    AgentTaskModel.payload['contract_version']).is_(None)
+            else:
+                legacy = func.json_type(
+                    AgentTaskModel.payload, '$.contract_version').is_(None)
+            for task_type, versions in supported_contracts.items():
+                accepted.append(and_(AgentTaskModel.task_type == task_type,
+                    or_(*(legacy if item == 0 else version == str(item)
+                           for item in versions))))
+            claimable = and_(claimable, or_(*accepted)) if accepted else and_(claimable, False)
         while True:
             candidate_id = self._session.scalar(
                 select(AgentTaskModel.id)
@@ -201,6 +217,10 @@ def _default_idempotency_key(task: TaskEnvelope) -> str:
     if run_id:
         return f"{task.task_type}:{run_id}"
     return f"{task.task_type}:{task.correlation_id or utc_now().isoformat()}"
+
+
+def _versioned_payload(payload: dict) -> dict:
+    return {'contract_version': CURRENT_CONTRACT_VERSION, **payload}
 
 
 def _summary(value: str) -> str:

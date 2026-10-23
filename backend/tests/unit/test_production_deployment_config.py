@@ -55,6 +55,44 @@ def test_render_writes_private_per_service_env_files(tmp_path: Path) -> None:
     assert stat.S_IMODE(output.stat().st_mode) == 0o700
 
 
+def test_release_flags_and_build_are_shared_across_api_worker_and_scheduler(tmp_path: Path) -> None:
+    settings = {
+        "ENV": "production", "FRONTEND_URL": "https://app.example.com",
+        "API_URL": "https://api.example.com", "GOOGLE_OAUTH_CLIENT_ID": "client-id",
+        "LLM_MODEL": "model-name", "JOHNNY_ACTIVITY_DETAILS_ENABLED": "true",
+        "JOHNNY_COACHING_ANALYSIS_V2_ENABLED": "false",
+    }
+    secrets = {
+        "POSTGRES_PASSWORD": "db-secret", "OPENAI_API_KEY": "model-secret",
+        "GOOGLE_OAUTH_CLIENT_SECRET": "google-secret",
+        "GARMIN_CREDENTIAL_MASTER_KEY": "garmin-secret", "JOHNNY_ADMIN_TOKEN": "admin-secret",
+    }
+    production_secrets.render(settings, secrets, tmp_path, build_sha="b" * 40)
+    for name in ("api", "worker", "scheduler"):
+        contents = (tmp_path / f"{name}.env").read_text()
+        assert "JOHNNY_ACTIVITY_DETAILS_ENABLED=true\n" in contents
+        assert "JOHNNY_COACHING_ANALYSIS_V2_ENABLED=false\n" in contents
+        assert f"JOHNNY_BUILD_SHA={'b' * 40}\n" in contents
+
+
+def test_release_flags_default_off_and_reject_untrusted_values(tmp_path: Path) -> None:
+    settings = {
+        "ENV": "production", "FRONTEND_URL": "https://app.example.com",
+        "API_URL": "https://api.example.com", "GOOGLE_OAUTH_CLIENT_ID": "client-id",
+        "LLM_MODEL": "model-name",
+    }
+    secrets = {
+        "POSTGRES_PASSWORD": "db-secret", "OPENAI_API_KEY": "model-secret",
+        "GOOGLE_OAUTH_CLIENT_SECRET": "google-secret",
+        "GARMIN_CREDENTIAL_MASTER_KEY": "garmin-secret", "JOHNNY_ADMIN_TOKEN": "admin-secret",
+    }
+    production_secrets.render(settings, secrets, tmp_path)
+    assert "JOHNNY_ACTIVITY_DETAILS_ENABLED=false\n" in (tmp_path / "worker.env").read_text()
+    settings["JOHNNY_ACTIVITY_DETAILS_ENABLED"] = "true\nEVIL=1"
+    with pytest.raises(ValueError, match="JOHNNY_ACTIVITY_DETAILS_ENABLED"):
+        production_secrets.render(settings, secrets, tmp_path)
+
+
 def test_settings_reject_http_and_placeholder_origins(tmp_path: Path) -> None:
     path = tmp_path / "settings.env"
     path.write_text("AWS_REGION=ap-northeast-1\nFRONTEND_URL=http://app.example.com\nAPI_URL=https://api.example.com\nGOOGLE_OAUTH_CLIENT_ID=x\nLLM_MODEL=x\n")
