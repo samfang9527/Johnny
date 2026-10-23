@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from sqlalchemy import select
 
 from src.api.dependencies import CurrentUserDependency, SessionDependency, ensure_current_user
 from src.api.errors import ApiConflictError, ApiNotFoundError
 from src.api.schemas.agent_runs import QueuedAgentRunResponse
 from src.api.schemas.common import DEFAULT_PAGE_LIMIT, DataEnvelope, ListEnvelope, PageLimit, PageOffset, list_envelope, page_query_limit
-from src.api.schemas.johnny import WorkoutAdviceRequest
+from src.api.schemas.johnny import RetryReviewRequest, WorkoutAdviceRequest
 from src.application.async_agent_runs import QueueAgentRunHandler
 from src.application.coaching_analysis_generation import PROMPT_VERSIONS, coaching_analysis_v2_enabled
 from src.infrastructure.database.agent_run_repository import SqlAlchemyAgentRunRepository
@@ -57,6 +57,15 @@ def _queued(result):
                                   workflow_name=result.run.workflow_name, poll_url=result.poll_url)
 
 
+def _present_slot(slot: dict | None) -> dict | None:
+    if slot is None:
+        return None
+    analysis = (slot.get('current') or {}).get('analysis')
+    if not isinstance(analysis, dict) or analysis.get('analysis_mode') not in {'llm', 'rules'}:
+        return slot
+    return {**slot, 'analysis_mode': analysis['analysis_mode']}
+
+
 @router.get("/overview", response_model=DataEnvelope[dict])
 def overview(current_user: CurrentUserDependency, session: SessionDependency) -> DataEnvelope[dict]:
     ensure_current_user(session, current_user)
@@ -66,12 +75,14 @@ def overview(current_user: CurrentUserDependency, session: SessionDependency) ->
         TrainingReviewModel.user_id == current_user.id,
         TrainingReviewModel.publication_date <= today,
     ).order_by(TrainingReviewModel.publication_date.desc()).limit(1))
-    review = coaching.get_review_slot(current_user.id, review_model.publication_date) if review_model else None
+    review = _present_slot(coaching.get_review_slot(
+        current_user.id, review_model.publication_date)) if review_model else None
     advice_models = session.scalars(select(WorkoutAdviceModel).where(
         WorkoutAdviceModel.user_id == current_user.id,
         WorkoutAdviceModel.advice_date == today,
     ).order_by(WorkoutAdviceModel.created_at.desc())).all()
-    advices = [coaching.get_advice_slot(current_user.id, today, item.slot_key) for item in advice_models]
+    advices = [_present_slot(coaching.get_advice_slot(
+        current_user.id, today, item.slot_key)) for item in advice_models]
     plan = SqlAlchemyTrainingPlanRepository(session).get_plan_for_date_raw(current_user.id, today)
     choices = [{"id": item.id, "display_name": item.display_name,
                 "workout_type": item.workout_type, "status": item.status}
@@ -108,7 +119,7 @@ def list_reviews(current_user: CurrentUserDependency, session: SessionDependency
     ).order_by(TrainingReviewModel.publication_date.desc(), TrainingReviewModel.id.desc())
         .offset(offset).limit(page_query_limit(limit))).all()
     coaching = SqlAlchemyCoachingRepository(session)
-    return list_envelope([coaching.get_review_slot(current_user.id, item.publication_date)
+    return list_envelope([_present_slot(coaching.get_review_slot(current_user.id, item.publication_date))
                           for item in models], limit=limit, offset=offset)
 
 
@@ -120,13 +131,14 @@ def get_review(review_id: str, current_user: CurrentUserDependency,
     ))
     if model is None:
         raise ApiNotFoundError("review not found")
-    return DataEnvelope(data=SqlAlchemyCoachingRepository(session).get_review_slot(
-        current_user.id, model.publication_date))
+    return DataEnvelope(data=_present_slot(SqlAlchemyCoachingRepository(session).get_review_slot(
+        current_user.id, model.publication_date)))
 
 
 @router.post("/reviews/{review_id}/retry", response_model=DataEnvelope[QueuedAgentRunResponse], status_code=202)
 def retry_review(review_id: str, current_user: CurrentUserDependency,
-                 session: SessionDependency) -> DataEnvelope[QueuedAgentRunResponse]:
+                 session: SessionDependency,
+                 payload: RetryReviewRequest | None = Body(default=None)) -> DataEnvelope[QueuedAgentRunResponse]:
     model = session.scalar(select(TrainingReviewModel).where(
         TrainingReviewModel.id == review_id, TrainingReviewModel.user_id == current_user.id,
     ))
@@ -134,13 +146,19 @@ def retry_review(review_id: str, current_user: CurrentUserDependency,
         raise ApiNotFoundError("review not found")
     if model.attempt_state not in {"sync_failed", "generation_failed", "inputs_changed"} and model.freshness != "stale":
         raise ApiConflictError("review_retry_not_needed")
+    source = payload.source if payload is not None else (
+        'sync' if model.attempt_state == 'sync_failed' else 'stored_evidence')
+    task_type = 'coaching.sync' if source == 'sync' else 'agent.workflow'
     result = _queue_handler(session, review=True).queue_run(
         user_id=current_user.id, workflow_name="daily_review", trigger_type="manual",
         idempotency_key=f"daily_review:{current_user.id}:{model.publication_date.isoformat()}",
         payload={"publication_date": model.publication_date.isoformat(),
-                 "timezone_name": model.timezone_name}, task_type="coaching.sync",
+                 "timezone_name": model.timezone_name},
+        task_type=task_type,
         requeue_terminal=True,
     )
+    if result.task.task_type != task_type:
+        raise ApiConflictError('review_retry_in_progress')
     SqlAlchemyCoachingRepository(session).reserve_review(
         current_user.id, model.publication_date, model.timezone_name, result.run.id)
     return DataEnvelope(data=_queued(result))
@@ -197,8 +215,8 @@ def get_workout_advice(advice_id: str, current_user: CurrentUserDependency,
     ))
     if model is None:
         raise ApiNotFoundError("workout advice not found")
-    return DataEnvelope(data=SqlAlchemyCoachingRepository(session).get_advice_slot(
-        current_user.id, model.advice_date, model.slot_key))
+    return DataEnvelope(data=_present_slot(SqlAlchemyCoachingRepository(session).get_advice_slot(
+        current_user.id, model.advice_date, model.slot_key)))
 
 
 @router.get("/history", response_model=ListEnvelope[dict])
@@ -214,10 +232,10 @@ def history(current_user: CurrentUserDependency, session: SessionDependency,
     )).all()
     entries = [
         {"kind": "daily_review", "id": item.id, "at": item.updated_at.isoformat(),
-         "result": coaching.get_review_slot(current_user.id, item.publication_date)} for item in reviews
+         "result": _present_slot(coaching.get_review_slot(current_user.id, item.publication_date))} for item in reviews
     ] + [
         {"kind": "workout_advice", "id": item.id, "at": item.updated_at.isoformat(),
-         "result": coaching.get_advice_slot(current_user.id, item.advice_date, item.slot_key)} for item in advices
+         "result": _present_slot(coaching.get_advice_slot(current_user.id, item.advice_date, item.slot_key))} for item in advices
     ] + [
         {"kind": "recommendation_decision", "id": item.id,
          "at": (item.decision_at or item.updated_at).isoformat(), "decision": item.decision}

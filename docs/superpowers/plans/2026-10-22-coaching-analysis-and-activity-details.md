@@ -10,7 +10,7 @@
 
 **Spec:** [已確認的完整改善評估](../../verification/2026-10-22-coaching-complete-improvement-assessment.md)；[Garmin 可行性研究](../../verification/2026-10-22-garmin-activity-detail-feasibility.md)；`CONTEXT.md`、`DESIGN.md`。使用者於 2026-10-22 確認完整範圍並要求準備 implementation plan。
 
-**Status:** Tasks 1–8 committed; Task 9 implemented and awaiting user review. Tasks 10–12 have not started. User requires a pause after every task.
+**Status:** Tasks 1–9 committed; Task 10 implemented and awaiting user review. Tasks 11–12 have not started. User requires a pause after every task.
 
 ## Global Constraints
 
@@ -178,11 +178,11 @@
 **Files:** Modify `backend/src/api/routes/johnny.py`, `backend/src/api/routes/today.py`, `backend/src/api/routes/activity_health.py`, `backend/src/api/schemas/johnny.py`, `backend/src/api/schemas/activity_health.py`, `backend/tests/unit/test_johnny_api.py`; create `backend/tests/unit/test_activity_detail_api.py`; update `docs/backend_api.md`.
 **Interfaces:** Existing overview/history keep envelopes and old fields. Add `GET /api/v1/activities/{activity_id}/execution` for summarized segments/current analysis (no raw samples), with optional `analysis_id` to retrieve the exact immutable historical analysis after checking activity and owner and `GET /api/v1/activities/detail-coverage` for owner counts/status; register fixed route before dynamic route. Existing `POST /johnny/reviews/{id}/retry` gains optional `source: Literal['stored_evidence','sync']='stored_evidence'`; absent body on sync_failed defaults to sync, other absent-body retries use stored evidence.
 
-- [ ] Write tests for v1/v2 response compatibility, owner-only evidence lookup, missing activity 404, summaries with missing details, retry historical stale review without provider calls. Assertions: `assert provider_calls == 0` for explicit stored_evidence; new generation uses original review date/timezone; compatibility guidance remains a string.
-- [ ] Run `pytest backend/tests/unit/test_johnny_api.py backend/tests/unit/test_activity_detail_api.py -q`; confirm failures.
-- [ ] Implement explicit freshness/analysis mode/detail coverage without conflating them. Store/retrieve the snapshot IDs used by a historical analysis, not today's latest detail. Add additive response schemas; missing analysis remains absent for v1 revisions. API never reports chart coverage as full recording precision.
-- [ ] Run both suites and relevant Today/activity API tests; update API examples for normal, rules, partial, stale and legacy responses.
-- [ ] Commit: `feat: expose compatible coaching analysis and evidence APIs`.
+- [x] Write tests for v1/v2 response compatibility, owner-only evidence lookup, missing activity 404, summaries with missing details, retry historical stale review without provider calls. Assertions: `assert provider_calls == 0` for explicit stored_evidence; new generation uses original review date/timezone; compatibility guidance remains a string.
+- [x] Run `pytest backend/tests/unit/test_johnny_api.py backend/tests/unit/test_activity_detail_api.py -q`; confirm failures.
+- [x] Implement explicit freshness/analysis mode/detail coverage without conflating them. Store/retrieve the snapshot IDs used by a historical analysis, not today's latest detail. Add additive response schemas; missing analysis remains absent for v1 revisions. API never reports chart coverage as full recording precision.
+- [x] Run both suites and relevant Today/activity API tests; update API examples for normal, rules, partial, stale and legacy responses.
+- [x] Commit: `feat: expose compatible coaching analysis and evidence APIs`.
 
 ### Task 11: Present decisions and findings across Johnny, Today and Data
 

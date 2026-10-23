@@ -48,3 +48,4 @@ class TodayContextResponse(BaseModel):
     current_recommendation: dict[str, Any] | None = None
     daily_advice: DailyAdviceResponse | None = None
     workout_advice: dict[str, Any] | None = None
+    workout_advice_summary: dict[str, Any] | None = None

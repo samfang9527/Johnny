@@ -22,3 +22,7 @@ class WorkoutAdviceRequest(BaseModel):
     client_request_id: UUID
     workout_id: UUID | None = None
     constraints: WorkoutAdviceConstraintsRequest = Field(default_factory=WorkoutAdviceConstraintsRequest)
+
+
+class RetryReviewRequest(BaseModel):
+    source: Literal['stored_evidence', 'sync'] = 'stored_evidence'

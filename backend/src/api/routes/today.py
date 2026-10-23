@@ -42,9 +42,27 @@ def get_today(
         WorkoutAdviceModel.advice_date == anchor_date,
         WorkoutAdviceModel.current_revision_id.is_not(None),
     ).order_by(WorkoutAdviceModel.updated_at.desc(), WorkoutAdviceModel.id.desc()).limit(1))
-    payload["workout_advice"] = (SqlAlchemyCoachingRepository(session).get_advice_slot(
+    workout_advice = (SqlAlchemyCoachingRepository(session).get_advice_slot(
         current_user.id, latest.advice_date, latest.slot_key) if latest else None)
+    payload["workout_advice"] = workout_advice
+    payload["workout_advice_summary"] = _workout_advice_summary(workout_advice)
     return DataEnvelope(data=TodayContextResponse(**payload))
+
+
+def _workout_advice_summary(slot: dict | None) -> dict | None:
+    if slot is None or not isinstance(slot.get('current'), dict):
+        return None
+    current = slot['current']
+    guidance = current.get('guidance')
+    result = {'advice_id': slot['id'], 'advice_date': slot['advice_date'],
+              'freshness': slot['freshness'],
+              'guidance': guidance if isinstance(guidance, str) else ''}
+    analysis = current.get('analysis')
+    if isinstance(analysis, dict) and analysis.get('analysis_mode') in {'llm', 'rules'}:
+        result.update({'headline': analysis.get('headline'),
+                       'summary': analysis.get('summary'),
+                       'analysis_mode': analysis['analysis_mode']})
+    return result
 
 
 def _daily_advice_payload(advice: DailyAdvice) -> dict:
