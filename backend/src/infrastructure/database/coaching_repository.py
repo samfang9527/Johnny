@@ -238,13 +238,13 @@ class SqlAlchemyCoachingRepository:
     def _manifest_is_current(self, user_id: str, kind: str, local_date: date,
                              timezone_name: str | None, workout_id: str | None,
                              constraints_payload: dict | None, revision: dict) -> bool:
-        from src.application.coaching_analysis_evidence import build_coaching_evidence
+        from src.application.coaching_analysis_evidence import build_coaching_evidence, coaching_manifest_fingerprint
         from src.domain.workout_advice import WorkoutAdviceConstraints
         from .coaching_analysis_evidence_repository import SqlAlchemyCoachingAnalysisEvidenceRepository
         manifest = revision.get('evidence_manifest')
         fingerprint = revision.get('evidence_fingerprint')
         if (not isinstance(manifest, dict) or not isinstance(fingerprint, str)
-                or canonical_fingerprint(manifest) != fingerprint or not timezone_name):
+                or coaching_manifest_fingerprint(manifest) != fingerprint or not timezone_name):
             return False
         try:
             constraints = (WorkoutAdviceConstraints(**constraints_payload)

@@ -36,6 +36,7 @@ def test_execution_analyses_are_owner_and_cutoff_scoped(sqlite_session_factory):
         result = repo.list_execution_analyses('athlete', date(2027, 1, 15),
                                               date(2027, 1, 16), cutoff)
         assert [item.activity_id for item in result] == ['athlete-activity']
+        assert result[0].analysis_id is not None
         assert result[0].activity_started_at == datetime(2027, 1, 15, 16, 30,
                                                           tzinfo=timezone.utc)
         assert result[0].limitations == ('missing_prescription',)

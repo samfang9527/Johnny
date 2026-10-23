@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getJohnnyOverview, listJohnnyHistory } from '../api/client'
+import { getJohnnyOverview, listJohnnyHistory, retryJohnnyReview } from '../api/client'
 import { useJohnny } from './useJohnny'
 
 vi.mock('../api/client', () => ({
@@ -54,6 +54,32 @@ describe('useJohnny independent streams', () => {
     await state.refreshReview()
     expect(wrapper.text()).toBe('R2|A2')
     expect(state.reviewError.value).toContain('保留上次結果')
+    wrapper.unmount()
+  })
+
+  it('retries a selected historical review from stored evidence without changing the advice stream', async () => {
+    vi.mocked(retryJohnnyReview).mockResolvedValue({ data: { run_id: 'retry-1', status: 'queued' } } as never)
+    let state!: ReturnType<typeof useJohnny>
+    const Probe = defineComponent({ setup() { state = useJohnny(); return () => h('div') } })
+    const wrapper = mount(Probe)
+    await flushPromises()
+    await state.retryReview('old-review', 'stored_evidence')
+    expect(retryJohnnyReview).toHaveBeenCalledWith('old-review', 'stored_evidence')
+    expect(state.retryPendingId.value).toBe('old-review')
+    expect(state.advicePendingRunId.value).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('reports a historical retry failure in History without replacing the current review error', async () => {
+    vi.mocked(retryJohnnyReview).mockRejectedValue(new Error('offline'))
+    let state!: ReturnType<typeof useJohnny>
+    const Probe = defineComponent({ setup() { state = useJohnny(); return () => h('div') } })
+    const wrapper = mount(Probe)
+    await flushPromises()
+    await state.retryReview('old-review', 'stored_evidence')
+    expect(state.historyError.value).toContain('重新分析')
+    expect(state.reviewError.value).toBe('')
+    expect(state.retryPendingId.value).toBeNull()
     wrapper.unmount()
   })
 })

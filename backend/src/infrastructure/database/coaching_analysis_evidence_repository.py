@@ -99,6 +99,7 @@ class SqlAlchemyCoachingAnalysisEvidenceRepository:
                 limitations=tuple(payload.get('limitations') or ()),
                 algorithm_version=payload.get('algorithm_version', model.algorithm_version),
                 activity_started_at=utc(activity.started_at),
+                analysis_id=model.id,
             )
         return tuple(latest.values())
 

@@ -199,6 +199,57 @@ export interface ExecutionScoreResponse {
   policy_version: string
 }
 
+export interface CoachingAnalysis {
+  schema_version: string
+  headline: string
+  summary: string
+  findings: Array<{ observation: string; interpretation: string; evidence_refs: string[] }>
+  actions: Array<{ action_id: string; text: string; evidence_refs: string[]; recommendation_id: string | null }>
+  limitations: string[]
+  evidence_refs: string[]
+  analysis_mode: 'llm' | 'rules'
+  fallback_reason: string | null
+  input_fingerprint: string
+  versions: Record<string, string>
+}
+
+export interface ActivityDetailCoverage {
+  state: 'complete' | 'partial' | 'unknown'
+  sampling: 'recorded' | 'chart' | 'unknown'
+  covered_seconds: number | null
+  missing_channels: string[]
+  limitations: string[]
+}
+
+export interface ActivityExecutionResponse {
+  activity_id: string
+  analysis_id: string | null
+  freshness: 'current' | 'stale' | 'unavailable'
+  analysis: { activity_id: string; activity_ids: string[]; fingerprint: string;
+    prescription_revision_id: string | null; snapshot_ids: string[];
+    mapping: 'exact' | 'estimated' | 'unmatched';
+    facts: Array<{ id: string; metric: string; value: number; unit: string; scope: string; evidence_refs: string[];
+      denominator_seconds?: number | null; covered_seconds?: number | null }>;
+    findings: Array<{ code: string; fact_ids: string[]; supports: string; does_not_support: string }>;
+    limitations: string[]; algorithm_version: string } | null
+  used_details: Array<{ snapshot_id: string; activity_id: string; resource: string;
+    coverage: ActivityDetailCoverage; precision: 'recorded' | 'sampled' | 'unknown';
+    segments: Array<{ source_index: number; source_kind: string; start_at?: string | null; end_at?: string | null;
+      timer_seconds: number | null; elapsed_seconds: number | null; distance_meters: number | null;
+      average_heart_rate_bpm: number | null; average_pace_seconds_per_km: number | null; step_path: string | null }> }>
+  current_details: Array<{ activity_id: string; resource: string; status: string;
+    current_snapshot_id: string | null; coverage: ActivityDetailCoverage | null }>
+}
+
+export interface ActivityDetailCoverageSummary {
+  total_activities: number
+  with_details: number
+  without_details: number
+  fetch_status_counts: Record<string, number>
+  coverage_state_counts: Record<string, number>
+  sampling_counts: Record<string, number>
+}
+
 export interface TrainingReviewResult {
   kind: 'daily_review'
   publication_date: string
@@ -208,6 +259,8 @@ export interface TrainingReviewResult {
   timezone_name: string
   generated_at: string
   narrative: string
+  analysis?: CoachingAnalysis | null
+  evidence_manifest?: { analyses?: Array<{ activity_ids: string[]; fingerprint: string; analysis_id?: string | null }> }
   score: ExecutionScoreResponse
   yesterday: Array<{ workout_id: string; workout_type: string; state: string;
     planned_duration_minutes: number | null; planned_distance_meters: number | null;
@@ -223,6 +276,8 @@ export interface WorkoutAdviceResult {
   advice_date: string
   workout_id: string | null
   guidance: string
+  analysis?: CoachingAnalysis | null
+  evidence_manifest?: { recent_analyses?: Array<{ activity_ids: string[]; fingerprint: string; analysis_id?: string | null }> }
   mode: string
   reason_code: string
   constraints: WorkoutAdviceConstraints
@@ -240,7 +295,18 @@ export interface JohnnySlot<T> {
   attempt_state: string
   attempt_error: string | null
   freshness: string
+  analysis_mode?: 'llm' | 'rules'
   current: T | null
+}
+
+export interface WorkoutAdviceSummary {
+  advice_id: string
+  advice_date: string
+  freshness: string
+  guidance: string
+  headline?: string | null
+  summary?: string | null
+  analysis_mode?: 'llm' | 'rules'
 }
 
 export interface JohnnyReviewSlot extends JohnnySlot<TrainingReviewResult> {

@@ -18,7 +18,7 @@ from src.infrastructure.database.activity_repository import SqlAlchemyActivityRe
 from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 from src.infrastructure.database.models import (
-    ActivityModel, Base, IntegrationConnectionModel, SyncRunModel, UserModel,
+    ActivityExecutionAnalysisModel, ActivityModel, Base, IntegrationConnectionModel, SyncRunModel, UserModel,
 )
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
@@ -63,6 +63,19 @@ def test_advice_uses_gateway_without_raw_recovery_dump_or_early_plan_change(
                                       target=WorkoutTarget.rpe(3)),))
         plans.save_plan('athlete', TrainingPlan.create(user_id='athlete', name='Base',
             starts_on=TODAY, ends_on=TODAY, workouts=(workout,)))
+        session.add(ActivityModel(id='prior-run', user_id='athlete',
+            started_at=datetime(2027, 1, 14, 16, 30, tzinfo=timezone.utc),
+            activity_type='running', duration_seconds=2100, distance_meters=5000))
+        session.flush()
+        historical_analysis = ActivityExecutionAnalysisModel(user_id='athlete',
+            activity_id='prior-run', fingerprint='prior-fingerprint',
+            algorithm_version='execution-analysis-v1', snapshot_ids=[],
+            payload={'activity_id': 'prior-run', 'activity_ids': ['prior-run'],
+                     'fingerprint': 'prior-fingerprint', 'mapping': 'unmatched',
+                     'facts': [], 'findings': [], 'limitations': ['missing_prescription']},
+            created_at=NOW)
+        session.add(historical_analysis)
+        session.flush()
         activities = SqlAlchemyActivityRepository(session)
         activities.save_daily_health_metrics('athlete', DailyHealthMetrics.create(
             user_id='athlete', metric_date=TODAY, sleep_duration_minutes=300,
@@ -77,6 +90,7 @@ def test_advice_uses_gateway_without_raw_recovery_dump_or_early_plan_change(
         assert len(gateway.requests) == 1
         assert result['analysis']['analysis_mode'] == 'llm'
         assert result['analysis']['input_fingerprint'] == result['evidence_fingerprint']
+        assert result['evidence_manifest']['recent_analyses'][0]['analysis_id'] == historical_analysis.id
         assert '300' not in result['guidance']
         assert result['recovery']['days'][-1]['signals']['sleep']['value'] == 300
         assert result['recommendation_id']

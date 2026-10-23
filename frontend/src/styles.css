@@ -3503,9 +3503,46 @@ textarea { transition: background-color var(--motion-feedback) ease, border-colo
 }
 
 .johnny-decision--empty p {
-  margin-bottom: 0;
+  display: inline;
+  margin: 0 0 0 0.75rem;
   color: var(--color-muted-green);
 }
+.johnny-decision--empty { padding: 0.7rem 0 1rem; }
+.johnny-decision--empty .johnny-decision__count { font-family: var(--font-body); letter-spacing: 0; }
+
+.coaching-analysis { min-width: 0; max-width: 68rem; overflow-wrap: anywhere; }
+.coaching-analysis__status,
+.coaching-analysis__mode { color: var(--color-split-amber); font-size: 0.87rem; margin: 0.35rem 0; }
+.coaching-analysis__headline { color: var(--color-deep-green); font-family: var(--font-display); font-size: clamp(1.45rem, 3vw, 2.3rem); line-height: 1.2; margin: 0.35rem 0 0.55rem !important; }
+.coaching-analysis__summary { max-width: 70ch; font-size: 1.06rem; line-height: 1.65; margin: 0 0 1.25rem; }
+.coaching-analysis__findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); border-top: 1px solid var(--color-line-mint); }
+.coaching-analysis__finding { min-width: 0; padding: 0.9rem 1rem 0.9rem 0; border-bottom: 1px solid var(--color-line-mint); }
+.coaching-analysis__finding p { margin: 0 0 0.4rem; line-height: 1.6; }
+.coaching-analysis__actions { list-style: none; padding: 0; margin: 1.2rem 0; display: grid; gap: 0.65rem; }
+.coaching-analysis__actions li { display: grid; grid-template-columns: 1rem minmax(0, 1fr); gap: 0.2rem 0.7rem; align-items: start; color: var(--color-deep-green); font-weight: 650; }
+.coaching-analysis__actions li::before { content: '→'; grid-column: 1; color: var(--color-split-amber); }
+.coaching-analysis__actions li span,
+.coaching-analysis__actions li .coaching-analysis__link { grid-column: 2; justify-self: start; }
+.coaching-analysis__link { padding: 0.1rem 0; border: 0; border-bottom: 1px solid currentColor; background: none; color: var(--color-deep-green); font: inherit; font-size: 0.88rem; cursor: pointer; }
+.coaching-analysis__link:hover { color: var(--color-split-amber); }
+.coaching-analysis__link:focus-visible { outline: 2px solid var(--color-deep-green); outline-offset: 3px; }
+.coaching-analysis__details { margin: 1rem 0; color: var(--color-muted-green); }
+.coaching-analysis__details summary { cursor: pointer; color: var(--color-deep-green); }
+.coaching-analysis__details ul { margin: 0.8rem 0; padding-left: 1.5rem; }
+.coaching-analysis__details p { margin: 0.4rem 0; }
+.johnny-review__score-summary { margin: 1.3rem 0 0.4rem; color: var(--color-muted-green); }
+.johnny-review__score-summary strong { color: var(--color-deep-green); font-family: var(--font-data); }
+.execution-segments__mapping { font-weight: 700; color: var(--color-deep-green); }
+.execution-segments__findings,
+.execution-segments__resource ol { list-style: none; margin: 0; padding: 0; }
+.execution-segments__findings li { display: grid; gap: 0.25rem; border-top: 1px solid var(--color-line-mint); padding: 0.8rem 0; }
+.execution-segments__findings span { color: var(--color-muted-green); }
+.execution-segments__resource { padding: 0.8rem 0; border-top: 1px solid var(--color-line-mint); }
+.execution-segments__resource li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.25rem 1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--color-line-mint); }
+.johnny-evidence h3:focus { outline: 2px solid var(--color-deep-green); outline-offset: 4px; }
+.activity-detail-coverage { border-top: 1px solid var(--color-line-mint); }
+.activity-detail-coverage h3 { margin-top: 0; }
+.activity-detail-coverage strong { color: var(--color-deep-green); font-family: var(--font-data); }
 
 .johnny-tabs {
   display: flex;

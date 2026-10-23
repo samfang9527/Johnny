@@ -14,6 +14,7 @@ import {
   getAgentRun,
   listAgentRuns,
   getAthleteProfile,
+  getActivityDetailCoverage,
   getCurrentUser,
   getGoogleSignInRedirectUrl,
   getTrainingPlanRegenerationOptions,
@@ -88,6 +89,8 @@ import type {
   WorkoutStep,
   WorkoutTarget,
   JohnnyAdviceSlot,
+  WorkoutAdviceSummary,
+  ActivityDetailCoverageSummary,
 } from './types'
 
 const props = withDefaults(
@@ -167,6 +170,10 @@ const apiRaceSummary = ref<RaceSummary | null>(null)
 const apiTodayWorkoutPayload = ref<Record<string, unknown> | null>(null)
 const apiDailyAdvice = ref<DailyAdvice | null>(null)
 const apiManualAdvice = ref<JohnnyAdviceSlot | null>(null)
+const apiManualAdviceSummary = ref<WorkoutAdviceSummary | null>(null)
+const activityDetailCoverage = ref<ActivityDetailCoverageSummary | null>(null)
+const activityDetailCoverageLoading = ref(false)
+const activityDetailCoverageError = ref('')
 const sessionReviewsRefreshKey = ref(0)
 const apiTodayWorkout = computed(() => {
   const raw = apiTodayWorkoutPayload.value
@@ -473,7 +480,12 @@ const currentManualAdvice = computed(() => {
 })
 const todayDecision = computed<TodayDecision>(() => {
   const decision = buildTodayDecision(recommendation.value, recoveryEvidence.value)
-  if (currentManualAdvice.value) return { ...decision, voice: currentManualAdvice.value.guidance,
+  if (currentManualAdvice.value) return { ...decision,
+    voice: apiManualAdviceSummary.value?.advice_date === todayIsoDate.value &&
+      apiManualAdviceSummary.value.freshness === 'current' &&
+      apiManualAdviceSummary.value.advice_id === apiManualAdvice.value?.id
+      ? (apiManualAdviceSummary.value.summary || apiManualAdviceSummary.value.headline || apiManualAdviceSummary.value.guidance)
+      : currentManualAdvice.value.analysis?.summary || currentManualAdvice.value.guidance,
     actionLabel: '查看 Johnny 建議' }
   if (dailyAdvice.value?.state === 'no_plan') return { ...decision, actionLabel: '查看計畫' }
   if (dailyAdvice.value?.state === 'sync_failed') return { ...decision, actionLabel: '檢查資料' }
@@ -1057,8 +1069,22 @@ function showView(view: ViewKey) {
   }
   previewDate.value = null
   activeView.value = view
+  if (view === 'data') void refreshActivityDetailCoverage()
   if (typeof window !== 'undefined') {
     window.history.replaceState(null, '', `#${view}`)
+  }
+}
+
+async function refreshActivityDetailCoverage() {
+  activityDetailCoverageLoading.value = true
+  activityDetailCoverageError.value = ''
+  try {
+    const response = await getActivityDetailCoverage()
+    if (!isUnmounted) activityDetailCoverage.value = response.data
+  } catch {
+    if (!isUnmounted) activityDetailCoverageError.value = '活動分段涵蓋情況暫時無法讀取。'
+  } finally {
+    activityDetailCoverageLoading.value = false
   }
 }
 
@@ -1981,7 +2007,7 @@ onMounted(() => {
   calendarTimer = setInterval(refreshCalendarDate, 60_000)
   window.addEventListener('focus', refreshCalendarDate)
   window.addEventListener('focus', refreshActivityCenter)
-  void initializeAuth()
+  void initializeAuth().then(() => { if (activeView.value === 'data') void refreshActivityDetailCoverage() })
 })
 
 onUnmounted(() => {
@@ -2359,6 +2385,8 @@ function applyTodayPayload(payload: Record<string, unknown>) {
   apiDailyAdvice.value = null
   apiManualAdvice.value = (payload.workout_advice && typeof payload.workout_advice === 'object'
     ? payload.workout_advice as JohnnyAdviceSlot : null)
+  apiManualAdviceSummary.value = (payload.workout_advice_summary && typeof payload.workout_advice_summary === 'object'
+    ? payload.workout_advice_summary as WorkoutAdviceSummary : null)
   const nextRace = payload.next_race as Record<string, unknown> | null | undefined
   if (nextRace?.name && nextRace.race_date) {
     apiRaceSummary.value = {
@@ -3857,6 +3885,18 @@ function shouldRequireAuth(): boolean {
               <span class="signal-pill__state">{{ item.covered ? '已取得' : '待補' }}</span>
             </span>
           </div>
+        </section>
+
+        <section class="surface-card activity-detail-coverage" data-testid="activity-detail-coverage" aria-labelledby="activity-detail-coverage-title">
+          <h3 id="activity-detail-coverage-title">活動分段資料</h3>
+          <p>活動已同步的堂數與可分析的分段細節分開計算。</p>
+          <p v-if="activityDetailCoverageLoading" role="status">正在讀取分段涵蓋情況。</p>
+          <p v-if="activityDetailCoverageError" role="alert">{{ activityDetailCoverageError }}</p>
+          <template v-if="activityDetailCoverage && typeof activityDetailCoverage.total_activities === 'number'">
+            <p><strong>{{ activityDetailCoverage.with_details }}/{{ activityDetailCoverage.total_activities }}</strong> 堂活動有分段細節</p>
+            <p class="johnny-stream__meta">完整 {{ activityDetailCoverage.coverage_state_counts?.complete ?? 0 }} · 部分 {{ activityDetailCoverage.coverage_state_counts?.partial ?? 0 }} · 圖表抽樣 {{ activityDetailCoverage.sampling_counts?.chart ?? 0 }}</p>
+          </template>
+          <p v-else-if="!activityDetailCoverageLoading && !activityDetailCoverageError">目前尚無分段涵蓋資訊。</p>
         </section>
 
         <div class="provider-grid">

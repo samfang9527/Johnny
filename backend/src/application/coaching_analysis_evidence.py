@@ -55,7 +55,7 @@ class CoachingEvidenceBundle:
 def _analysis_payload(analysis: ExecutionAnalysis) -> dict:
     findings = analysis.findings[:3]
     cited = {fact_id for finding in findings for fact_id in finding.fact_ids}
-    return {
+    payload = {
         'activity_ids': list(analysis.activity_ids), 'fingerprint': analysis.fingerprint,
         'prescription_revision_id': analysis.prescription_revision_id,
         'snapshot_ids': list(analysis.snapshot_ids), 'algorithm_version': analysis.algorithm_version,
@@ -65,6 +65,19 @@ def _analysis_payload(analysis: ExecutionAnalysis) -> dict:
         'limitations': list(analysis.limitations),
         'omitted_finding_count': len(analysis.findings) - len(findings),
     }
+    if analysis.analysis_id is not None:
+        payload['analysis_id'] = analysis.analysis_id
+    return payload
+
+
+def coaching_manifest_fingerprint(manifest: dict) -> str:
+    """Hash effective evidence while ignoring immutable database row identity."""
+    key = 'analyses' if manifest.get('kind') == 'daily_review' else 'recent_analyses'
+    effective = {**manifest, key: [
+        {name: value for name, value in item.items() if name != 'analysis_id'}
+        for item in manifest.get(key, ())
+    ]}
+    return canonical_fingerprint(effective)
 
 
 def _session_payload(session: ActivitySession) -> dict:
@@ -218,4 +231,4 @@ def build_coaching_evidence(*, user_id: str, kind: Literal['daily_review', 'work
                        'missing_facts': [name for name, present in action_facts.items() if not present]},
         }
     return CoachingEvidenceBundle(kind, local_date, timezone_name,
-                                  canonical_fingerprint(manifest), manifest)
+                                  coaching_manifest_fingerprint(manifest), manifest)

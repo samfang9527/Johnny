@@ -57,6 +57,7 @@ class ExecutionAnalysis:
     limitations: tuple[str, ...]
     algorithm_version: str = ALGORITHM_VERSION
     activity_started_at: datetime | None = None
+    analysis_id: str | None = None
 
     def to_payload(self) -> dict:
         return dict(activity_id=self.activity_id, activity_ids=list(self.activity_ids),

@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from src.application.coaching_analysis_evidence import build_coaching_evidence
+from src.application.coaching_analysis_evidence import build_coaching_evidence, coaching_manifest_fingerprint
 from src.domain.activity_sessions import match_sessions, utc
 from src.domain.coaching_fingerprints import canonical_fingerprint
 from src.domain.training_plan import Workout
@@ -83,7 +83,7 @@ class CoachingApprovalService:
         if 'evidence_manifest' in payload:
             expected = payload.get('evidence_fingerprint')
             if (not isinstance(expected, str)
-                    or canonical_fingerprint(payload['evidence_manifest']) != expected
+                    or coaching_manifest_fingerprint(payload['evidence_manifest']) != expected
                     or model.evidence_fingerprint != expected):
                 raise CoachingDecisionConflict('evidence_manifest_changed')
             current = build_coaching_evidence(user_id=user_id, kind='workout_advice',

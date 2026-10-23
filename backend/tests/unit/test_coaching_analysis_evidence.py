@@ -1,7 +1,7 @@
 from dataclasses import replace
 from datetime import date, datetime, timezone
 
-from src.application.coaching_analysis_evidence import AdviceContext, build_coaching_evidence
+from src.application.coaching_analysis_evidence import AdviceContext, build_coaching_evidence, coaching_manifest_fingerprint
 from src.domain.activity_health import DailyHealthMetrics
 from src.domain.activity_execution import ExecutionAnalysis, ExecutionFinding
 from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep
@@ -156,6 +156,21 @@ def test_used_historical_analysis_changes_fingerprint():
     assert second.fingerprint != first.fingerprint
     store.analyses = (replace(store.analyses[0], fingerprint='content-two'),)
     assert build(store).fingerprint != second.fingerprint
+
+
+def test_analysis_id_is_available_for_historical_evidence_without_changing_content_fingerprint():
+    store = Store()
+    analysis = ExecutionAnalysis('a', ('a',), 'content', None, (), 'unmatched', (), (), (),
+        activity_started_at=datetime(2027, 1, 15, 15, tzinfo=timezone.utc), analysis_id='version-one')
+    store.analyses = (analysis,)
+    first = build(store)
+    assert first.manifest['recent_analyses'][0]['analysis_id'] == 'version-one'
+    store.analyses = (replace(analysis, analysis_id='version-two'),)
+    second = build(store)
+    assert second.manifest['recent_analyses'][0]['analysis_id'] == 'version-two'
+    assert first.fingerprint == second.fingerprint
+    assert coaching_manifest_fingerprint(first.manifest) == first.fingerprint
+    assert coaching_manifest_fingerprint(second.manifest) == second.fingerprint
 
 
 def test_committed_detail_pointer_invalidates_advice_before_analysis_batch_finishes():

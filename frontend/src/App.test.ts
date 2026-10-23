@@ -170,6 +170,40 @@ describe('Johnny product shell', () => {
     await action.trigger('click')
     expect(wrapper.get('[data-view="johnny"]').attributes('aria-current')).toBe('page')
   })
+
+  it('uses only the short structured advice on Today while preserving legacy guidance', async () => {
+    mockAuthenticatedToday({ userId: 'runner', todayData: { scheduled_workouts: [], recovery: {},
+      workout_advice: { id: 'advice-1', advice_date: '2026-09-26', freshness: 'current', current: {
+        guidance: '長篇原文與恢復數字 53 ms。', expires_at: '2026-09-27T00:00:00Z',
+      } }, workout_advice_summary: { advice_id: 'advice-1', advice_date: '2026-09-26', freshness: 'current',
+        headline: '今天照原計畫', summary: '保留輕鬆強度。', guidance: '長篇原文與恢復數字 53 ms。', analysis_mode: 'llm' } } })
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    const card = wrapper.get('[data-testid="today-decision-card"]')
+    expect(card.text()).toContain('保留輕鬆強度。')
+    expect(card.text()).not.toContain('53 ms')
+    expect(card.text()).not.toContain('長篇原文')
+    wrapper.unmount()
+  })
+
+  it('shows activity detail coverage separately from general training-signal coverage on Data', async () => {
+    mockAuthenticatedToday({ userId: 'runner', todayData: { scheduled_workouts: [], recovery: {} } })
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith('/activities/detail-coverage')
+        ? Promise.resolve(okJson({ total_activities: 5, with_details: 2, without_details: 3,
+          fetch_status_counts: { complete: 2 }, coverage_state_counts: { complete: 1, partial: 1 },
+          sampling_counts: { chart: 1, recorded: 1 } }))
+        : baseFetch(input, init))
+    const wrapper = mount(App, { props: { requireAuth: true } })
+    await flushPromises()
+    await wrapper.get('[data-view="data"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="activity-detail-coverage"]').text()).toContain('2/5 堂活動有分段細節')
+    expect(wrapper.get('[data-testid="activity-detail-coverage"]').text()).toContain('圖表抽樣 1')
+    expect(wrapper.get('[data-testid="signal-coverage"]').text()).toContain('訓練訊號')
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))

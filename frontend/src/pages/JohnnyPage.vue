@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { acceptRecommendation, rejectRecommendation } from '../api/client'
+import { computed, nextTick, ref, watch } from 'vue'
+import { acceptRecommendation, getActivityExecution, rejectRecommendation } from '../api/client'
 import AppButton from '../components/AppButton.vue'
+import CoachingAnalysis from '../components/CoachingAnalysis.vue'
+import ExecutionSegments from '../components/ExecutionSegments.vue'
 import RecommendationActions from '../components/RecommendationActions.vue'
 import { useJohnny } from '../composables/useJohnny'
-import type { WorkoutAdviceConstraints } from '../types'
+import type { ActivityExecutionResponse, CoachingAnalysis as CoachingAnalysisData, WorkoutAdviceConstraints } from '../types'
 
 const props = defineProps<{ timeZone: string; activityNavigation?: { tab: 'advice' | 'review'; version: number } }>()
 const emit = defineEmits<{ decision: []; navigateToday: []; runObserved: [runId: string, workflow: 'daily_review' | 'workout_advice'] }>()
@@ -35,6 +37,52 @@ const score = computed(() => johnny.dailyReview.value?.current?.score ?? null)
 const proposals = computed(() => johnny.actionableProposals.value ?? [])
 const choices = computed(() => johnny.workoutChoices.value ?? [])
 const history = computed(() => johnny.history.value ?? [])
+const selectedExecution = ref<ActivityExecutionResponse | null>(null)
+const executionLoading = ref(false)
+const executionError = ref('')
+const evidenceHeading = ref<HTMLElement | null>(null)
+
+function evidenceTargets(result: { analysis?: CoachingAnalysisData | null; evidence_manifest?: {
+  analyses?: Array<{ activity_ids: string[]; fingerprint: string; analysis_id?: string | null }>;
+  recent_analyses?: Array<{ activity_ids: string[]; fingerprint: string; analysis_id?: string | null }>
+} } | null | undefined) {
+  if (!result?.analysis || !result.evidence_manifest) return []
+  const analyses = result.evidence_manifest.analyses ?? result.evidence_manifest.recent_analyses ?? []
+  const refs = [...result.analysis.evidence_refs,
+    ...result.analysis.findings.flatMap(finding => finding.evidence_refs)]
+  return analyses.flatMap(item => refs.filter(ref => ref.startsWith(`execution:${item.fingerprint}:`))
+    .map(ref => ({ ref, activityId: item.activity_ids[0], analysisId: item.analysis_id ?? null })))
+    .filter(item => !!item.activityId)
+}
+
+async function openEvidence(target: { activityId: string; analysisId: string | null }) {
+  selectedExecution.value = null
+  executionError.value = ''
+  executionLoading.value = true
+  try {
+    const response = await getActivityExecution(target.activityId, target.analysisId)
+    const used = [...evidenceTargets(johnny.dailyReview.value?.current),
+      ...evidenceTargets(latestAdvice.value),
+      ...history.value.flatMap(entry => evidenceTargets(entry.result?.current))]
+    const expected = used.find(item => item.activityId === target.activityId && item.analysisId === target.analysisId)?.ref.split(':')[1]
+    if (expected && response.data.analysis?.fingerprint !== expected) {
+      executionError.value = '當時使用的分段版本目前無法定位；請以原分析文字為準。'
+    } else selectedExecution.value = response.data
+  } catch {
+    executionError.value = '活動分段證據暫時無法讀取，請稍後再試。'
+  } finally {
+    executionLoading.value = false
+    await nextTick()
+    evidenceHeading.value?.focus()
+  }
+}
+
+function openRecommendation(id: string) {
+  const proposal = document.getElementById(`johnny-proposal-${id}`)
+  const disclosure = proposal?.querySelector('details')
+  if (disclosure) (disclosure as HTMLDetailsElement).open = true
+  proposal?.querySelector<HTMLElement>('summary')?.focus()
+}
 
 function scoreReason(reason: string | null | undefined): string {
   const labels: Record<string, string> = {
@@ -195,7 +243,7 @@ async function decide(id: string, action: 'accept' | 'keep') {
         <span class="johnny-decision__count">{{ proposals.length }} 件需要你決定</span>
         <h3 id="johnny-proposals-title">待決定調整</h3>
       </div>
-      <article v-for="proposal in proposals" :key="proposal.id" class="johnny-proposal">
+      <article v-for="proposal in proposals" :id="`johnny-proposal-${proposal.id}`" :key="proposal.id" class="johnny-proposal">
         <div class="johnny-proposal__heading">
           <h4>{{ proposal.title }}</h4>
           <span v-if="proposal.expires_at" class="johnny-stream__meta">有效至 <time :datetime="proposal.expires_at">{{ formatDateTime(proposal.expires_at) }}</time></span>
@@ -217,10 +265,9 @@ async function decide(id: string, action: 'accept' | 'keep') {
         </details>
       </article>
     </section>
-    <section v-else class="johnny-decision johnny-decision--empty" data-testid="johnny-decision-empty" aria-labelledby="johnny-decision-empty-title">
-      <span class="johnny-decision__count">目前沒有待決定調整</span>
-      <h3 id="johnny-decision-empty-title">沒有需要你決定的調整。</h3>
-      <p>你可以從下方分頁查看今日建議、訓練回顧或歷史紀錄。</p>
+    <section v-else class="johnny-decision johnny-decision--empty" data-testid="johnny-decision-empty" aria-label="待決定調整">
+      <span class="johnny-decision__count">待決定調整</span>
+      <p>沒有需要你決定的調整。</p>
     </section>
     <p v-if="decisionError" class="johnny-stream__error" role="alert">{{ decisionError }}</p>
 
@@ -235,7 +282,9 @@ async function decide(id: string, action: 'accept' | 'keep') {
       <p v-if="johnny.adviceLoading.value || johnny.advicePendingRunId.value" class="johnny-stream__state activity-inline-status" role="status">正在分析今天的資料；已有建議會保留。</p>
       <p v-if="johnny.adviceError.value" class="johnny-stream__error" role="alert">{{ johnny.adviceError.value }}</p>
       <article v-if="latestAdvice" class="johnny-advice-result">
-        <p class="johnny-stream__lead">{{ latestAdvice.guidance }}</p>
+        <CoachingAnalysis v-if="latestAdvice.analysis" :analysis="latestAdvice.analysis" :freshness="johnny.workoutAdvices.value.find(item => item.current === latestAdvice)?.freshness ?? 'current'" kind="workout_advice"
+          :evidence-targets="evidenceTargets(latestAdvice)" @open-evidence="openEvidence" @open-recommendation="openRecommendation" />
+        <p v-else class="johnny-stream__lead">{{ latestAdvice.guidance }}</p>
         <p class="johnny-stream__meta">產生於 <time :datetime="latestAdvice.generated_at">{{ formatDateTime(latestAdvice.generated_at) }}</time></p>
         <p v-if="latestAdvice.reason_code === 'needs_pairing'">活動配對待確認。請到「今日」整理活動後再取得建議。<AppButton @click="emit('navigateToday')">前往今日整理活動</AppButton></p>
         <p v-if="latestAdvice.after" class="johnny-stream__meta">有可套用的課表調整，請在上方待決定區查看。</p>
@@ -280,14 +329,17 @@ async function decide(id: string, action: 'accept' | 'keep') {
       <p v-if="johnny.reviewLoading.value || johnny.reviewPendingRunId.value" class="johnny-stream__state activity-inline-status" role="status">正在更新每日回顧，先保留上次結果。</p>
       <p v-if="johnny.reviewError.value" class="johnny-stream__error" role="alert">{{ johnny.reviewError.value }}</p>
       <template v-if="johnny.dailyReview.value?.current">
-        <p class="johnny-stream__lead">{{ johnny.dailyReview.value.current.narrative }}</p>
+        <CoachingAnalysis v-if="johnny.dailyReview.value.current.analysis" :analysis="johnny.dailyReview.value.current.analysis"
+          :freshness="johnny.dailyReview.value.freshness" kind="daily_review" :evidence-targets="evidenceTargets(johnny.dailyReview.value.current)"
+          @open-evidence="openEvidence" @open-recommendation="openRecommendation" />
+        <p v-else class="johnny-stream__lead">{{ johnny.dailyReview.value.current.narrative }}</p>
         <p class="johnny-stream__meta">涵蓋 {{ johnny.dailyReview.value.current.starts_on }} 至 {{ johnny.dailyReview.value.current.ends_on }} · 產生於 <time :datetime="johnny.dailyReview.value.current.generated_at">{{ formatDateTime(johnny.dailyReview.value.current.generated_at) }}</time></p>
         <p class="johnny-review__score-summary">七日課表執行分數：<strong>{{ score?.value == null ? '資料不足' : score.value + ' 分' }}</strong><span v-if="score?.value == null"> · {{ scoreReason(score?.reason) }}</span></p>
         <p class="johnny-stream__meta">分數只描述課表執行，不代表身體準備度。</p>
         <details class="johnny-review__details" data-testid="johnny-review-disclosure">
-          <summary>查看分數、計算方式與逐堂紀錄</summary>
+          <summary>查看分數計算方式與逐堂紀錄</summary>
           <div class="johnny-score" data-testid="johnny-execution-score">
-            <div><p class="section-label">七日課表執行分數</p><strong>{{ score?.value == null ? '資料不足' : score.value + ' 分' }}</strong><p v-if="score?.value == null">{{ scoreReason(score?.reason) }}</p></div>
+            <div><p>分數計算依據</p></div>
             <dl class="johnny-score__facts">
               <div><dt>計畫堂數</dt><dd>{{ score?.eligible_count ?? '—' }}</dd></div>
               <div><dt>已完成</dt><dd>{{ score?.completed_count ?? '—' }}</dd></div>
@@ -303,7 +355,8 @@ async function decide(id: string, action: 'accept' | 'keep') {
           </div>
           <details v-if="johnny.dailyReview.value.current.week?.length" class="johnny-score__explanation"><summary>查看七天逐堂紀錄</summary><ol class="johnny-week-list"><li v-for="item in johnny.dailyReview.value.current.week" :key="item.workout_id"><span>{{ item.scheduled_for }}</span><strong>{{ executionLabel(item.state) }}</strong><span>計畫 {{ formatMinutes(item.planned_duration_minutes) }} · 實際 {{ Math.round(item.actual_duration_seconds / 60) }} 分鐘</span></li></ol></details>
         </details>
-        <AppButton v-if="['sync_failed', 'generation_failed', 'inputs_changed'].includes(johnny.dailyReview.value.attempt_state) || johnny.dailyReview.value.freshness === 'stale'" tone="neutral" @click="johnny.retryReview">重試每日回顧</AppButton>
+        <AppButton v-if="['sync_failed', 'generation_failed', 'inputs_changed'].includes(johnny.dailyReview.value.attempt_state) || johnny.dailyReview.value.freshness === 'stale'"
+          tone="neutral" :busy="!!johnny.reviewPendingRunId.value" @click="johnny.retryReview()">重試每日回顧</AppButton>
       </template>
       <p v-else class="johnny-stream__empty">尚無每日回顧。Johnny 會在你的當地時間凌晨 4 點後整理前一天；資料不足時會說明原因。</p>
     </section>
@@ -312,9 +365,28 @@ async function decide(id: string, action: 'accept' | 'keep') {
       <div class="johnny-stream__heading"><h3>歷史紀錄</h3></div>
       <p v-if="johnny.historyLoading.value" class="johnny-stream__state" role="status">正在讀取歷史紀錄。</p>
       <p v-if="johnny.historyError.value" class="johnny-stream__error" role="alert">{{ johnny.historyError.value }}</p>
-      <ol v-if="history.length" class="johnny-history-list"><li v-for="entry in history" :key="entry.kind + '-' + entry.id"><time class="johnny-stream__meta" :datetime="entry.at">{{ formatDateTime(entry.at) }}</time><strong>{{ entry.kind === 'daily_review' ? '每日回顧' : entry.kind === 'workout_advice' ? '今日課表建議' : '課表調整決定' }}</strong><p v-if="entry.kind === 'recommendation_decision'">{{ entry.decision === 'accepted' ? '已接受調整' : '維持原課表' }}</p><p v-else-if="entry.result?.current">{{ 'narrative' in entry.result.current ? entry.result.current.narrative : entry.result.current.guidance }}</p></li></ol>
+      <ol v-if="history.length" class="johnny-history-list"><li v-for="entry in history" :key="entry.kind + '-' + entry.id">
+        <time class="johnny-stream__meta" :datetime="entry.at">{{ formatDateTime(entry.at) }}</time>
+        <strong>{{ entry.kind === 'daily_review' ? '每日回顧' : entry.kind === 'workout_advice' ? '今日課表建議' : '課表調整決定' }}</strong>
+        <p v-if="entry.kind === 'recommendation_decision'">{{ entry.decision === 'accepted' ? '已接受調整' : '維持原課表' }}</p>
+        <template v-else-if="entry.result?.current">
+          <p class="johnny-stream__meta">{{ entry.result.current.kind === 'daily_review' ? entry.result.current.publication_date : entry.result.current.advice_date }} · {{ entry.result.freshness === 'stale' ? '資料已更新' : '當時版本' }}<template v-if="entry.result.revision_id"> · 版本 {{ entry.result.revision_id.slice(0, 8) }}</template></p>
+          <p>{{ entry.result.current.analysis?.headline ?? ('narrative' in entry.result.current ? entry.result.current.narrative : entry.result.current.guidance) }}</p>
+          <details v-if="entry.result.current.analysis"><summary>查看當時分析</summary><CoachingAnalysis :analysis="entry.result.current.analysis" :freshness="entry.result.freshness" :kind="entry.kind === 'daily_review' ? 'daily_review' : 'workout_advice'"
+            :evidence-targets="evidenceTargets(entry.result.current)" @open-evidence="openEvidence" @open-recommendation="openRecommendation" /></details>
+          <AppButton v-if="entry.kind === 'daily_review' && entry.result.freshness === 'stale'" tone="neutral" :busy="!!johnny.reviewPendingRunId.value"
+            data-testid="history-retry-stored" @click="johnny.retryReview(entry.id, 'stored_evidence')">依已存資料重新分析</AppButton>
+        </template>
+      </li></ol>
       <p v-else>目前還沒有回顧或建議紀錄。</p>
       <div class="action-row"><AppButton v-if="johnny.historyOffset.value > 0" @click="johnny.loadHistory(Math.max(0, johnny.historyOffset.value - 20))">上一頁</AppButton><AppButton v-if="history.length === 20" @click="johnny.loadHistory(johnny.historyOffset.value + 20)">下一頁</AppButton></div>
+    </section>
+    <section v-if="selectedExecution || executionLoading || executionError" class="johnny-stream johnny-evidence" aria-labelledby="johnny-evidence-title">
+      <h3 id="johnny-evidence-title" ref="evidenceHeading" tabindex="-1">活動分段證據</h3>
+      <p v-if="executionLoading" role="status">正在讀取活動分段。</p>
+      <p v-if="executionError" role="alert">{{ executionError }}</p>
+      <ExecutionSegments v-if="selectedExecution" :execution="selectedExecution" />
+      <AppButton tone="neutral" @click="selectedExecution = null; executionError = ''">關閉分段證據</AppButton>
     </section>
   </section>
 </template>

@@ -17,6 +17,7 @@ export function useJohnny(onRunObserved?: (runId: string, workflow: 'daily_revie
   const adviceError = ref('')
   const historyError = ref('')
   const reviewPendingRunId = ref<string | null>(null)
+  const retryPendingId = ref<string | null>(null)
   const advicePendingRunId = ref<string | null>(null)
   let reviewEpoch = 0
   let adviceEpoch = 0
@@ -110,16 +111,21 @@ export function useJohnny(onRunObserved?: (runId: string, workflow: 'daily_revie
         const response = await getAgentRun(runId)
         if (disposed) return
         if (response.data.status === 'completed' || response.data.status === 'failed') {
+          const historicalReview = stream === 'review' && !!retryPendingId.value && retryPendingId.value !== dailyReview.value?.id
           if (stream === 'review') {
             reviewPendingRunId.value = null
+            retryPendingId.value = null
             await refreshReview()
-            if (response.data.status === 'failed') reviewError.value = '每日回顧更新失敗，先保留上次結果。'
           } else {
             advicePendingRunId.value = null
             await refreshAdvice()
-            if (response.data.status === 'failed') adviceError.value = '今日建議產生失敗，可調整條件後重試。'
           }
           await loadHistory()
+          if (response.data.status === 'failed') {
+            if (historicalReview) historyError.value = '歷史回顧重新分析失敗，原版本仍保留。'
+            else if (stream === 'review') reviewError.value = '每日回顧更新失敗，先保留上次結果。'
+            else adviceError.value = '今日建議產生失敗，可調整條件後重試。'
+          }
           return
         }
       } catch {
@@ -150,16 +156,21 @@ export function useJohnny(onRunObserved?: (runId: string, workflow: 'daily_revie
     }
   }
 
-  async function retryReview() {
-    if (!dailyReview.value || reviewPendingRunId.value) return
-    reviewError.value = ''
+  async function retryReview(id: string = dailyReview.value?.id ?? '', source?: 'stored_evidence' | 'sync') {
+    if (!id || reviewPendingRunId.value) return
+    const historical = id !== dailyReview.value?.id
+    if (historical) historyError.value = ''
+    else reviewError.value = ''
+    retryPendingId.value = id
     try {
-      const response = await retryJohnnyReview(dailyReview.value.id)
+      const response = await retryJohnnyReview(id, source)
       reviewPendingRunId.value = response.data.run_id
       onRunObserved?.(response.data.run_id, 'daily_review')
       observeRun(response.data.run_id, 'review')
     } catch {
-      reviewError.value = '無法重新產生每日回顧，請稍後再試。'
+      retryPendingId.value = null
+      if (historical) historyError.value = '無法重新分析這份歷史回顧，請稍後再試。'
+      else reviewError.value = '無法重新產生每日回顧，請稍後再試。'
     }
   }
 
@@ -189,6 +200,6 @@ export function useJohnny(onRunObserved?: (runId: string, workflow: 'daily_revie
   onUnmounted(stop)
   return { dailyReview, workoutAdvices, workoutChoices, actionableProposals, history, historyOffset,
     reviewLoading, adviceLoading, historyLoading, reviewError, adviceError, historyError,
-    reviewPendingRunId, advicePendingRunId, refreshReview, refreshAdvice, loadHistory,
+    reviewPendingRunId, retryPendingId, advicePendingRunId, refreshReview, refreshAdvice, loadHistory,
     requestAdvice, retryReview, stop }
 }

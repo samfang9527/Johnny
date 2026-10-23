@@ -20,6 +20,8 @@ import type {
   JohnnyOverview,
   JohnnyHistoryEntry,
   WorkoutAdviceConstraints,
+  ActivityExecutionResponse,
+  ActivityDetailCoverageSummary,
 } from '../types'
 
 export function getApiBaseUrl(): string {
@@ -168,8 +170,17 @@ export function requestWorkoutAdvice(payload: { client_request_id: string; worko
   return postJson('/johnny/workout-advice', payload)
 }
 
-export function retryJohnnyReview(id: string): Promise<{ data: { run_id: string; status: string; workflow_name: string; poll_url: string } }> {
-  return postJson(`/johnny/reviews/${encodeURIComponent(id)}/retry`)
+export function retryJohnnyReview(id: string, source?: 'stored_evidence' | 'sync'): Promise<{ data: { run_id: string; status: string; workflow_name: string; poll_url: string } }> {
+  return postJson(`/johnny/reviews/${encodeURIComponent(id)}/retry`, source ? { source } : undefined)
+}
+
+export function getActivityExecution(activityId: string, analysisId?: string | null): Promise<{ data: ActivityExecutionResponse }> {
+  const query = analysisId ? `?analysis_id=${encodeURIComponent(analysisId)}` : ''
+  return getJson(`/activities/${encodeURIComponent(activityId)}/execution${query}`)
+}
+
+export function getActivityDetailCoverage(): Promise<{ data: ActivityDetailCoverageSummary }> {
+  return getJson('/activities/detail-coverage')
 }
 
 export function getTrainingPlanRegenerationOptions(): Promise<{ data: TrainingPlanRegenerationOptions }> {

@@ -130,6 +130,8 @@ Johnny 不應該像一般 SaaS dashboard，也不應該像聊天機器人。它�
 
 Johnny 頁沿用深綠畫布與分隔線節奏。待決定調整置頂，先顯示標題、原因及最重要的前後變更；完整比較與「接受調整／維持原課表」收在同一個原生揭露區，跑者查看差異後再決定。沒有待決定調整時明確顯示空狀態。下方以「今日建議／訓練回顧／歷史紀錄」分頁，一次呈現一類內容；今日建議顯示最近結果，再以揭露區收起後續輸入；訓練回顧先顯示敘述與七日分數，再以揭露區顯示計算方式及逐堂紀錄。分頁只改變可見內容，不清空表單或其他分頁的結果。各區的 loading、錯誤、過期與產生時間仍獨立維護；明確接受前，Today 的正規課表不變。Today 只取當日建議的一句摘要與 Johnny 連結，不複製完整回顧或對話介面。
 
+結構化建議與回顧採同一閱讀順序：先結論、再解讀、最後行動。每次最多顯示三項發現和行動，原始觀察與限制收進原生揭露區；規則產生是分析方式，不等同資料不足。七日執行分數只在主敘事後顯示一次，且不代表恢復程度。舊版結果維持原文字。歷史紀錄標明當時日期、版本與資料是否更新，過期的回顧可明確以已存資料重新分析。分段證據使用既有深綠畫布與規則線，標示確認或推估配對、涵蓋程度與圖表抽樣精度；不能把抽樣圖表稱為完整記錄。
+
 ### Product context and register
 
 - **Audience and primary job:** 以繁體中文為主要介面的耐力跑者、馬拉松訓練者與長期訓練中的使用者。主要工作是每天快速理解訓練、恢復、風險與 Johnny 的建議，並決定今天要跑、調整或休息。
@@ -192,6 +194,8 @@ Today desktop places decision and workout in one uninterrupted primary split wit
 `計畫` begins with one current-plan section: the current phase and focus, this week's dates, the next workout, and the training journey (base, build, peak, taper, and goal week). An inline disclosure reveals races included in this plan, separating the target race from supporting races and from saved goals that are not in the plan snapshot. Goal management and regeneration live inside that disclosure; without an active plan, a visible action starts plan generation. Weekly schedule sits underneath as execution detail; a date chosen from Today is focused there with its workout or a truthful rest/pending state. Do not repeat phase details in another section.
 
 `資料` begins with Signal Coverage, e.g. `Johnny 已有 4/6 個訓練訊號`。The six MVP signals are activity, sleep, HRV, resting heart rate, training load, and athlete baseline.
+
+Signal Coverage 之後另列「活動分段資料」涵蓋情況。已同步活動總數與可分析分段數是不同概念；部分涵蓋、圖表抽樣必須獨立標示，避免誤讀為完整訓練記錄。
 
 ## Elevation & Depth
 
