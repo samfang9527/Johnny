@@ -17,7 +17,7 @@ from src.domain.training_review import ReviewEvidence, review_period
 from .activity_repository import SqlAlchemyActivityRepository
 from .athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from .coaching_repository import SqlAlchemyCoachingRepository
-from .models import ActivityExecutionAnalysisModel, ActivityModel
+from .models import ActivityDetailFetchModel, ActivityExecutionAnalysisModel, ActivityModel
 from .training_plan_repository import SqlAlchemyTrainingPlanRepository
 
 
@@ -105,3 +105,18 @@ class SqlAlchemyCoachingAnalysisEvidenceRepository:
     def list_recovery_metrics(self, user_id: str, starts_on: date, ends_on: date):
         return tuple(self._activities.list_daily_health_metrics_for_user_between(
             user_id, starts_on, ends_on))
+
+    def list_current_detail_snapshots(self, user_id: str, starts_on: date,
+                                      ends_on: date, as_of: datetime) -> tuple[dict, ...]:
+        rows = self._session.execute(select(ActivityDetailFetchModel, ActivityModel).join(
+            ActivityModel, ActivityDetailFetchModel.activity_id == ActivityModel.id).where(
+            ActivityDetailFetchModel.user_id == user_id,
+            ActivityModel.user_id == user_id,
+            ActivityDetailFetchModel.current_snapshot_id.is_not(None),
+            ActivityModel.started_at >= datetime.combine(starts_on - timedelta(days=1),
+                                                          datetime.min.time(), tzinfo=utc(as_of).tzinfo),
+            ActivityModel.started_at < datetime.combine(ends_on + timedelta(days=2),
+                                                         datetime.min.time(), tzinfo=utc(as_of).tzinfo)))
+        return tuple({'activity_id': activity.id, 'resource': fetch.resource,
+                      'snapshot_id': fetch.current_snapshot_id,
+                      'started_at': utc(activity.started_at)} for fetch, activity in rows)

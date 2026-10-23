@@ -11,13 +11,14 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from src.application.coaching_approval import CoachingApprovalService, CoachingDecisionConflict
+from src.application.coaching_generation_requests import CoachingGenerationRequests
 from src.application.coaching_refresh import CoachingRefreshService
 from src.application.workout_advice_generation import GenerateWorkoutAdviceHandler
 from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, WorkoutTarget
 from src.domain.workout_advice import WorkoutAdviceConstraints
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
-from src.infrastructure.database.models import ActivityModel, AthleteProfileModel, PlanAdjustmentModel, UserModel
+from src.infrastructure.database.models import ActivityModel, AthleteProfileModel, CoachingGenerationRequestModel, PlanAdjustmentModel, UserModel
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
 
@@ -56,6 +57,31 @@ def _seed_proposal(factory):
                  run_id=str(uuid4()), activity_sync_usable=True)
         session.commit()
     return user_id, saved.id, workout_id, result["recommendation_id"]
+
+
+def test_two_workers_coalesce_same_review_request(pg_factory):
+    user_id = str(uuid4())
+    with pg_factory() as session:
+        session.add(UserModel(id=user_id, email=f'{user_id}@example.invalid', display_name='Runner'))
+        session.commit()
+    barrier = Barrier(2)
+
+    def ask():
+        with pg_factory() as session:
+            barrier.wait(timeout=5)
+            result = CoachingGenerationRequests(session).request(user_id=user_id,
+                kind='daily_review', slot_id='slot', fingerprint='a' * 64,
+                reason='detail_batch')
+            session.commit()
+            return result
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.submit(ask), pool.submit(ask)
+        results = (first.result(timeout=15), second.result(timeout=15))
+    assert sum(item is not None for item in results) == 1
+    with pg_factory() as session:
+        assert session.scalar(select(func.count()).select_from(CoachingGenerationRequestModel).where(
+            CoachingGenerationRequestModel.user_id == user_id)) == 1
 
 
 @pytest.mark.parametrize("second_action", ["accept", "reject"])

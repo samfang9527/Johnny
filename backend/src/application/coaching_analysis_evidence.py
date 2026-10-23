@@ -39,6 +39,8 @@ class CoachingAnalysisEvidenceStore(Protocol):
                                 ends_on: date, as_of: datetime) -> tuple[ExecutionAnalysis, ...]: ...
     def list_recovery_metrics(self, user_id: str, starts_on: date,
                               ends_on: date) -> tuple[DailyHealthMetrics, ...]: ...
+    def list_current_detail_snapshots(self, user_id: str, starts_on: date,
+                                      ends_on: date, as_of: datetime) -> tuple[dict, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,21 @@ def _health_rows(metrics: tuple[DailyHealthMetrics, ...], user_id: str,
             if m.user_id == user_id and starts_on <= m.metric_date <= ends_on]
 
 
+def _detail_refs(store: CoachingAnalysisEvidenceStore, user_id: str,
+                 starts_on: date, ends_on: date, cutoff: datetime,
+                 zone: ZoneInfo, allowed_ids: set[str] | None = None) -> list[dict]:
+    rows = (store.list_current_detail_snapshots(user_id, starts_on, ends_on, cutoff)
+            if hasattr(store, 'list_current_detail_snapshots') else ())
+    return sorted(({
+        'activity_id': row['activity_id'], 'resource': row['resource'],
+        'snapshot_id': row['snapshot_id'],
+        'activity_date': utc(row['started_at']).astimezone(zone).date().isoformat(),
+    } for row in rows if row.get('snapshot_id') and
+        (allowed_ids is None or row['activity_id'] in allowed_ids) and
+        starts_on <= utc(row['started_at']).astimezone(zone).date() <= ends_on),
+        key=lambda row: (row['activity_date'], row['activity_id'], row['resource']))
+
+
 def build_coaching_evidence(*, user_id: str, kind: Literal['daily_review', 'workout_advice'],
                             local_date: date, timezone_name: str, workout_id: str | None,
                             constraints: WorkoutAdviceConstraints | None, as_of: datetime,
@@ -136,6 +153,8 @@ def build_coaching_evidence(*, user_id: str, kind: Literal['daily_review', 'work
                                'workout': p.workout.to_payload()} for p in review.prescriptions],
             'sessions': [_session_payload(s) for s in review.sessions],
             'analyses': [_analysis_payload(a) for a in selected],
+            'detail_snapshots': _detail_refs(store, user_id, starts, ends, cutoff, zone,
+                                             referenced),
             'recovery_dates': _health_rows(metrics, user_id, starts, ends),
             'coverage': {'covered_dates': sorted(d.isoformat() for d in review.covered_dates
                                                   if starts <= d <= ends), 'missing_dates': missing_dates,
@@ -184,6 +203,7 @@ def build_coaching_evidence(*, user_id: str, kind: Literal['daily_review', 'work
             'athlete_baseline': _safe_baseline(context.athlete_baseline),
             'next_workouts': [w.to_payload() for w in context.next_workouts[:2]],
             'recent_analyses': [_analysis_payload(a) for a in selected],
+            'detail_snapshots': _detail_refs(store, user_id, starts, local_date, cutoff, zone),
             'history_counts': {'analysed_activities': len(analyses),
                                'uncertain_analyses': sum(bool(a.limitations) for a in analyses),
                                'by_mapping': dict(sorted(Counter(a.mapping for a in analyses).items())),

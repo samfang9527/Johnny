@@ -109,10 +109,22 @@ class SqlAlchemyCoachingRepository:
         slot = self._current_reservation(reservation, "daily_review")
         if slot is None:
             return False
-        if version.revision != reservation.input_revision:
+        manifest = revision.get('evidence_manifest')
+        current_evidence = (self._manifest_is_current(reservation.user_id, 'daily_review',
+            slot.publication_date, slot.timezone_name, None, None, revision)
+            if manifest is not None else version.revision == reservation.input_revision)
+        if not current_evidence:
             slot.attempt_state = "inputs_changed"
             self._session.flush()
             return False
+        if manifest is not None and slot.current_revision_id:
+            current = self._session.get(TrainingReviewRevisionModel, slot.current_revision_id)
+            if current and (current.payload or {}).get('evidence_fingerprint') == revision.get('evidence_fingerprint'):
+                slot.freshness = 'current'
+                slot.attempt_state = 'ready'
+                slot.attempt_error = None
+                self._session.flush()
+                return True
         fingerprint = revision.get("fingerprint") or canonical_fingerprint(revision)
         existing = self._session.scalar(select(TrainingReviewRevisionModel).where(
             TrainingReviewRevisionModel.review_id == slot.id,
@@ -139,7 +151,12 @@ class SqlAlchemyCoachingRepository:
         slot = self._current_reservation(reservation, "workout_advice")
         if slot is None:
             return False
-        if version.revision != reservation.input_revision:
+        manifest = revision.get('evidence_manifest')
+        current_evidence = (self._manifest_is_current(reservation.user_id, 'workout_advice',
+            slot.advice_date, revision.get('timezone_name'), revision.get('workout_id'),
+            revision.get('constraints'), revision)
+            if manifest is not None else version.revision == reservation.input_revision)
+        if not current_evidence:
             slot.attempt_state = "inputs_changed"
             self._session.flush()
             return False
@@ -151,6 +168,17 @@ class SqlAlchemyCoachingRepository:
             payload["mode"] = "previously_declined"
             payload["reason_code"] = "previously_rejected"
             payload["guidance"] = f"{payload['guidance']} 你先前已婉拒這項相同調整，原課表維持不變。"
+        if manifest is not None and slot.current_revision_id:
+            current = self._session.get(WorkoutAdviceRevisionModel, slot.current_revision_id)
+            old = current.payload or {} if current else {}
+            if (old.get('evidence_fingerprint') == payload.get('evidence_fingerprint')
+                    and old.get('mode') == payload.get('mode')
+                    and old.get('decision_fingerprint') == payload.get('decision_fingerprint')):
+                slot.freshness = 'current'
+                slot.attempt_state = 'ready'
+                slot.attempt_error = None
+                self._session.flush()
+                return True
         if slot.current_revision_id:
             previous = self._session.get(WorkoutAdviceRevisionModel, slot.current_revision_id)
             previous_recommendation_id = (previous.payload or {}).get("recommendation_id") if previous else None
@@ -195,6 +223,34 @@ class SqlAlchemyCoachingRepository:
         slot.freshness = "current"
         self._session.flush()
         return True
+
+    def _manifest_is_current(self, user_id: str, kind: str, local_date: date,
+                             timezone_name: str | None, workout_id: str | None,
+                             constraints_payload: dict | None, revision: dict) -> bool:
+        from src.application.coaching_analysis_evidence import build_coaching_evidence
+        from src.domain.workout_advice import WorkoutAdviceConstraints
+        from .coaching_analysis_evidence_repository import SqlAlchemyCoachingAnalysisEvidenceRepository
+        manifest = revision.get('evidence_manifest')
+        fingerprint = revision.get('evidence_fingerprint')
+        if (not isinstance(manifest, dict) or not isinstance(fingerprint, str)
+                or canonical_fingerprint(manifest) != fingerprint or not timezone_name):
+            return False
+        try:
+            constraints = (WorkoutAdviceConstraints(**constraints_payload)
+                           if kind == 'workout_advice' and isinstance(constraints_payload, dict)
+                           else None)
+            as_of = datetime.now(timezone.utc)
+            if isinstance(revision.get('generated_at'), str):
+                generated_at = datetime.fromisoformat(revision['generated_at'])
+                if generated_at.tzinfo is not None and generated_at > as_of:
+                    as_of = generated_at
+            current = build_coaching_evidence(user_id=user_id, kind=kind,
+                local_date=local_date, timezone_name=timezone_name, workout_id=workout_id,
+                constraints=constraints, as_of=as_of,
+                store=SqlAlchemyCoachingAnalysisEvidenceRepository(self._session))
+        except (LookupError, ValueError, TypeError):
+            return False
+        return current.fingerprint == fingerprint
 
     def was_decision_rejected(self, user_id: str, fingerprint: str | None) -> bool:
         if not fingerprint:

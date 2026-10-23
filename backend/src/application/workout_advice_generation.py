@@ -7,6 +7,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from src.application.coaching_analysis_evidence import build_coaching_evidence
 from src.application.training_analytics import resolve_plan_for_date
 from src.domain.activity_sessions import match_sessions, utc
 from src.domain.coaching_fingerprints import canonical_fingerprint
@@ -17,11 +18,17 @@ from src.domain.workout_recovery import build_workout_recovery, recovery_guidanc
 
 class GenerateWorkoutAdviceHandler:
     def __init__(self, *, coaching, plans, activities,
-                 now: Callable[[], datetime] | None = None) -> None:
+                 now: Callable[[], datetime] | None = None, analysis_evidence=None) -> None:
         self._coaching = coaching
         self._plans = plans
         self._activities = activities
         self._now = now or (lambda: datetime.now(timezone.utc))
+        if analysis_evidence is None and hasattr(coaching, '_session'):
+            from src.infrastructure.database.coaching_analysis_evidence_repository import (
+                SqlAlchemyCoachingAnalysisEvidenceRepository,
+            )
+            analysis_evidence = SqlAlchemyCoachingAnalysisEvidenceRepository(coaching._session)
+        self._analysis_evidence = analysis_evidence
 
     def handle(self, *, user_id: str, advice_date: date, timezone_name: str,
                workout_id: str | None, constraints: WorkoutAdviceConstraints,
@@ -42,6 +49,11 @@ class GenerateWorkoutAdviceHandler:
         slot_key = workout.id if workout and workout.id else "no-workout"
         reservation = self._coaching.reserve_advice(user_id, advice_date, slot_key, run_id,
                                                      asdict(constraints))
+        bundle = (build_coaching_evidence(user_id=user_id, kind='workout_advice',
+            local_date=advice_date, timezone_name=timezone_name,
+            workout_id=workout.id if workout else None, constraints=constraints,
+            as_of=now, store=self._analysis_evidence)
+            if self._analysis_evidence is not None else None)
         recordings = tuple(
             item for item in self._activities.list_activities_for_user_between(
                 user_id, advice_date - timedelta(days=1), advice_date + timedelta(days=1),
@@ -97,6 +109,10 @@ class GenerateWorkoutAdviceHandler:
             "generated_at": now.isoformat(), "expires_at": expires_at.isoformat(),
             "policy_version": decision.policy_version,
         }
+        if bundle is not None:
+            payload['legacy_evidence_fingerprint'] = payload['evidence_fingerprint']
+            payload['evidence_manifest'] = bundle.manifest
+            payload['evidence_fingerprint'] = bundle.fingerprint
         proposal = None
         if decision.after_workout is not None and plan is not None and workout is not None:
             proposal = Recommendation.create(

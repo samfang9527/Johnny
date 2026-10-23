@@ -18,7 +18,7 @@ from src.application.integrations import GarminCredentialBlockedError, GarminRat
 from src.domain.activity_details import ActivitySampleChunk, DetailCoverage, NormalizedDetails
 from src.infrastructure.database.models import (
     ActivityDetailBatchItemModel, ActivityDetailBatchModel, ActivityDetailFetchModel, ActivityDetailSnapshotModel,
-    AgentTaskModel,
+    AgentTaskModel, TrainingReviewModel,
     ActivityModel, Base, IntegrationConnectionModel, UserModel,
 )
 
@@ -293,6 +293,75 @@ def test_worker_fetches_then_finalizes_without_leaving_processing_tasks(seeded, 
         assert {task.status for task in session.scalars(select(AgentTaskModel).where(
             AgentTaskModel.correlation_id == batch))} == {'completed'}
     assert len(provider.calls) == 1
+
+
+def test_three_detail_resources_publish_one_review_correction_after_batch(seeded, monkeypatch):
+    from scripts import agent_runtime
+    from src.application.coaching_refresh import CoachingRefreshService
+    from src.domain.integrations_notifications import SyncSummary
+    from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
+    from src.infrastructure.database.models import AgentRunModel
+
+    with seeded() as session:
+        activity = session.get(ActivityModel, 'run')
+        activity.started_at = NOW - timedelta(days=5)
+        activity.duration_seconds = 1800
+        activity.distance_meters = 4000
+        activity.provider_summary = {'source': 'garmin'}
+        manual = session.get(ActivityModel, 'manual')
+        manual.duration_seconds = 1200
+        manual.distance_meters = 2000
+        coaching = SqlAlchemyCoachingRepository(session)
+        for offset in range(5):
+            reservation = coaching.reserve_review('owner', NOW.date() - timedelta(days=offset),
+                                                  'UTC', f'prior-{offset}')
+            assert coaching.publish_review(reservation, {'narrative': 'old'})
+        session.commit()
+    provider = Provider()
+    service = ActivityDetailSyncService(seeded, lambda session: provider,
+                                        resources=('fit', 'splits', 'details'))
+    batch = service.start_batch(user_id='owner', activity_ids=('run',),
+                                source_sync_run_id='sync-1', now=NOW)
+    with seeded() as session:
+        early = CoachingRefreshService(session).record_sync(user_id='owner',
+            summary=SyncSummary.from_payload({'resources': {'activities': {'stored': 1}},
+                'stored_dates': {'activities': [(NOW - timedelta(days=5)).date().isoformat()]}}),
+            today=NOW.date(), timezone_name='UTC', source_sync_run_id='sync-1', as_of=NOW)
+        assert early.review_run_ids == ()
+        assert len(session.scalars(select(TrainingReviewModel).where(
+            TrainingReviewModel.user_id == 'owner', TrainingReviewModel.freshness == 'stale')).all()) == 5
+        session.commit()
+    monkeypatch.setenv('JOHNNY_ACTIVITY_DETAILS_ENABLED', '1')
+    monkeypatch.setattr(agent_runtime, '_build_detail_service', lambda session: service)
+    for second in range(1, 5):
+        with seeded() as session:
+            assert agent_runtime.work_one(session, now=NOW + timedelta(seconds=second))
+            session.commit()
+    with seeded() as session:
+        runs = session.scalars(select(AgentRunModel).where(
+            AgentRunModel.user_id == 'owner',
+            AgentRunModel.trigger_type == 'evidence_change')).all()
+        assert len(runs) == 1
+        assert session.get(ActivityDetailBatchModel, batch).status == 'closed'
+        assert len(provider.calls) == 3
+
+
+def test_synchronous_coaching_sync_starts_one_detail_batch_before_correction(seeded, monkeypatch):
+    from scripts import agent_runtime
+    from src.domain.integrations_notifications import SyncSummary
+    service = ActivityDetailSyncService(seeded, lambda session: Provider(),
+                                        resources=('fit', 'splits', 'details'))
+    monkeypatch.setenv('JOHNNY_ACTIVITY_DETAILS_ENABLED', '1')
+    monkeypatch.setattr(agent_runtime, '_build_detail_service', lambda session: service)
+    summary = SyncSummary.from_payload({'resources': {'activities': {'stored': 1}},
+        'stored_dates': {'activities': [(NOW - timedelta(days=1)).date().isoformat()]}})
+    with seeded() as session:
+        first = agent_runtime._start_coaching_detail_batch(
+            session, 'owner', 'connection', summary, 'UTC', 'sync-1')
+        second = agent_runtime._start_coaching_detail_batch(
+            session, 'owner', 'connection', summary, 'UTC', 'sync-1')
+        assert first == second
+        assert session.get(ActivityDetailBatchModel, first).status == 'pending'
 
 
 def test_recent_unknown_detail_schedules_only_two_late_rechecks(seeded, monkeypatch):

@@ -30,6 +30,7 @@ EXPECTED_TABLES = {
     "plan_activation_revisions",
     "workout_prescription_revisions",
     "coaching_input_versions",
+    "coaching_generation_requests",
     "training_reviews",
     "training_review_revisions",
     "workout_advices",

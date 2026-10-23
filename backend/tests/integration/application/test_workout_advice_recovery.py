@@ -5,11 +5,15 @@ import pytest
 from src.application.coaching_approval import CoachingApprovalService, CoachingDecisionConflict
 from src.application.workout_advice_generation import GenerateWorkoutAdviceHandler
 from src.domain.activity_health import DailyHealthMetrics
+from src.domain.athlete_race import AthleteProfile
 from src.domain.training_plan import TrainingPlan, Workout, WorkoutStep, WorkoutTarget
 from src.domain.workout_advice import WorkoutAdviceConstraints
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
+from src.infrastructure.database.athlete_race_repository import SqlAlchemyAthleteRaceRepository
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
-from src.infrastructure.database.models import Base, UserModel
+from src.infrastructure.database.models import (
+    ActivityDetailFetchModel, ActivityDetailSnapshotModel, ActivityModel, Base, UserModel,
+)
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 
 
@@ -65,6 +69,7 @@ def test_today_recovery_proposes_skip_with_evidence_and_requires_acceptance(reco
     assert result["recovery"]["policy_version"] == "workout-recovery-v2"
     assert result["recovery"]["readiness_threshold_policy"] == "workout-recovery-v1"
     assert result["recovery"]["latest_signals"]["hrv"]["date"] == "2027-01-16"
+    assert result["evidence_manifest"]["kind"] == "workout_advice"
     assert all(label in result["guidance"] for label in ("睡眠", "HRV", "壓力", "Body Battery"))
     assert plans.get_plan_for_date_raw("recovery-athlete", TODAY).workouts[0].status == "planned"
     accepted = CoachingApprovalService(session, now=lambda: NOW).accept(
@@ -151,3 +156,45 @@ def test_caution_gives_guidance_without_inventing_workout_changes(recovery_advic
     assert result["reason_code"] == "recovery_caution"
     assert result["recovery"]["readiness_label"] == "caution"
     assert result["after"] is None
+
+
+def test_new_baseline_invalidates_pending_proposal_before_batch_finishes(recovery_advice):
+    session, plans, save, generate = recovery_advice
+    save(TODAY, REST)
+    result = generate('before-baseline')
+    SqlAlchemyAthleteRaceRepository(session).save_profile('recovery-athlete', AthleteProfile.create(
+        user_id='recovery-athlete', timezone='Asia/Taipei', experience_level='intermediate',
+        current_weekly_mileage_km=35, preferred_training_days=('sunday',),
+        preferred_long_run_day='sunday', max_runs_per_week=4))
+    with pytest.raises(CoachingDecisionConflict, match='evidence_manifest_changed'):
+        CoachingApprovalService(session, now=lambda: NOW).accept(
+            'recovery-athlete', result['recommendation_id'])
+    assert plans.get_plan_for_date_raw('recovery-athlete', TODAY).workouts[0].status == 'planned'
+
+
+def test_committed_detail_pointer_invalidates_proposal_before_batch_finalizes(recovery_advice):
+    session, plans, save, generate = recovery_advice
+    save(TODAY, REST)
+    session.add(ActivityModel(id='historical-run', user_id='recovery-athlete',
+        started_at=datetime(2027, 1, 14, 23, tzinfo=timezone.utc),
+        activity_type='running', duration_seconds=1800, distance_meters=4000))
+    session.flush()
+    def snapshot(identity):
+        row = ActivityDetailSnapshotModel(id=identity, user_id='recovery-athlete',
+            activity_id='historical-run', resource='fit', schema_version='test-v1',
+            semantic_hash=identity, fetched_at=NOW, coverage={}, source_payload={})
+        session.add(row)
+        session.flush()
+    snapshot('s1')
+    fetch = ActivityDetailFetchModel(user_id='recovery-athlete', activity_id='historical-run',
+        resource='fit', status='available', current_snapshot_id='s1')
+    session.add(fetch)
+    session.flush()
+    result = generate('before-detail')
+    snapshot('s2')
+    fetch.current_snapshot_id = 's2'
+    session.flush()
+    with pytest.raises(CoachingDecisionConflict, match='evidence_manifest_changed'):
+        CoachingApprovalService(session, now=lambda: NOW).accept(
+            'recovery-athlete', result['recommendation_id'])
+    assert plans.get_plan_for_date_raw('recovery-athlete', TODAY).workouts[0].status == 'planned'

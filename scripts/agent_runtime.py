@@ -49,7 +49,7 @@ from src.infrastructure.database.daily_advice_repository import SqlAlchemyDailyA
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 from src.infrastructure.database.integration_repository import SqlAlchemyIntegrationRepository
 from src.infrastructure.database.outbox_repository import SqlAlchemyOutboxRepository
-from src.infrastructure.database.models import AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, TrainingReviewModel, WorkoutAdviceModel, UserModel
+from src.infrastructure.database.models import ActivityModel, AgentRunModel, AgentTaskModel, AthleteProfileModel, Base, TrainingPlanModel, TrainingReviewModel, WorkoutAdviceModel, UserModel
 from src.infrastructure.database.session import create_database_engine, create_session_factory, get_database_url
 from src.infrastructure.database.training_plan_repository import SqlAlchemyTrainingPlanRepository
 from src.infrastructure.llm.local_gateway import LocalCompanionModelGateway
@@ -201,6 +201,34 @@ def _build_detail_service(session: Session) -> ActivityDetailSyncService:
     return ActivityDetailSyncService(factory, adapter_factory)
 
 
+def _start_coaching_detail_batch(session: Session, user_id: str, connection_id: str,
+                                 summary, timezone_name: str, source_sync_run_id: str) -> str | None:
+    if os.getenv('JOHNNY_ACTIVITY_DETAILS_ENABLED', '').lower() not in {'1', 'true', 'yes'}:
+        return None
+    raw_dates = summary.stored_dates.get('activities') or ()
+    if not raw_dates:
+        return None
+    days = {date.fromisoformat(value) for value in raw_dates}
+    zone = ZoneInfo(timezone_name)
+    recordings = session.scalars(select(ActivityModel).where(
+        ActivityModel.user_id == user_id,
+        ActivityModel.provider_connection_id == connection_id,
+        ActivityModel.provider_activity_id.is_not(None))).all()
+    ids = tuple(sorted(activity.id for activity in recordings
+        if (activity.started_at.replace(tzinfo=timezone.utc)
+            if activity.started_at.tzinfo is None else activity.started_at).astimezone(zone).date() in days))
+    if not ids:
+        return None
+    session.commit()  # Detail batch uses an independent session; commit imported summaries first.
+    try:
+        return _build_detail_service(session).start_batch(user_id=user_id,
+            activity_ids=ids, source_sync_run_id=source_sync_run_id, now=_utc_now())
+    except ValueError:
+        logger.warning('coaching detail batch unavailable user_id=%s sync_run_id=%s',
+                       user_id, source_sync_run_id)
+        return None
+
+
 def _process_activity_detail_task(session: Session, task, *, now: datetime) -> None:
     queue = SqlAlchemyAgentTaskQueue(session)
     if os.getenv('JOHNNY_ACTIVITY_DETAILS_ENABLED', '').lower() not in {'1', 'true', 'yes'}:
@@ -212,7 +240,23 @@ def _process_activity_detail_task(session: Session, task, *, now: datetime) -> N
         if task.task_type == ACTIVITY_DETAIL_FETCH_TASK and isinstance(payload.get('fetch_id'), str):
             service.process_resource(fetch_id=payload['fetch_id'], now=now)
         elif task.task_type == ACTIVITY_DETAIL_FINALIZE_TASK and isinstance(payload.get('batch_id'), str):
-            service.finalize_batch(batch_id=payload['batch_id'], now=now)
+            changed = service.finalize_batch(batch_id=payload['batch_id'], now=now)
+            session.expire_all()  # The detail service committed in its own session.
+            finalizer = session.scalar(select(AgentTaskModel).where(
+                AgentTaskModel.idempotency_key == f'{ACTIVITY_DETAIL_FINALIZE_TASK}:{payload["batch_id"]}'))
+            persisted = finalizer.payload or {} if finalizer else {}
+            changed = changed or tuple(persisted.get('changed_activity_ids') or ())
+            from src.application.coaching_refresh import CoachingRefreshService
+            CoachingRefreshService(session).complete_detail_batch(
+                batch_id=payload['batch_id'], changed_activity_ids=changed, now=now)
+            continuation = (finalizer.payload or {}).get('coaching_continuation') if finalizer else None
+            if continuation:
+                runs = SqlAlchemyAgentRunRepository(session)
+                run = runs.get_run_for_user(continuation['user_id'], continuation['run_id'])
+                if run is not None and run.status == 'queued':
+                    _enqueue_coaching_generation(session, run=run,
+                        workflow_input=continuation['workflow_input'],
+                        source_sync_run_id=continuation['source_sync_run_id'])
         elif (task.task_type == ACTIVITY_DETAIL_RECHECK_TASK
               and all(isinstance(payload.get(key), str) for key in
                       ('user_id', 'activity_id', 'resource', 'origin_batch_id'))
@@ -555,6 +599,14 @@ def _process_task(session: Session, task_id: str) -> None:
             retry_delay=DEFAULT_RETRY_DELAY,
         )
         runs.fail_run(run.fail(error_type=exc.__class__.__name__, error_message=str(exc)))
+        request_id = workflow_input.get('generation_request_id')
+        if workflow_name == 'daily_review' and request_id:
+            from src.application.coaching_refresh import CoachingRefreshService
+            refresh = CoachingRefreshService(session)
+            if 'inputs changed' in str(exc):
+                refresh.reconcile_changed_review_request(request_id)
+            else:
+                refresh.fail_review_request(request_id)
         return
     logger.info(
         "worker workflow finished run_id=%s workflow=%s status=%s error_type=%s task_id=%s duration_ms=%s",
@@ -682,6 +734,8 @@ def _process_coaching_sync(session: Session, task: AgentTaskModel) -> None:
         ):
             _fail_coaching_sync(session, task, run, "ActivitySyncFailed")
             return
+        detail_batch_id = _start_coaching_detail_batch(session, run.user_id, connection.id,
+            summary, workflow_input['timezone_name'], saved_sync.id)
         from src.application.coaching_refresh import CoachingRefreshService
         sync_day = _utc_now().astimezone(ZoneInfo(workflow_input["timezone_name"])).date()
         CoachingRefreshService(session).record_sync(
@@ -691,8 +745,17 @@ def _process_coaching_sync(session: Session, task: AgentTaskModel) -> None:
             exclude_review_date=(date.fromisoformat(workflow_input["publication_date"])
                                  if run.workflow_name == "daily_review" else None),
         )
-        _enqueue_coaching_generation(session, run=run, workflow_input=workflow_input,
-                                     source_sync_run_id=saved_sync.id)
+        if detail_batch_id is None:
+            _enqueue_coaching_generation(session, run=run, workflow_input=workflow_input,
+                                         source_sync_run_id=saved_sync.id)
+        else:
+            finalizer = session.scalar(select(AgentTaskModel).where(
+                AgentTaskModel.idempotency_key == f'{ACTIVITY_DETAIL_FINALIZE_TASK}:{detail_batch_id}').with_for_update())
+            if finalizer is not None:
+                finalizer.payload = {**(finalizer.payload or {}),
+                    'coaching_continuation': {'user_id': run.user_id, 'run_id': run.id,
+                        'workflow_input': dict(workflow_input),
+                        'source_sync_run_id': saved_sync.id}}
         queue.complete(task.id, now=_utc_now())
     except Exception as exc:
         running = integrations.get_running_sync_run_for_connection(connection.id)
@@ -951,12 +1014,17 @@ def _dispatch_workflow(session: Session, run: AgentRun, workflow_name: str, work
             model=run.model or "",
             api_key=load_openai_settings_for_queued_model(run.model or "").api_key,
         ) if run.provider == "openai" else None)
+        request_id = workflow_input.get('generation_request_id')
         result = GenerateTrainingReviewHandler(
             coaching=SqlAlchemyCoachingRepository(session),
             evidence=SqlAlchemyCoachingRepository(session),
             gateway=gateway,
         ).handle(user_id=run.user_id, publication_date=publication_date,
                  timezone_name=timezone_name, run_id=run.id)
+        if request_id:
+            from src.application.coaching_refresh import CoachingRefreshService
+            CoachingRefreshService(session).finish_review_request(
+                request_id, result['evidence_fingerprint'])
         slot = SqlAlchemyCoachingRepository(session).get_review_slot(run.user_id, publication_date)
         return runs.complete_run(replace(run, metadata={
             **run.metadata, "training_review_id": slot["id"], "result_state": "ready",

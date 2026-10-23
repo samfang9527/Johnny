@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Callable, Protocol
+from zoneinfo import ZoneInfo
 
+from src.application.coaching_analysis_evidence import build_coaching_evidence
 from src.application.coaching_evidence import build_review_evidence
 from src.domain.agent_runtime import ModelRequest, ModelResponse
 from src.domain.execution_score import score_execution
@@ -40,18 +42,30 @@ def _execution_comparison(row: dict) -> str | None:
 
 class GenerateTrainingReviewHandler:
     def __init__(self, *, coaching, evidence, gateway: ReviewModelGateway | None = None,
-                 now: Callable[[], datetime] | None = None) -> None:
+                 now: Callable[[], datetime] | None = None, analysis_evidence=None) -> None:
         self._coaching = coaching
         self._evidence = evidence
         self._gateway = gateway
         self._now = now or (lambda: datetime.now(timezone.utc))
+        if analysis_evidence is None and hasattr(coaching, '_session'):
+            from src.infrastructure.database.coaching_analysis_evidence_repository import (
+                SqlAlchemyCoachingAnalysisEvidenceRepository,
+            )
+            analysis_evidence = SqlAlchemyCoachingAnalysisEvidenceRepository(coaching._session)
+        self._analysis_evidence = analysis_evidence
 
     def handle(self, *, user_id: str, publication_date: date, timezone_name: str,
                run_id: str) -> dict:
         reservation = self._coaching.reserve_review(user_id, publication_date, timezone_name, run_id)
         period = review_period(publication_date)
+        as_of = max(self._now(), datetime.combine(publication_date, time.min,
+            tzinfo=ZoneInfo(timezone_name)).astimezone(timezone.utc))
         evidence = build_review_evidence(user_id=user_id, period=period,
-            timezone_name=timezone_name, as_of=self._now(), store=self._evidence)
+            timezone_name=timezone_name, as_of=as_of, store=self._evidence)
+        bundle = (build_coaching_evidence(user_id=user_id, kind='daily_review',
+            local_date=publication_date, timezone_name=timezone_name,
+            workout_id=None, constraints=None, as_of=as_of, store=self._analysis_evidence)
+            if self._analysis_evidence is not None else None)
         score = score_execution(evidence)
         week_rows = []
         for snapshot in evidence.prescriptions:
@@ -142,12 +156,15 @@ class GenerateTrainingReviewHandler:
             "kind": "daily_review", "publication_date": publication_date.isoformat(),
             "reviewed_date": period.reviewed_date.isoformat(),
             "starts_on": period.starts_on.isoformat(), "ends_on": period.ends_on.isoformat(),
-            "timezone_name": timezone_name, "generated_at": self._now().isoformat(),
+            "timezone_name": timezone_name, "generated_at": as_of.isoformat(),
             "score": asdict(score), "yesterday": yesterday, "week": week_rows,
             "narrative": narrative,
             "coverage": {"covered_dates": [day.isoformat() for day in sorted(evidence.covered_dates)],
                          "cutoff_at": evidence.cutoff_at.isoformat()},
         }
+        if bundle is not None:
+            result['evidence_manifest'] = bundle.manifest
+            result['evidence_fingerprint'] = bundle.fingerprint
         if not self._coaching.publish_review(reservation, result):
             raise ValueError("review inputs changed or a newer generation owns this date")
         return result

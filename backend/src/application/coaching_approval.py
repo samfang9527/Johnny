@@ -9,11 +9,14 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from src.application.coaching_analysis_evidence import build_coaching_evidence
 from src.domain.activity_sessions import match_sessions, utc
 from src.domain.coaching_fingerprints import canonical_fingerprint
 from src.domain.training_plan import Workout
 from src.domain.workout_recovery import build_workout_recovery
+from src.domain.workout_advice import WorkoutAdviceConstraints
 from src.infrastructure.database.activity_repository import SqlAlchemyActivityRepository
+from src.infrastructure.database.coaching_analysis_evidence_repository import SqlAlchemyCoachingAnalysisEvidenceRepository
 from src.infrastructure.database.coaching_repository import SqlAlchemyCoachingRepository
 from src.infrastructure.database.models import (
     PlanAdjustmentModel, RecommendationModel, WorkoutAdviceModel, WorkoutAdviceRevisionModel,
@@ -77,6 +80,19 @@ class CoachingApprovalService:
         plan = self._plans.get_plan_for_date_raw(user_id, advice_date)
         if plan is None or plan.status != "active" or plan.id != plan_id:
             raise CoachingDecisionConflict("plan_changed")
+        if 'evidence_manifest' in payload:
+            expected = payload.get('evidence_fingerprint')
+            if (not isinstance(expected, str)
+                    or canonical_fingerprint(payload['evidence_manifest']) != expected
+                    or model.evidence_fingerprint != expected):
+                raise CoachingDecisionConflict('evidence_manifest_changed')
+            current = build_coaching_evidence(user_id=user_id, kind='workout_advice',
+                local_date=advice_date, timezone_name=payload['timezone_name'],
+                workout_id=payload.get('workout_id'),
+                constraints=WorkoutAdviceConstraints(**payload['constraints']),
+                as_of=now, store=SqlAlchemyCoachingAnalysisEvidenceRepository(self._session))
+            if current.fingerprint != expected:
+                raise CoachingDecisionConflict('evidence_manifest_changed')
         current = next((item for item in plan.workouts if item.id == workout_id), None)
         if current is None or current.status in {"completed", "skipped"}:
             raise CoachingDecisionConflict("workout_no_longer_actionable")

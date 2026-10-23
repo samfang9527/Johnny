@@ -188,21 +188,23 @@ def test_scheduled_review_corrects_older_reviews_without_syncing_again(sync_cont
     session.commit()
 
     runs = session.scalars(select(AgentRunModel)).all()
-    assert len(runs) == 4
+    assert len(runs) == 2
     assert all(run.status == "completed" for run in runs)
     assert len(session.scalars(select(SyncRunModel)).all()) == 1
     assert sum(resource == "activities" for resource, _, _ in feed.requests) == 1
     corrections = [run.id for run in runs if run.trigger_type == "evidence_change"]
     tasks = session.scalars(select(AgentTaskModel)).all()
     correction_tasks = [task for task in tasks if task.payload["run_id"] in corrections]
-    assert len(correction_tasks) == 3
+    assert len(correction_tasks) == 1
     sync_id = session.scalars(select(SyncRunModel)).one().id
     assert all(task.task_type == "agent.workflow"
                and task.payload["input"]["source_sync_run_id"] == sync_id for task in correction_tasks)
-    for day in (17, 18, 19, 20):
+    for day in (19, 20):
         slot = store.get_review_slot("incremental-athlete", date(2026, 10, day))
         assert slot["freshness"] == "current"
         assert slot["current"]["publication_date"] == f"2026-10-{day}"
+    for day in (17, 18):
+        assert store.get_review_slot("incremental-athlete", date(2026, 10, day))["freshness"] == "stale"
 
 
 @pytest.mark.parametrize("cursor", [

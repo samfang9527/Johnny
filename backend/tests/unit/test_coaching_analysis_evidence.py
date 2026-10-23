@@ -17,6 +17,7 @@ class Store:
     def __init__(self):
         self.metrics = ()
         self.analyses = ()
+        self.snapshots = ()
         self.workout = Workout.create(id='w', scheduled_for=DAY, workout_type='easy_run',
                                       purpose='Easy', planned_duration_minutes=35,
                                       steps=(WorkoutStep.create(step_type='free_run',
@@ -38,6 +39,9 @@ class Store:
 
     def list_recovery_metrics(self, user_id, starts_on, ends_on):
         return self.metrics
+
+    def list_current_detail_snapshots(self, user_id, starts_on, ends_on, as_of):
+        return self.snapshots
 
 
 def build(store, kind='workout_advice'):
@@ -152,3 +156,15 @@ def test_used_historical_analysis_changes_fingerprint():
     assert second.fingerprint != first.fingerprint
     store.analyses = (replace(store.analyses[0], fingerprint='content-two'),)
     assert build(store).fingerprint != second.fingerprint
+
+
+def test_committed_detail_pointer_invalidates_advice_before_analysis_batch_finishes():
+    store = Store()
+    before = build(store)
+    started = datetime(2027, 1, 15, 15, tzinfo=timezone.utc)
+    store.snapshots = ({'activity_id': 'a', 'resource': 'fit',
+                        'snapshot_id': 's1', 'started_at': started},)
+    first = build(store)
+    assert first.fingerprint != before.fingerprint
+    store.snapshots = ({**store.snapshots[0], 'snapshot_id': 's2'},)
+    assert build(store).fingerprint != first.fingerprint

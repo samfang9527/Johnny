@@ -447,6 +447,23 @@ class CoachingInputVersionModel(TimestampMixin, Base):
     revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
+class CoachingGenerationRequestModel(TimestampMixin, Base):
+    __tablename__ = "coaching_generation_requests"
+    __table_args__ = (UniqueConstraint("user_id", "kind", "slot_id", name="uq_coaching_request_slot"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    slot_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    desired_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    active_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    active_request_id: Mapped[str | None] = mapped_column(String(36))
+    active_run_id: Mapped[str | None] = mapped_column(String(36))
+    completed_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
 class TrainingReviewModel(TimestampMixin, Base):
     __tablename__ = "training_reviews"
     __table_args__ = (UniqueConstraint("user_id", "publication_date", name="uq_training_review_slot"),)
