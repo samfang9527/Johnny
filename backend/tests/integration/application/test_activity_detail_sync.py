@@ -2,7 +2,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from threading import Event
+from threading import Event, Lock
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -469,4 +469,176 @@ def test_postgresql_two_workers_share_fetch_and_publish_one_changed_batch():
         assert len(provider.calls) == 1
     finally:
         release.set()
+        engine.dispose()
+
+
+@pytest.mark.parametrize('older_result', ('success', 'failure'))
+def test_expired_fetch_claim_cannot_replace_newer_result(seeded, older_result):
+    class ReclaimedProvider:
+        calls = 0
+
+        def fetch_activity_detail(self, *, activity_id, resource, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                service.process_resource(fetch_id=fetch_id, now=NOW + timedelta(minutes=6))
+                if older_result == 'failure':
+                    raise GarminRateLimitError(retry_after_seconds=90)
+                sample = 1
+            else:
+                sample = 2
+            return NormalizedDetails(activity_id=activity_id, resource=resource,
+                schema_version='test-v1',
+                coverage=DetailCoverage(state='complete', sampling='recorded'),
+                sample_chunks=(ActivitySampleChunk(ordinal=0,
+                    samples=({'elapsed_seconds': sample},)),))
+
+    provider = ReclaimedProvider()
+    service = ActivityDetailSyncService(seeded, lambda session: provider, resources=('fit',))
+    batch_id = service.start_batch(user_id='owner', activity_ids=('run',),
+                                   source_sync_run_id='expired-claim', now=NOW)
+    fetch_id = _item(seeded, batch_id).fetch_id
+    service.process_resource(fetch_id=fetch_id, now=NOW + timedelta(seconds=1))
+
+    with seeded() as session:
+        fetch = session.get(ActivityDetailFetchModel, fetch_id)
+        snapshots = session.scalars(select(ActivityDetailSnapshotModel).where(
+            ActivityDetailSnapshotModel.activity_id == 'run')).all()
+        assert provider.calls == 2
+        assert fetch.status == 'available'
+        assert fetch.retry_count == 0
+        assert len(snapshots) == 1
+        assert fetch.current_snapshot_id == snapshots[0].id
+
+
+def test_result_after_batch_deadline_queues_new_changed_batch(seeded):
+    class LateProvider(Provider):
+        def fetch_activity_detail(self, **kwargs):
+            assert service.finalize_batch(batch_id=batch_id,
+                now=NOW + timedelta(seconds=121)) == ()
+            return super().fetch_activity_detail(**kwargs)
+
+    provider = LateProvider()
+    service = ActivityDetailSyncService(seeded, lambda session: provider, resources=('fit',))
+    batch_id = service.start_batch(user_id='owner', activity_ids=('run',),
+                                   source_sync_run_id='late-result', now=NOW)
+    fetch_id = _item(seeded, batch_id).fetch_id
+    service.process_resource(fetch_id=fetch_id, now=NOW + timedelta(seconds=1))
+
+    with seeded() as session:
+        batches = session.scalars(select(ActivityDetailBatchModel).where(
+            ActivityDetailBatchModel.user_id == 'owner')).all()
+        assert len(batches) == 2
+        late_batch = next(batch for batch in batches if batch.id != batch_id)
+        assert late_batch.status == 'pending'
+        late_item = session.scalar(select(ActivityDetailBatchItemModel).where(
+            ActivityDetailBatchItemModel.batch_id == late_batch.id))
+        assert late_item.status == 'changed'
+    assert service.finalize_batch(batch_id=late_batch.id,
+        now=NOW + timedelta(seconds=122)) == ('run',)
+
+
+def test_relinked_activity_rejects_inflight_old_provider_result(seeded):
+    class RelinkedProvider(Provider):
+        def fetch_activity_detail(self, **kwargs):
+            with seeded() as session:
+                session.get(ActivityModel, 'run').provider_activity_id = 'replacement-provider-run'
+                session.commit()
+            return super().fetch_activity_detail(**kwargs)
+
+    service = ActivityDetailSyncService(seeded, lambda session: RelinkedProvider(),
+                                        resources=('fit',))
+    batch_id = service.start_batch(user_id='owner', activity_ids=('run',),
+                                   source_sync_run_id='relinked', now=NOW)
+    fetch_id = _item(seeded, batch_id).fetch_id
+    with pytest.raises(ActivityDetailRetry):
+        service.process_resource(fetch_id=fetch_id, now=NOW + timedelta(seconds=1))
+    with seeded() as session:
+        fetch = session.get(ActivityDetailFetchModel, fetch_id)
+        assert fetch.current_snapshot_id is None
+        assert fetch.status == 'retry_wait'
+        assert session.scalar(select(func.count()).select_from(ActivityDetailSnapshotModel)) == 0
+
+
+@pytest.mark.parametrize('older_completes_first', (False, True))
+def test_postgresql_expired_claim_fences_two_workers_and_delivers_late_change(
+    older_completes_first,
+):
+    url = os.getenv('JOHNNY_TEST_DATABASE_URL')
+    if not url:
+        pytest.skip('disposable PostgreSQL URL not configured')
+    parsed = make_url(url)
+    if not parsed.drivername.startswith('postgresql') or 'test' not in (parsed.database or ''):
+        pytest.fail('expired-claim test requires a disposable test database')
+    engine = create_engine(parsed, pool_size=4)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    suffix = uuid4().hex
+    owner, connection, activity = str(uuid4()), str(uuid4()), str(uuid4())
+    with factory() as session:
+        session.add(UserModel(id=owner, email=f'{suffix}@example.invalid', display_name='Runner'))
+        session.flush()
+        session.add(IntegrationConnectionModel(id=connection, user_id=owner,
+                                                provider='garmin_connect'))
+        session.flush()
+        session.add(ActivityModel(id=activity, user_id=owner, provider_connection_id=connection,
+            provider_activity_id=f'provider-{suffix}', started_at=NOW - timedelta(days=1),
+            activity_type='running'))
+        session.commit()
+
+    entered = (Event(), Event())
+    release = (Event(), Event())
+    counter_lock = Lock()
+
+    class PausedProvider:
+        calls = 0
+
+        def fetch_activity_detail(self, *, activity_id, resource, **kwargs):
+            with counter_lock:
+                index = self.calls
+                self.calls += 1
+            entered[index].set()
+            assert release[index].wait(10)
+            return NormalizedDetails(activity_id=activity_id, resource=resource,
+                schema_version='test-v1',
+                coverage=DetailCoverage(state='complete', sampling='recorded'),
+                sample_chunks=(ActivitySampleChunk(ordinal=0,
+                    samples=({'elapsed_seconds': index + 1},)),))
+
+    provider = PausedProvider()
+    service = ActivityDetailSyncService(factory, lambda session: provider, resources=('fit',))
+    batch_id = service.start_batch(user_id=owner, activity_ids=(activity,),
+                                   source_sync_run_id=f'claim-{suffix[:20]}', now=NOW)
+    fetch_id = _item(factory, batch_id).fetch_id
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            older = pool.submit(service.process_resource, fetch_id=fetch_id,
+                                now=NOW + timedelta(seconds=1))
+            assert entered[0].wait(5)
+            newer = pool.submit(service.process_resource, fetch_id=fetch_id,
+                                now=NOW + timedelta(minutes=6))
+            assert entered[1].wait(5)
+            first_to_release = 0 if older_completes_first else 1
+            release[first_to_release].set()
+            (older if older_completes_first else newer).result(timeout=5)
+            if older_completes_first:
+                assert service.finalize_batch(batch_id=batch_id,
+                    now=NOW + timedelta(minutes=6, seconds=1)) == ()
+            release[1 - first_to_release].set()
+            (newer if older_completes_first else older).result(timeout=5)
+
+        with factory() as session:
+            fetch = session.get(ActivityDetailFetchModel, fetch_id)
+            assert fetch.status == 'available'
+            assert session.scalar(select(func.count()).select_from(ActivityDetailSnapshotModel).where(
+                ActivityDetailSnapshotModel.activity_id == activity)) == 1
+            batches = session.scalars(select(ActivityDetailBatchModel).where(
+                ActivityDetailBatchModel.user_id == owner)).all()
+            assert len(batches) == (2 if older_completes_first else 1)
+            if older_completes_first:
+                late = next(batch for batch in batches if batch.id != batch_id)
+                assert service.finalize_batch(batch_id=late.id,
+                    now=NOW + timedelta(minutes=6, seconds=2)) == (activity,)
+    finally:
+        release[0].set()
+        release[1].set()
         engine.dispose()

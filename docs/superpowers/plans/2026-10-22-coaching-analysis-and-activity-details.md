@@ -92,7 +92,7 @@
 - [x] Run `pytest backend/tests/integration/database/test_activity_detail_repository.py backend/tests/integration/database/test_activity_detail_migration.py -q`; confirm feature failures.
 - [x] Add `activity_detail_fetches`, `activity_detail_snapshots`, `activity_segments`, `activity_sample_chunks`, `activity_execution_analyses`, `activity_detail_batches`, `activity_detail_batch_items`. Batch items join activity/resource work to multiple batches; fetch state is not restricted to one batch. Use owner-scoped keys and indexes on batch/state and activity/resource. Revision `0013_activity_details` follows `0012_coaching_history`; no provider calls in Alembic. Store samples once and reference snapshot IDs from analyses.
 - [x] Run the suites on SQLite, including real Alembic upgrade from a simulated deployed 0012 schema and fresh install; full backend suite: 772 passed, 7 skipped.
-- [ ] Run the isolated-schema migration suite on disposable PostgreSQL (`JOHNNY_TEST_DATABASE_URL`). The configured local test database was unreachable during Task 2; the test is ready but PostgreSQL validation remains open.
+- [x] Run the isolated-schema migration suite on disposable PostgreSQL (`JOHNNY_TEST_DATABASE_URL`). Verified after Task 2 with 800 passed and 0 skipped; see `docs/verification/2026-10-23-activity-detail-postgresql.md`.
 - [x] Commit task files: `feat: persist versioned activity detail evidence`.
 
 ### Task 3: Normalize JSON and decode original FIT
@@ -104,7 +104,7 @@
 - [x] Run `pytest backend/tests/unit/test_garmin_activity_details.py backend/tests/unit/test_garmin_fit_decoder.py -q`; confirm failures.
 - [x] Normalize verified FIT units and retain JSON descriptor values/units without guessing factor conversion. Unknown fields remain unsupported. Retain source kind and chronological occurrence. Use FIT timer events and valid explicit workout links when present; chart sampling stays `chart`. Prefer integrity-checked recorded FIT evidence for overlapping channels, then JSON, without adding duplicate totals. Archive parsing is in memory with bounds and traversal checks.
 - [x] Run both suites plus `pytest backend/tests/unit/test_garminconnect_adapter.py -q`; existing summary/health behavior remains green. Full backend suite: 792 passed, 7 skipped.
-- [ ] Calibrate chart time, distance and speed conversion against an actual FIT trace before treating those raw values as normalized channels; local database unavailable in Task 3. See `docs/verification/2026-10-23-activity-detail-normalization.md`.
+- [x] Calibrate chart time, distance and speed conversion against actual FIT traces before treating those raw values as normalized channels. Three real-account recordings and 4,294 chart points were compared; paused chart behavior still needs a suitable live sample. See `docs/verification/2026-10-23-activity-detail-normalization.md`.
 - [x] Commit: `feat: normalize Garmin segments and FIT recordings`.
 
 ### Task 4: Acquire detail in durable batches and backfill existing activities

@@ -44,6 +44,10 @@ class ActivityDetailRetry(RuntimeError):
         self.category = category
 
 
+class ActivityDetailSourceChanged(RuntimeError):
+    """The activity no longer belongs to the provider identity used for this fetch."""
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError('activity detail timestamps must be timezone-aware')
@@ -216,7 +220,8 @@ class ActivityDetailSyncService:
             activity_id = activity.id
             resource = fetch.resource
             fetch.status = 'fetching'
-            fetch.next_retry_at = now + FETCH_LEASE
+            claim_until = now + FETCH_LEASE
+            fetch.next_retry_at = claim_until
             for item in items:
                 item.status = 'fetching'
             session.commit()  # Persist the claim before any provider call.
@@ -230,14 +235,32 @@ class ActivityDetailSyncService:
                     provider_activity_id=provider_id)
                 provider_session.commit()  # Commit refreshed encrypted credential only on success.
         except Exception as exc:
-            self._record_failure(fetch_id=fetch_id, now=now, exc=exc)
+            self._record_failure(fetch_id=fetch_id, claim_until=claim_until, now=now, exc=exc)
             return
 
         with self._factory() as session:
             fetch = session.scalar(select(ActivityDetailFetchModel).where(
                 ActivityDetailFetchModel.id == fetch_id).with_for_update())
+            if not self._owns_claim(fetch, claim_until):
+                return
+            current_source = session.scalar(select(ActivityModel.id).join(
+                IntegrationConnectionModel,
+                ActivityModel.provider_connection_id == IntegrationConnectionModel.id).where(
+                ActivityModel.id == activity_id,
+                ActivityModel.user_id == user_id,
+                ActivityModel.provider_connection_id == connection_id,
+                ActivityModel.provider_activity_id == provider_id,
+                IntegrationConnectionModel.user_id == user_id,
+                IntegrationConnectionModel.provider == 'garmin_connect',
+                IntegrationConnectionModel.status == 'active',
+                IntegrationConnectionModel.credential_status == 'active').with_for_update())
+            if current_source is None:
+                session.rollback()
+                self._record_failure(fetch_id=fetch_id, claim_until=claim_until,
+                                     now=now, exc=ActivityDetailSourceChanged())
+                return
             before = fetch.current_snapshot_id
-            snapshot = SqlAlchemyActivityDetailRepository(session).save_snapshot(
+            SqlAlchemyActivityDetailRepository(session).save_snapshot(
                 user_id=user_id, details=details, fetched_at=now)
             fetch.status = 'available' if details.coverage.state == 'complete' else 'partial'
             fetch.next_retry_at = None
@@ -246,22 +269,43 @@ class ActivityDetailSyncService:
                 .where(ActivityDetailBatchItemModel.fetch_id == fetch_id,
                        ActivityDetailBatchItemModel.status.not_in(TERMINAL_ITEMS),
                        ActivityDetailBatchModel.status != 'closed')
-                .order_by(ActivityDetailBatchItemModel.created_at, ActivityDetailBatchItemModel.id)).all()
+                .order_by(ActivityDetailBatchItemModel.created_at, ActivityDetailBatchItemModel.id)
+                .with_for_update(of=ActivityDetailBatchItemModel)).all()
             for index, item in enumerate(pending):
-                item.status = 'changed' if before != snapshot.id and index == 0 else 'unchanged'
+                item.status = 'changed' if before != fetch.current_snapshot_id and index == 0 else 'unchanged'
+            if not pending and before != fetch.current_snapshot_id:
+                late_batch = ActivityDetailBatchModel(user_id=user_id, status='pending',
+                                                       deadline_at=now)
+                session.add(late_batch)
+                session.flush()
+                session.add(ActivityDetailBatchItemModel(user_id=user_id, batch_id=late_batch.id,
+                    activity_id=activity_id, resource=resource, fetch_id=fetch_id, status='changed'))
+                SqlAlchemyAgentTaskQueue(session).enqueue(TaskEnvelope(task_type=FINALIZE_TASK,
+                    payload={'batch_id': late_batch.id}, correlation_id=late_batch.id,
+                    idempotency_key=f'{FINALIZE_TASK}:{late_batch.id}', available_at=now,
+                    max_attempts=MAX_ATTEMPTS))
             self._expedite_ready_batches(session, pending, now)
             session.commit()
 
-    def _record_failure(self, *, fetch_id: str, now: datetime, exc: Exception) -> None:
+    @staticmethod
+    def _owns_claim(fetch: ActivityDetailFetchModel | None, claim_until: datetime) -> bool:
+        return bool(fetch is not None and fetch.status == 'fetching'
+                    and fetch.next_retry_at is not None
+                    and _stored_utc(fetch.next_retry_at) == claim_until)
+
+    def _record_failure(self, *, fetch_id: str, claim_until: datetime,
+                        now: datetime, exc: Exception) -> None:
         blocked = isinstance(exc, GarminCredentialBlockedError)
         response = getattr(exc, 'response', None)
         unsupported = getattr(response, 'status_code', None) == 404
         category = ('GarminRequiresReauth' if blocked else 'UnsupportedResource' if unsupported
-                    else 'RateLimited' if isinstance(exc, GarminRateLimitError) else 'ProviderFailure')
+                    else 'RateLimited' if isinstance(exc, GarminRateLimitError)
+                    else 'SourceChanged' if isinstance(exc, ActivityDetailSourceChanged)
+                    else 'ProviderFailure')
         with self._factory() as session:
             fetch = session.scalar(select(ActivityDetailFetchModel).where(
                 ActivityDetailFetchModel.id == fetch_id).with_for_update())
-            if fetch is None:
+            if not self._owns_claim(fetch, claim_until):
                 return
             fetch.retry_count += 1
             fetch.last_error_type = category

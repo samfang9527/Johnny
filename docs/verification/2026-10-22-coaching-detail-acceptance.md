@@ -14,13 +14,15 @@ This is a **local release rehearsal**, not a production deployment or a claim ab
 
 | Check | Result |
 | --- | --- |
-| Backend full suite with `DATABASE_URL` and `JOHNNY_TEST_DATABASE_URL` set to the disposable PostgreSQL test database | 938 passed, 0 skipped, 2 existing deprecation warnings |
+| Backend full suite with `DATABASE_URL` and `JOHNNY_TEST_DATABASE_URL` set to the disposable PostgreSQL test database | 944 passed, 0 skipped, 2 existing deprecation warnings (2026-10-24 pre-merge rerun) |
 | Frontend Vitest | 192 passed in 12 files |
 | Frontend production build | Passed |
 | Palette token verification | Passed |
 | Task 12 isolated PostgreSQL acceptance | 7 passed |
 
 The first full PostgreSQL run caught an older worker test expecting unknown task types to fail after claim; the documented contract now keeps those tasks queued, and the test was updated. A new end-to-end replay test caught a real cascade: after correcting the latest review, replay selected the next older stale review for automatic correction. The refresh service now selects the latest *affected published slot* before comparing fingerprints, so replay cannot walk backward through history. Both failures were resolved before the passing full run.
+
+Pre-merge review on 2026-10-24 found that a fetch result arriving after its lease expired could overwrite a newer worker's status or miss coaching refresh after batch closure. The fetch lease now fences success and failure writes, a changed provider identity rejects in-flight evidence, and a late changed snapshot queues a new finalization batch. SQLite regressions and a two-worker PostgreSQL test cover both completion orders; the full PostgreSQL suite result above includes these tests.
 
 ## Production release gate
 
@@ -35,4 +37,4 @@ The first full PostgreSQL run caught an older worker test expecting unknown task
 | Worker builds / contracts | Source worker accepts versions 0 and 1; API exposes declared build SHA; Docker production worker/scheduler use the same image as API | Running image digests and stray old workers not inspected |
 | Sample bytes/activity and backfill throughput | 248 B normalized fixture samples for one activity; in-process timing only | Live-account measurement required |
 
-The authorized local `johnny` database was inspected read-only and does **not** yet contain `activity_detail_snapshots`; it was not migrated or changed for this rehearsal. Consequently, no live athlete coverage or real backfill throughput can be reported. Task 1's missing activity categories and Task 3's chart-unit calibration against an actual FIT trace also remain live-data gates. Use the staged [deployment runbook](../deployment-v1.md#coaching-detail-cutover-additive-release) and fill the production column from the actual release cohort before enabling the flags. Disable flags and stop new producers for rollback; retain the additive tables and historical evidence.
+The authorized local `johnny` database was inspected read-only and does **not** yet contain `activity_detail_snapshots`; it was not migrated or changed for this rehearsal. Consequently, no live athlete coverage or real backfill throughput can be reported. Task 3 calibrated chart units against three actual FIT traces, but Task 1's structured-interval and mid-session-pause samples remain live-data gates. Use the staged [deployment runbook](../deployment-v1.md#coaching-detail-cutover-additive-release) and fill the production column from the actual release cohort before enabling the flags. Disable flags and stop new producers for rollback; retain the additive tables and historical evidence.
